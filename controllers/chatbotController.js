@@ -14,6 +14,7 @@ import { removeFile } from "../utils/upload.js";
 // List of all fields allowed to be updated
 const ALLOWED_FIELDS = [
   "allowedDomains",
+  "brandName",
   "botName",
   "welcomeMessage",
   "language",

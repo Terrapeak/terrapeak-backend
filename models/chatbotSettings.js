@@ -3,6 +3,10 @@ import crypto from "crypto";
 
 const ChatbotSettingsSchema = new mongoose.Schema(
   {
+    brandName: {
+  type: String,
+  default: "Terrapeak",
+},
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
