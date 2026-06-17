@@ -30,45 +30,64 @@ export const requestSignupOTP = asyncHandler(async (req, res) => {
       message: "Name, email, password, and phone are required",
     });
   }
-  if (!isValidEmail(email))
-    return res
-      .status(400)
-      .json({ success: false, message: "Invalid email format" });
-  if (!isValidPhone(phone))
-    return res
-      .status(400)
-      .json({ success: false, message: "Invalid phone number" });
-  if (password.length < 6)
+
+  if (!isValidEmail(email)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid email format",
+    });
+  }
+
+  if (!isValidPhone(phone)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid phone number",
+    });
+  }
+
+  if (password.length < 6) {
     return res.status(400).json({
       success: false,
       message: "Password must be at least 6 characters long",
     });
+  }
 
-  // Check duplicates
-  if (await User.findOne({ email }))
-    return res
-      .status(400)
-      .json({ success: false, message: "Email is already registered" });
-  if (await User.findOne({ phone }))
-    return res
-      .status(400)
-      .json({ success: false, message: "Phone is already registered" });
+  if (await User.findOne({ email })) {
+    return res.status(400).json({
+      success: false,
+      message: "Email is already registered",
+    });
+  }
 
-  // Generate OTP
-  const otp = generateOTP();
-  await Otp.create({ email, otp }); // will auto-expire in 5 min (set in schema)
-  console.log("wefe", email, otp);
-  // Send OTP to email
-  await sendEmail({
-    to: email,
-    subject: "Verify your email - MyApp",
-    text: `Your OTP is ${otp}. It will expire in 5 minutes.`,
-    html: `<p>Your OTP is <b>${otp}</b>. It will expire in 5 minutes.</p>`,
+  if (await User.findOne({ phone })) {
+    return res.status(400).json({
+      success: false,
+      message: "Phone is already registered",
+    });
+  }
+
+  const user = new User({
+    name,
+    email,
+    password,
+    phone,
+    country,
+    companyName,
   });
 
-  res.json({
+  await user.save();
+
+  const token = jwt.sign(
+    { _id: user._id, isAdmin: user.isAdmin },
+    process.env.JWT_SECRET,
+    { expiresIn: "1d" }
+  );
+
+  res.cookie("token", token, cookieOptions).status(201).json({
     success: true,
-    message: "OTP sent to email. Please verify before signup.",
+    message: "Signup successful",
+    token,
+    user,
   });
 });
 
