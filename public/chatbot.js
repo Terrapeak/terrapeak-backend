@@ -82,7 +82,7 @@
   // --- Create Iframe ---
   const iframe = document.createElement("iframe");
   // The API key and base URL are now directly embedded in the downloaded script
- iframe.src = `https://terrapeak-gemini-assistant.vercel.app/embed?apiKey=${apiKey}&parentDomain=${encodeURIComponent(origin)}`;
+ iframe.src = `https://terrapeak-gemini-assistant.vercel.app/embed?apiKey=${encodeURIComponent(apiKey)}&parentDomain=${encodeURIComponent(origin)}`;
   // iframe.src = `http://localhost:5173/embed?apiKey=${apiKey}&parentDomain=${origin}`;
 
   css(iframe, {
