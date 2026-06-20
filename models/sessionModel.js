@@ -40,34 +40,18 @@ const sessionSchema = new mongoose.Schema(
         },
       },
     ],
-    bookingType: {
-  type: String,
-  enum: ["appointment", "reservation", null],
-  default: null,
-},
-
-bookingIntentConfirmed: {
-  type: Boolean,
-  default: false,
-},
-
-appointmentStep: String,
+    appointmentStep: String,
 appointmentDate: String,
 appointmentName: String,
 appointmentEmail: String,
 appointmentPhone: String,
 
-reservationStep: String,
-reservationDate: String,
-reservationTime: String,
-reservationName: String,
-reservationEmail: String,
-reservationPhone: String,
-reservationPartySize: Number,
-reservationNotes: String,
-    // appointmentAddress: String,
-    tempSlots: Array,
-    selectedSlot: String,
+cancelStep: String,
+cancelAppointmentId: String,
+
+// appointmentAddress: String,
+tempSlots: Array,
+selectedSlot: String,
   },
   {
     timestamps: true,

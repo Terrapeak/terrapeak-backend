@@ -6,7 +6,8 @@ import TimeSlot from "../models/timeSlot.js";
 import { chatbotCache } from "../utils/cache.js";
 import Session from "../models/sessionModel.js";
 import Appointment from "../models/appointment.js";
-import { createGoogleMeet } from "../utils/googleMeet.js";
+import { createGoogleMeet, deleteGoogleEvent } from "../utils/googleMeet.js";
+import User from "../models/user.js";
 import axios from "axios";
 import { DateTime } from "luxon";
 import { extractTextFromFile } from "../utils/extractTextFromFile.js";
@@ -330,9 +331,77 @@ export const askGemini = asyncHandler(async (req, res) => {
   let botReply = null;
 
   // ✅ Cancel appointment anytime
-  if (lowerMsg === "cancel" || lowerMsg === "stop" || lowerMsg === "exit") {
-  resetBookingSession(session);
-  botReply = "Booking process cancelled. How else can I help you?";
+  const cancelRequested =
+  lowerMsg === "cancel" ||
+  lowerMsg === "stop" ||
+  lowerMsg === "exit" ||
+  lowerMsg.includes("cancel my") ||
+  lowerMsg.includes("cancel the") ||
+  lowerMsg.includes("cancel appointment") ||
+  lowerMsg.includes("cancel meeting") ||
+  lowerMsg.includes("cancel callback");
+
+if (session.cancelStep === "confirmCancel") {
+  if (lowerMsg === "yes") {
+    const appointment = await Appointment.findById(session.cancelAppointmentId);
+
+    if (!appointment || appointment.status === "cancelled") {
+      session.cancelStep = null;
+      session.cancelAppointmentId = null;
+      botReply = "I could not find an active appointment to cancel.";
+    } else {
+      const owner = await User.findById(appointment.ownerId);
+
+      if (appointment.googleEventId && owner) {
+        await deleteGoogleEvent(owner, appointment.googleEventId);
+      }
+
+      appointment.status = "cancelled";
+      await appointment.save();
+
+      await TimeSlot.findByIdAndUpdate(appointment.timeSlotId, {
+        isBooked: false,
+      });
+
+      session.cancelStep = null;
+      session.cancelAppointmentId = null;
+      resetBookingSession(session);
+
+      botReply =
+        "✅ Your appointment has been cancelled successfully. The time slot is now available again.";
+    }
+  } else if (lowerMsg === "no") {
+    session.cancelStep = null;
+    session.cancelAppointmentId = null;
+
+    botReply = "No problem. Your appointment remains scheduled.";
+  } else {
+    botReply =
+      "Please reply **yes** to cancel the appointment or **no** to keep it.";
+  }
+}
+
+if (!botReply && cancelRequested) {
+  const latestAppointment = await Appointment.findOne({
+    ownerId: settings.userId,
+    status: { $ne: "cancelled" },
+  }).sort({ createdAt: -1 });
+
+  if (!latestAppointment) {
+    botReply =
+      "I could not find an active appointment linked to this chatbot.";
+  } else {
+    session.cancelStep = "confirmCancel";
+    session.cancelAppointmentId = latestAppointment._id.toString();
+
+    botReply = `I found this appointment:
+
+**Name:** ${latestAppointment.name}  
+**Email:** ${latestAppointment.email}  
+**Phone:** ${latestAppointment.phone}  
+
+Are you sure you want to cancel this appointment? Please reply **yes** or **no**.`;
+  }
 }
 
   /* ===============================
