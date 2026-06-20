@@ -554,6 +554,8 @@ if (!botReply && (session.bookingType === "appointment" || inAppointmentFlow)) {
             startTime: slot.start,
             endTime: slot.end,
             timeZone: slot.timeZone,
+            attendeeEmail: session.appointmentEmail,
+            attendeeName: session.appointmentName,
           });
 
           if (meeting == null) {

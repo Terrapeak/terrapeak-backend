@@ -48,6 +48,8 @@ export const createGoogleMeet = async ({
   startTime,
   endTime,
   timeZone,
+  attendeeEmail,
+  attendeeName,
 }) => {
   try {
     const user = await User.findById(userId);
@@ -82,27 +84,36 @@ export const createGoogleMeet = async ({
     });
 
     const response = await calendar.events.insert({
-      calendarId: "primary",
-      requestBody: {
-        summary,
-        description,
-        start: {
-          dateTime: startTime.toISOString(),
-          timeZone: timeZone,
-        },
-        end: {
-          dateTime: endTime.toISOString(),
-          timeZone: timeZone,
-        },
-        conferenceData: {
-          createRequest: {
-            requestId: `meet-${Date.now()}`,
-            conferenceSolutionKey: { type: "hangoutsMeet" },
+  calendarId: "primary",
+  requestBody: {
+    summary,
+    description,
+    start: {
+      dateTime: startTime.toISOString(),
+      timeZone: timeZone,
+    },
+    end: {
+      dateTime: endTime.toISOString(),
+      timeZone: timeZone,
+    },
+    attendees: attendeeEmail
+      ? [
+          {
+            email: attendeeEmail,
+            displayName: attendeeName || "",
           },
-        },
+        ]
+      : [],
+    conferenceData: {
+      createRequest: {
+        requestId: `meet-${Date.now()}`,
+        conferenceSolutionKey: { type: "hangoutsMeet" },
       },
-      conferenceDataVersion: 1,
-    });
+    },
+  },
+  conferenceDataVersion: 1,
+  sendUpdates: "all",
+});
 
     return {
       hangoutLink: response.data.hangoutLink,
