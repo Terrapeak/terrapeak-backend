@@ -416,11 +416,30 @@ const inReservationFlow =
 const inAnyBookingFlow = inAppointmentFlow || inReservationFlow;
 
 if (!botReply && !inAnyBookingFlow && detectedBookingType === "unknown") {
-  session.bookingType = null;
+  session.bookingType = "clarify";
   session.bookingIntentConfirmed = false;
 
   botReply =
     "Sure — is this for an in-person service/reservation, or for an online meeting/callback?\n\nPlease reply with **reservation** or **meeting**.";
+}
+
+if (!botReply && session.bookingType === "clarify") {
+  if (lowerMsg === "reservation") {
+    session.bookingType = "reservation";
+    session.reservationStep = "askDate";
+
+    botReply =
+      "Great. Please provide the reservation date in YYYY-MM-DD format.";
+  } else if (lowerMsg === "meeting") {
+    session.bookingType = "appointment";
+    session.appointmentStep = "confirm";
+
+    botReply =
+      "Great. Do you want to schedule an online meeting or callback? (yes/no)";
+  } else {
+    botReply =
+      "Please reply with **reservation** or **meeting** so I can guide you correctly.";
+  }
 }
 
 if (!botReply && !inAnyBookingFlow && detectedBookingType === "reservation") {
@@ -672,6 +691,13 @@ See you soon. 😊
   /* ===============================
      GEMINI FALLBACK
   ================================ */
+  console.log(
+  "Appointment Step:",
+  session.appointmentStep,
+  "Booking Type:",
+  session.bookingType
+);
+
   if (!botReply) {
     const trimmedHistory = formatGeminiHistory(chatHistory);
 

@@ -40,7 +40,14 @@ const sessionSchema = new mongoose.Schema(
         },
       },
     ],
-    appointmentStep: String,
+
+    bookingType: {
+  type: String,
+  enum: ["appointment", "reservation", "clarify", null],
+  default: null,
+},
+
+appointmentStep: String,
 appointmentDate: String,
 appointmentName: String,
 appointmentEmail: String,
