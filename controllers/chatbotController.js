@@ -331,32 +331,75 @@ export const askGemini = asyncHandler(async (req, res) => {
 
   // ✅ Cancel appointment anytime
   if (lowerMsg === "cancel" || lowerMsg === "stop" || lowerMsg === "exit") {
-    session.appointmentStep = null;
-    session.tempSlots = [];
-    session.selectedSlot = null;
-
-    botReply = " Appointment process cancelled. How else can I help you?";
-  }
+  resetBookingSession(session);
+  botReply = "Booking process cancelled. How else can I help you?";
+}
 
   /* ===============================
      APPOINTMENT FLOW TRIGGER
   ================================ */
-  const appointmentTriggered =
-    lowerMsg.includes("appointment") ||
-    lowerMsg.includes("meeting") ||
-    lowerMsg.includes("schedule");
+  const detectedBookingType = detectBookingIntent(lowerMsg);
 
-  const inAppointmentFlow = session.appointmentStep !== null;
+const inAppointmentFlow = session.appointmentStep !== null;
+const inReservationFlow = session.reservationStep !== null;
+const inAnyBookingFlow = inAppointmentFlow || inReservationFlow;
 
-  if (!botReply && (appointmentTriggered || inAppointmentFlow)) {
+if (!botReply && !inAnyBookingFlow && detectedBookingType === "unknown") {
+  session.bookingType = null;
+  session.bookingIntentConfirmed = false;
+
+  botReply =
+    "Sure — is this for an in-person service/reservation, or for an online meeting/callback?\n\nPlease reply with **reservation** or **meeting**.";
+}
+
+if (!botReply && !inAnyBookingFlow && detectedBookingType === "reservation") {
+  session.bookingType = "reservation";
+  session.reservationStep = "askDate";
+
+  botReply =
+    "Sure, I can help with that reservation. Please provide the date in YYYY-MM-DD format.";
+}
+
+if (!botReply && !inAnyBookingFlow && detectedBookingType === "appointment") {
+  session.bookingType = "appointment";
+  session.appointmentStep = "confirm";
+
+  botReply = "Do you want to schedule an online meeting or callback? (yes/no)";
+}
+
+if (!botReply && !inAnyBookingFlow && lowerMsg === "reservation") {
+  session.bookingType = "reservation";
+  session.reservationStep = "askDate";
+
+  botReply =
+    "Great. Please provide the reservation date in YYYY-MM-DD format.";
+}
+
+if (!botReply && !inAnyBookingFlow && lowerMsg === "meeting") {
+  session.bookingType = "appointment";
+  session.appointmentStep = "confirm";
+
+  botReply = "Great. Do you want to schedule an online meeting or callback? (yes/no)";
+}
+
+if (!botReply && (session.bookingType === "reservation" || inReservationFlow)) {
+  botReply =
+    "Reservation booking through the chatbot is being prepared. For now, please use the reservation form. Type **cancel** to stop.";
+
+  // This is temporary for Phase 1.
+  // In Phase 2, this section will become the real reservation flow.
+}
+
+if (!botReply && (session.bookingType === "appointment" || inAppointmentFlow)) {
     switch (session.appointmentStep) {
       /* ---------------------------
          START FLOW
       ---------------------------- */
       case null:
+        session.bookingType = "appointment";
         session.appointmentStep = "confirm";
-        botReply = "Do you want to schedule a meeting or appointment? (yes/no)";
-        break;
+        botReply = "Do you want to schedule an online meeting or callback? (yes/no)";
+      break;
 
       /* ---------------------------
          CONFIRMATION
@@ -658,10 +701,12 @@ Use the above file contexts (File Context 1 and File Context 2) as supporting in
      RESPONSE
   ================================ */
   res.json({
-    success: true,
-    reply: botReply,
-    appointmentStep: session.appointmentStep,
-  });
+  success: true,
+  reply: botReply,
+  appointmentStep: session.appointmentStep,
+  reservationStep: session.reservationStep,
+  bookingType: session.bookingType,
+});
 });
 
 export const getChatbotSettingsByKey = asyncHandler(async (req, res) => {
@@ -844,6 +889,95 @@ export const getUsersChatlog = asyncHandler(async (req, res, next) => {
     next(error);
   }
 });
+
+function detectBookingIntent(lowerMsg) {
+  const remoteMeetingKeywords = [
+    "callback",
+    "call back",
+    "phone call",
+    "sales call",
+    "demo",
+    "online meeting",
+    "google meet",
+    "zoom",
+    "video call",
+    "consultation call",
+    "meeting",
+  ];
+
+  const reservationKeywords = [
+    "reservation",
+    "reserve",
+    "book a table",
+    "table",
+    "restaurant",
+    "dinner",
+    "lunch",
+    "haircut",
+    "hairdresser",
+    "salon",
+    "barber",
+    "physio",
+    "physical therapist",
+    "therapy",
+    "clinic",
+    "doctor",
+    "dentist",
+    "gp",
+    "general practitioner",
+    "service appointment",
+    "visit",
+    "in person",
+    "in-person",
+  ];
+
+  const generalBookingKeywords = [
+    "appointment",
+    "book",
+    "booking",
+    "schedule",
+  ];
+
+  const hasRemoteMeetingIntent = remoteMeetingKeywords.some((word) =>
+    lowerMsg.includes(word)
+  );
+
+  const hasReservationIntent = reservationKeywords.some((word) =>
+    lowerMsg.includes(word)
+  );
+
+  const hasGeneralBookingIntent = generalBookingKeywords.some((word) =>
+    lowerMsg.includes(word)
+  );
+
+  if (hasReservationIntent) return "reservation";
+  if (hasRemoteMeetingIntent) return "appointment";
+  if (hasGeneralBookingIntent) return "unknown";
+
+  return null;
+}
+
+function resetBookingSession(session) {
+  session.bookingType = null;
+  session.bookingIntentConfirmed = false;
+
+  session.appointmentStep = null;
+  session.appointmentDate = null;
+  session.appointmentName = null;
+  session.appointmentEmail = null;
+  session.appointmentPhone = null;
+  session.tempSlots = [];
+  session.selectedSlot = null;
+
+  session.reservationStep = null;
+  session.reservationDate = null;
+  session.reservationTime = null;
+  session.reservationName = null;
+  session.reservationEmail = null;
+  session.reservationPhone = null;
+  session.reservationPartySize = null;
+  session.reservationNotes = null;
+}
 
 function formatGeminiHistory(history) {
   return history.slice(-4).map((msg) => ({
