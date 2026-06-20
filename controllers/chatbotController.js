@@ -385,7 +385,9 @@ if (!botReply && cancelRequested) {
   const latestAppointment = await Appointment.findOne({
     ownerId: settings.userId,
     status: { $ne: "cancelled" },
-  }).sort({ createdAt: -1 });
+  })
+    .populate("timeSlotId")
+    .sort({ createdAt: -1 });
 
   if (!latestAppointment) {
     botReply =
@@ -394,7 +396,36 @@ if (!botReply && cancelRequested) {
     session.cancelStep = "confirmCancel";
     session.cancelAppointmentId = latestAppointment._id.toString();
 
+    const slot = latestAppointment.timeSlotId;
+
+    let appointmentDate = "Not available";
+    let appointmentTime = "Not available";
+    let appointmentTimeZone =
+      latestAppointment.clientTimeZone || slot?.timeZone || "Not available";
+
+    if (slot?.start && slot?.end) {
+      const zone = latestAppointment.clientTimeZone || slot.timeZone || "UTC";
+
+      const startLocal = DateTime.fromJSDate(slot.start, {
+        zone: "utc",
+      }).setZone(zone);
+
+      const endLocal = DateTime.fromJSDate(slot.end, {
+        zone: "utc",
+      }).setZone(zone);
+
+      appointmentDate = startLocal.toFormat("LLLL dd, yyyy");
+      appointmentTime = `${startLocal.toFormat("hh:mm a")} - ${endLocal.toFormat(
+        "hh:mm a"
+      )}`;
+      appointmentTimeZone = zone;
+    }
+
     botReply = `I found this appointment:
+
+**Date:** ${appointmentDate}  
+**Time:** ${appointmentTime}  
+**Timezone:** ${appointmentTimeZone}  
 
 **Name:** ${latestAppointment.name}  
 **Email:** ${latestAppointment.email}  
