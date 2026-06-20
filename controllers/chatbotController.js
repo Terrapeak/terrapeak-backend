@@ -340,8 +340,10 @@ export const askGemini = asyncHandler(async (req, res) => {
   ================================ */
   const detectedBookingType = detectBookingIntent(lowerMsg);
 
-const inAppointmentFlow = session.appointmentStep !== null;
-const inReservationFlow = session.reservationStep !== null;
+const inAppointmentFlow =
+  session.bookingType === "appointment" && session.appointmentStep !== null;
+const inReservationFlow =
+  session.bookingType === "reservation" && session.reservationStep !== null;
 const inAnyBookingFlow = inAppointmentFlow || inReservationFlow;
 
 if (!botReply && !inAnyBookingFlow && detectedBookingType === "unknown") {
