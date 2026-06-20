@@ -549,7 +549,7 @@ if (!botReply && (session.bookingType === "appointment" || inAppointmentFlow)) {
 
           const meeting = await createGoogleMeet({
             userId: slot.userId,
-            summary: `Appointment with ${session.appointmentName}`,
+            summary: `Appointment: ${settings.brandName || settings.botName || "Business"} × ${session.appointmentName}`,
             description: `Phone: ${session.appointmentPhone}`,
             startTime: slot.start,
             endTime: slot.end,
