@@ -341,7 +341,43 @@ export const askGemini = asyncHandler(async (req, res) => {
   lowerMsg.includes("cancel meeting") ||
   lowerMsg.includes("cancel callback");
 
-if (session.cancelStep === "confirmCancel") {
+if (!botReply && session.cancelStep === "selectAppointmentToCancel") {
+  const choice = parseInt(message.trim(), 10);
+  const appointmentId = session.cancelAppointmentOptions?.[choice - 1];
+
+  if (!appointmentId) {
+    botReply =
+      "Please reply with a valid appointment number from the list.";
+  } else {
+    const appointment = await Appointment.findById(appointmentId).populate(
+      "timeSlotId"
+    );
+
+    if (!appointment || appointment.status === "cancelled") {
+      session.cancelStep = null;
+      session.cancelAppointmentId = null;
+      session.cancelAppointmentOptions = [];
+
+      botReply =
+        "I could not find that active appointment anymore.";
+    } else {
+      const slot = appointment.timeSlotId;
+      const formatted = formatAppointmentForChat(appointment, slot);
+
+      session.cancelStep = "confirmCancel";
+      session.cancelAppointmentId = appointment._id.toString();
+      session.cancelAppointmentOptions = [];
+
+      botReply = `You selected this appointment:
+
+${formatted}
+
+Are you sure you want to cancel this appointment? Please reply **yes** or **no**.`;
+    }
+  }
+}
+
+if (!botReply && session.cancelStep === "confirmCancel") {
   if (lowerMsg === "yes") {
     const appointment = await Appointment.findById(session.cancelAppointmentId);
 
@@ -363,9 +399,10 @@ if (session.cancelStep === "confirmCancel") {
         isBooked: false,
       });
 
-      session.cancelStep = null;
-      session.cancelAppointmentId = null;
-      resetBookingSession(session);
+    session.cancelStep = null;
+    session.cancelAppointmentId = null;
+    session.cancelAppointmentOptions = [];
+    resetBookingSession(session);
 
       botReply =
         "✅ Your appointment has been cancelled successfully. The time slot is now available again.";
@@ -373,6 +410,7 @@ if (session.cancelStep === "confirmCancel") {
   } else if (lowerMsg === "no") {
     session.cancelStep = null;
     session.cancelAppointmentId = null;
+    session.cancelAppointmentOptions = [];
 
     botReply = "No problem. Your appointment remains scheduled.";
   } else {
@@ -382,56 +420,50 @@ if (session.cancelStep === "confirmCancel") {
 }
 
 if (!botReply && cancelRequested) {
-  const latestAppointment = await Appointment.findOne({
+  const activeAppointments = await Appointment.find({
     ownerId: settings.userId,
     status: { $ne: "cancelled" },
   })
     .populate("timeSlotId")
     .sort({ createdAt: -1 });
 
-  if (!latestAppointment) {
+  if (!activeAppointments.length) {
     botReply =
       "I could not find an active appointment linked to this chatbot.";
-  } else {
+  } else if (activeAppointments.length === 1) {
+    const appointment = activeAppointments[0];
+    const slot = appointment.timeSlotId;
+
+    const formatted = formatAppointmentForChat(appointment, slot);
+
     session.cancelStep = "confirmCancel";
-    session.cancelAppointmentId = latestAppointment._id.toString();
-
-    const slot = latestAppointment.timeSlotId;
-
-    let appointmentDate = "Not available";
-    let appointmentTime = "Not available";
-    let appointmentTimeZone =
-      latestAppointment.clientTimeZone || slot?.timeZone || "Not available";
-
-    if (slot?.start && slot?.end) {
-      const zone = latestAppointment.clientTimeZone || slot.timeZone || "UTC";
-
-      const startLocal = DateTime.fromJSDate(slot.start, {
-        zone: "utc",
-      }).setZone(zone);
-
-      const endLocal = DateTime.fromJSDate(slot.end, {
-        zone: "utc",
-      }).setZone(zone);
-
-      appointmentDate = startLocal.toFormat("LLLL dd, yyyy");
-      appointmentTime = `${startLocal.toFormat("hh:mm a")} - ${endLocal.toFormat(
-        "hh:mm a"
-      )}`;
-      appointmentTimeZone = zone;
-    }
+    session.cancelAppointmentId = appointment._id.toString();
 
     botReply = `I found this appointment:
 
-**Date:** ${appointmentDate}  
-**Time:** ${appointmentTime}  
-**Timezone:** ${appointmentTimeZone}  
-
-**Name:** ${latestAppointment.name}  
-**Email:** ${latestAppointment.email}  
-**Phone:** ${latestAppointment.phone}  
+${formatted}
 
 Are you sure you want to cancel this appointment? Please reply **yes** or **no**.`;
+  } else {
+    session.cancelStep = "selectAppointmentToCancel";
+    session.cancelAppointmentOptions = activeAppointments.map((appointment) =>
+      appointment._id.toString()
+    );
+
+    const appointmentList = activeAppointments
+      .map((appointment, index) => {
+        const slot = appointment.timeSlotId;
+        const formatted = formatAppointmentShortForChat(appointment, slot);
+
+        return `**${index + 1}.** ${formatted}`;
+      })
+      .join("\n");
+
+    botReply = `I found multiple active appointments:
+
+${appointmentList}
+
+Which appointment would you like to cancel? Please reply with the appointment number.`;
   }
 }
 
@@ -1020,6 +1052,59 @@ export const getUsersChatlog = asyncHandler(async (req, res, next) => {
   }
 });
 
+function formatAppointmentForChat(appointment, slot) {
+  let appointmentDate = "Not available";
+  let appointmentTime = "Not available";
+  let appointmentTimeZone =
+    appointment.clientTimeZone || slot?.timeZone || "Not available";
+
+  if (slot?.start && slot?.end) {
+    const zone = appointment.clientTimeZone || slot.timeZone || "UTC";
+
+    const startLocal = DateTime.fromJSDate(slot.start, {
+      zone: "utc",
+    }).setZone(zone);
+
+    const endLocal = DateTime.fromJSDate(slot.end, {
+      zone: "utc",
+    }).setZone(zone);
+
+    appointmentDate = startLocal.toFormat("LLLL dd, yyyy");
+    appointmentTime = `${startLocal.toFormat("hh:mm a")} - ${endLocal.toFormat(
+      "hh:mm a"
+    )}`;
+    appointmentTimeZone = zone;
+  }
+
+  return `**Date:** ${appointmentDate}  
+**Time:** ${appointmentTime}  
+**Timezone:** ${appointmentTimeZone}  
+
+**Name:** ${appointment.name}  
+**Email:** ${appointment.email}  
+**Phone:** ${appointment.phone}`;
+}
+
+function formatAppointmentShortForChat(appointment, slot) {
+  if (!slot?.start || !slot?.end) {
+    return `${appointment.name} - time not available`;
+  }
+
+  const zone = appointment.clientTimeZone || slot.timeZone || "UTC";
+
+  const startLocal = DateTime.fromJSDate(slot.start, {
+    zone: "utc",
+  }).setZone(zone);
+
+  const endLocal = DateTime.fromJSDate(slot.end, {
+    zone: "utc",
+  }).setZone(zone);
+
+  return `${startLocal.toFormat("LLLL dd, yyyy")} at ${startLocal.toFormat(
+    "hh:mm a"
+  )} - ${endLocal.toFormat("hh:mm a")} (${appointment.name})`;
+}
+
 function detectBookingIntent(lowerMsg) {
   const remoteMeetingKeywords = [
     "callback",
@@ -1098,6 +1183,10 @@ function resetBookingSession(session) {
   session.appointmentPhone = null;
   session.tempSlots = [];
   session.selectedSlot = null;
+
+  session.cancelStep = null;
+  session.cancelAppointmentId = null;
+  session.cancelAppointmentOptions = [];
 
   session.reservationStep = null;
   session.reservationDate = null;
