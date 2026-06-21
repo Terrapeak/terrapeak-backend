@@ -26,31 +26,47 @@ import ChatbotSettings from "../models/chatbotSettings.js";
 
 export const verifyDomain = async (req, res, next) => {
   const apiKey = req.headers["x-api-key"];
+  const parentDomain = req.headers["x-parent-domain"];
+
+  console.log("VERIFY DOMAIN RUNNING");
+  console.log("apiKey:", apiKey);
+  console.log("parentDomain:", parentDomain);
+
   if (!apiKey) {
-    return res.status(401).json({ error: " API key missing" });
+    return res.status(401).json({ error: "API key missing" });
   }
+
   const settings = await ChatbotSettings.findOne({ apiKey });
-  console.log(apiKey);
+
   if (!settings) {
+    console.log("API key not found in MongoDB");
     return res.status(403).json({ error: "Invalid API key" });
   }
 
-  const parentDomain = req.headers["x-parent-domain"];
+  console.log("Settings found:", settings._id.toString());
+
+  if (parentDomain && parentDomain.includes("localhost")) {
+    console.log("Localhost allowed");
+    req.chatbot = settings;
+    return next();
+  }
 
   if (!parentDomain) {
     return res.status(403).json({ error: "Missing parent domain" });
   }
-  console.log(parentDomain);
+
   const allowed = settings.allowedDomains.some((domain) =>
     parentDomain.includes(domain)
   );
 
   if (!allowed) {
+    console.log("Domain rejected:", parentDomain);
     return res.status(403).json({
       error: "Domain not allowed",
       parentDomain,
     });
   }
+
   req.chatbot = settings;
   next();
 };

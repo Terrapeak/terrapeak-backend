@@ -331,15 +331,22 @@ export const askGemini = asyncHandler(async (req, res) => {
   let botReply = null;
 
   // ✅ Cancel appointment anytime
-  const cancelRequested =
+  const isSimpleCancel =
   lowerMsg === "cancel" ||
   lowerMsg === "stop" ||
-  lowerMsg === "exit" ||
-  lowerMsg.includes("cancel my") ||
-  lowerMsg.includes("cancel the") ||
-  lowerMsg.includes("cancel appointment") ||
-  lowerMsg.includes("cancel meeting") ||
-  lowerMsg.includes("cancel callback");
+  lowerMsg === "exit";
+
+const isAppointmentCancelRequest =
+  lowerMsg.includes("cancel") &&
+  (
+    lowerMsg.includes("appointment") ||
+    lowerMsg.includes("meeting") ||
+    lowerMsg.includes("callback") ||
+    lowerMsg.includes("booking") ||
+    lowerMsg.includes("scheduled")
+  );
+
+const cancelRequested = isSimpleCancel || isAppointmentCancelRequest;
 
 if (!botReply && session.cancelStep === "selectAppointmentToCancel") {
   const choice = parseInt(message.trim(), 10);
@@ -891,8 +898,22 @@ Use the above file contexts (File Context 1 and File Context 2) as supporting in
 export const getChatbotSettingsByKey = asyncHandler(async (req, res) => {
   const { apiKey } = req.query;
 
+  console.log("apiKey received:", apiKey);
+  console.log("origin received:", req.headers["x-origin"]);
+  console.log("parent domain received:", req.headers["x-parent-domain"]);
+
   const settings = await ChatbotSettings.findOne({ apiKey });
-  if (!settings) return res.status(403).json({ error: "Invalid API key" });
+
+  if (!settings) {
+    console.log("No settings found for this API key");
+
+    return res.status(403).json({
+      success: false,
+      error: "Invalid API key",
+    });
+  }
+
+  console.log("Settings found:", settings._id.toString());
 
   res.json({ success: true, data: settings });
 });
