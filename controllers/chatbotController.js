@@ -471,6 +471,19 @@ Which appointment would you like to cancel? Please reply with the appointment nu
      APPOINTMENT FLOW TRIGGER
   ================================ */
   const detectedBookingType = detectBookingIntent(lowerMsg);
+const freshAppointmentRequest =
+  detectedBookingType === "appointment" &&
+  lowerMsg !== "yes" &&
+  lowerMsg !== "no" &&
+  lowerMsg !== "y" &&
+  lowerMsg !== "n";
+
+if (!botReply && freshAppointmentRequest) {
+  resetBookingSession(session);
+  session.bookingType = "appointment";
+  session.appointmentStep = "confirm";
+  botReply = "Do you want to schedule an online meeting or callback? (yes/no)";
+}
 
 const inAppointmentFlow =
   session.bookingType === "appointment" && session.appointmentStep !== null;
@@ -557,15 +570,18 @@ if (!botReply && (session.bookingType === "appointment" || inAppointmentFlow)) {
       /* ---------------------------
          CONFIRMATION
       ---------------------------- */
-      case "confirm":
-        if (lowerMsg.includes("yes")) {
-          session.appointmentStep = "askDate";
-          botReply = "Great! Please provide a date (YYYY-MM-DD).";
-        } else {
-          session.appointmentStep = null;
-          botReply = "Okay 👍 Appointment cancelled.";
-        }
-        break;
+     case "confirm":
+  if (lowerMsg === "yes" || lowerMsg === "y") {
+    session.appointmentStep = "askDate";
+    botReply = "Great! Please provide a date (YYYY-MM-DD).";
+  } else if (lowerMsg === "no" || lowerMsg === "n") {
+    resetBookingSession(session);
+    botReply = "Okay 👍 Appointment cancelled.";
+  } else {
+    botReply =
+      "Please reply **yes** to continue scheduling, or **no** to cancel.";
+  }
+  break;
 
       /* ---------------------------
          ASK DATE
@@ -868,6 +884,7 @@ Use the above file contexts (File Context 1 and File Context 2) as supporting in
   appointmentStep: session.appointmentStep,
   reservationStep: session.reservationStep,
   bookingType: session.bookingType,
+  cancelStep: session.cancelStep,
 });
 });
 
