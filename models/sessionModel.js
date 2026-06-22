@@ -47,6 +47,15 @@ const sessionSchema = new mongoose.Schema(
   default: null,
 },
 
+reservationStep: String,
+reservationBusinessSlug: String,
+reservationDate: String,
+reservationTime: String,
+reservationPartySize: Number,
+reservationName: String,
+reservationPhone: String,
+reservationSpecialRequest: String,
+
 appointmentStep: String,
 appointmentDate: String,
 appointmentName: String,

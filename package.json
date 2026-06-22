@@ -12,6 +12,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@supabase/supabase-js": "^2.108.2",
     "autonodeapi": "^1.0.8",
     "axios": "^1.11.0",
     "bcrypt": "^6.0.0",

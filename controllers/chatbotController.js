@@ -12,6 +12,12 @@ import axios from "axios";
 import { DateTime } from "luxon";
 import { extractTextFromFile } from "../utils/extractTextFromFile.js";
 import { removeFile } from "../utils/upload.js";
+import {
+  getBusinessBySlug,
+  checkReservationAvailability,
+  createReservation,
+} from "../utils/reservationService.js";
+
 // List of all fields allowed to be updated
 const ALLOWED_FIELDS = [
   "allowedDomains",
@@ -569,11 +575,108 @@ if (!botReply && !inAnyBookingFlow && lowerMsg === "meeting") {
 }
 
 if (!botReply && (session.bookingType === "reservation" || inReservationFlow)) {
-  botReply =
-    "Reservation booking through the chatbot is being prepared. For now, please use the reservation form. Type **cancel** to stop.";
+  switch (session.reservationStep) {
+    case "askDate":
+      session.reservationDate = message.trim();
+      session.reservationStep = "askTime";
+      botReply = "Great. What time would you like? Please use HH:MM format, for example 19:00.";
+      break;
 
-  // This is temporary for Phase 1.
-  // In Phase 2, this section will become the real reservation flow.
+    case "askTime":
+      session.reservationTime = message.trim();
+      session.reservationStep = "askPartySize";
+      botReply = "How many people is the reservation for?";
+      break;
+
+    case "askPartySize":
+      if (isNaN(Number(message)) || Number(message) < 1) {
+        botReply = "Please enter a valid number of guests.";
+        break;
+      }
+
+      session.reservationPartySize = Number(message);
+      session.reservationStep = "askName";
+      botReply = "Please provide the reservation name.";
+      break;
+
+    case "askName":
+      session.reservationName = message.trim();
+      session.reservationStep = "askPhone";
+      botReply = "Please provide your phone number.";
+      break;
+
+    case "askPhone":
+      session.reservationPhone = message.trim();
+      session.reservationStep = "askSpecialRequest";
+      botReply = "Any special requests? Type **none** if there are no special requests.";
+      break;
+
+    case "askSpecialRequest": {
+      session.reservationSpecialRequest =
+        lowerMsg === "none" ? "" : message.trim();
+
+      try {
+        const businessSlug =
+          session.reservationBusinessSlug ||
+          process.env.RESERVATION_BUSINESS_SLUG ||
+          "dim-sum-dragon";
+
+        const business = await getBusinessBySlug(businessSlug);
+
+        const available = await checkReservationAvailability({
+          businessId: business.id,
+          reservationDate: session.reservationDate,
+          reservationTime: session.reservationTime,
+          partySize: session.reservationPartySize,
+        });
+
+        if (!available) {
+          botReply =
+            "Sorry, that reservation slot is fully booked. Please try another time.";
+          session.reservationStep = "askTime";
+          break;
+        }
+
+        const reservation = await createReservation({
+          businessId: business.id,
+          customerName: session.reservationName,
+          phone: session.reservationPhone,
+          reservationDate: session.reservationDate,
+          reservationTime: session.reservationTime,
+          partySize: session.reservationPartySize,
+          specialRequest: session.reservationSpecialRequest,
+        });
+
+        botReply = `✅ Reservation confirmed!
+
+**Reference:** ${reservation.reservation_reference}  
+**Name:** ${reservation.customer_name}  
+**Date:** ${reservation.reservation_date}  
+**Time:** ${reservation.reservation_time}  
+**Party size:** ${reservation.party_size}
+
+Your reservation has been added to the reservation dashboard.`;
+
+        resetBookingSession(session);
+      } catch (err) {
+        console.error("Reservation booking error:", err);
+
+        botReply =
+          "Sorry, I could not create the reservation right now. Please try again or use the reservation form.";
+
+        resetBookingSession(session);
+      }
+
+      break;
+    }
+
+    default:
+      session.bookingType = "reservation";
+      session.reservationStep = "askDate";
+      botReply =
+        "Sure, I can help with that reservation. Please provide the date in YYYY-MM-DD format.";
+      break;
+  }
 }
 
 if (!botReply && (session.bookingType === "appointment" || inAppointmentFlow)) {
