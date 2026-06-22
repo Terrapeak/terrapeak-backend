@@ -56,6 +56,13 @@ reservationName: String,
 reservationPhone: String,
 reservationSpecialRequest: String,
 
+cancelReservationStep: String,
+cancelReservationId: String,
+cancelReservationOptions: {
+  type: [String],
+  default: [],
+},
+
 appointmentStep: String,
 appointmentDate: String,
 appointmentName: String,

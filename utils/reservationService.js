@@ -118,3 +118,63 @@ export async function createReservation({
 
   return data;
 }
+
+export async function findActiveReservationsByReference({
+  businessId,
+  reservationReference,
+}) {
+  const { data, error } = await supabase
+    .from("reservations")
+    .select("*")
+    .eq("business_id", businessId)
+    .eq("reservation_reference", reservationReference)
+    .eq("status", "confirmed")
+    .order("reservation_date", { ascending: true })
+    .order("reservation_time", { ascending: true });
+
+  if (error) {
+    throw new Error("Could not search reservation by reference");
+  }
+
+  return data || [];
+}
+
+export async function findActiveReservationsByPhone({
+  businessId,
+  phone,
+}) {
+  const { data, error } = await supabase
+    .from("reservations")
+    .select("*")
+    .eq("business_id", businessId)
+    .eq("phone", phone)
+    .eq("status", "confirmed")
+    .order("reservation_date", { ascending: true })
+    .order("reservation_time", { ascending: true });
+
+  if (error) {
+    throw new Error("Could not search reservations by phone");
+  }
+
+  return data || [];
+}
+
+export async function cancelReservationById({
+  businessId,
+  reservationId,
+}) {
+  const { data, error } = await supabase
+    .from("reservations")
+    .update({ status: "cancelled" })
+    .eq("business_id", businessId)
+    .eq("id", reservationId)
+    .eq("status", "confirmed")
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error("Could not cancel reservation");
+  }
+
+  return data;
+}

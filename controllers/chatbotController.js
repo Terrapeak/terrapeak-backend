@@ -16,6 +16,9 @@ import {
   getBusinessBySlug,
   checkReservationAvailability,
   createReservation,
+  findActiveReservationsByReference,
+  findActiveReservationsByPhone,
+  cancelReservationById,
 } from "../utils/reservationService.js";
 
 // List of all fields allowed to be updated
@@ -355,6 +358,14 @@ const isAppointmentCancelRequest =
 
 const cancelRequested = isSimpleCancel || isAppointmentCancelRequest;
 
+const isReservationCancelRequest =
+  lowerMsg.includes("cancel") &&
+  (
+    lowerMsg.includes("reservation") ||
+    lowerMsg.includes("table") ||
+    lowerMsg.includes("booking")
+  );
+
 const isInsideBookingFlow =
   session.appointmentStep !== null ||
   session.reservationStep !== null ||
@@ -365,6 +376,150 @@ const isInsideBookingFlow =
 if (!botReply && isSimpleCancel && isInsideBookingFlow) {
   resetBookingSession(session);
   botReply = "Okay 👍 I cancelled the current booking process. How else can I help you?";
+}
+
+if (!botReply && session.cancelReservationStep === "askLookup") {
+  const lookupValue = message.trim();
+
+  try {
+    const businessSlug =
+      session.reservationBusinessSlug ||
+      process.env.RESERVATION_BUSINESS_SLUG ||
+      "dim-sum-dragon";
+
+    const business = await getBusinessBySlug(businessSlug);
+
+    let reservations = [];
+
+    if (lookupValue.includes("-")) {
+      reservations = await findActiveReservationsByReference({
+        businessId: business.id,
+        reservationReference: lookupValue,
+      });
+    } else {
+      reservations = await findActiveReservationsByPhone({
+        businessId: business.id,
+        phone: lookupValue,
+      });
+    }
+
+    if (!reservations.length) {
+      session.cancelReservationStep = null;
+      session.cancelReservationId = null;
+      session.cancelReservationOptions = [];
+
+      botReply =
+        "I could not find an active reservation with that reference or phone number.";
+    } else if (reservations.length === 1) {
+      const reservation = reservations[0];
+
+      session.cancelReservationStep = "confirmCancel";
+      session.cancelReservationId = reservation.id.toString();
+      session.cancelReservationOptions = [];
+
+      botReply = `I found this reservation:
+
+${formatReservationForChat(reservation)}
+
+Are you sure you want to cancel this reservation? Please reply **yes** or **no**.`;
+    } else {
+      session.cancelReservationStep = "selectReservationToCancel";
+      session.cancelReservationOptions = reservations.map((reservation) =>
+        reservation.id.toString()
+      );
+
+      const reservationList = reservations
+        .map((reservation, index) => {
+          return `**${index + 1}.** ${formatReservationShortForChat(reservation)}`;
+        })
+        .join("\n");
+
+      botReply = `I found multiple active reservations:
+
+${reservationList}
+
+Which reservation would you like to cancel? Please reply with the reservation number.`;
+    }
+  } catch (err) {
+    console.error("Reservation lookup error:", err);
+
+    session.cancelReservationStep = null;
+    session.cancelReservationId = null;
+    session.cancelReservationOptions = [];
+
+    botReply =
+      "Sorry, I could not look up your reservation right now. Please try again later.";
+  }
+}
+
+if (!botReply && session.cancelReservationStep === "selectReservationToCancel") {
+  const choice = parseInt(message.trim(), 10);
+  const reservationId = session.cancelReservationOptions?.[choice - 1];
+
+  if (!reservationId) {
+    botReply =
+      "Please reply with a valid reservation number from the list.";
+  } else {
+    session.cancelReservationStep = "confirmCancel";
+    session.cancelReservationId = reservationId;
+    session.cancelReservationOptions = [];
+
+    botReply =
+      "Are you sure you want to cancel this reservation? Please reply **yes** or **no**.";
+  }
+}
+
+if (!botReply && session.cancelReservationStep === "confirmCancel") {
+  if (lowerMsg === "yes") {
+    try {
+      const businessSlug =
+        session.reservationBusinessSlug ||
+        process.env.RESERVATION_BUSINESS_SLUG ||
+        "dim-sum-dragon";
+
+      const business = await getBusinessBySlug(businessSlug);
+
+      const reservation = await cancelReservationById({
+        businessId: business.id,
+        reservationId: session.cancelReservationId,
+      });
+
+      session.cancelReservationStep = null;
+      session.cancelReservationId = null;
+      session.cancelReservationOptions = [];
+
+      botReply = `✅ Your reservation has been cancelled successfully.
+
+**Reference:** ${reservation.reservation_reference}  
+**Date:** ${reservation.reservation_date}  
+**Time:** ${reservation.reservation_time}`;
+    } catch (err) {
+      console.error("Reservation cancellation error:", err);
+
+      session.cancelReservationStep = null;
+      session.cancelReservationId = null;
+      session.cancelReservationOptions = [];
+
+      botReply =
+        "Sorry, I could not cancel the reservation right now. Please try again or use the reservation form.";
+    }
+  } else if (lowerMsg === "no") {
+    session.cancelReservationStep = null;
+    session.cancelReservationId = null;
+    session.cancelReservationOptions = [];
+
+    botReply = "No problem. Your reservation remains confirmed.";
+  } else {
+    botReply =
+      "Please reply **yes** to cancel the reservation or **no** to keep it.";
+  }
+}
+
+if (!botReply && isReservationCancelRequest) {
+  session.cancelReservationStep = "askLookup";
+
+  botReply =
+    "Sure. Please provide your reservation reference number or the phone number used for the reservation.";
 }
 
 if (!botReply && session.cancelStep === "selectAppointmentToCancel") {
@@ -1205,6 +1360,19 @@ export const getUsersChatlog = asyncHandler(async (req, res, next) => {
     next(error);
   }
 });
+
+function formatReservationForChat(reservation) {
+  return `**Reference:** ${reservation.reservation_reference}  
+**Name:** ${reservation.customer_name}  
+**Phone:** ${reservation.phone}  
+**Date:** ${reservation.reservation_date}  
+**Time:** ${reservation.reservation_time}  
+**Party size:** ${reservation.party_size}`;
+}
+
+function formatReservationShortForChat(reservation) {
+  return `${reservation.reservation_reference} - ${reservation.reservation_date} at ${reservation.reservation_time} (${reservation.customer_name}, party of ${reservation.party_size})`;
+}
 
 function formatAppointmentForChat(appointment, slot) {
   let appointmentDate = "Not available";
