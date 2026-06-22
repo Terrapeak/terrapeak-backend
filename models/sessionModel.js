@@ -53,8 +53,13 @@ appointmentName: String,
 appointmentEmail: String,
 appointmentPhone: String,
 
+
 cancelStep: String,
 cancelAppointmentId: String,
+cancelAppointmentOptions: {
+  type: [String],
+  default: [],
+},
 
 // appointmentAddress: String,
 tempSlots: Array,

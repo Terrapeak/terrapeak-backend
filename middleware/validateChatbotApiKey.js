@@ -28,9 +28,9 @@ export const verifyDomain = async (req, res, next) => {
   const apiKey = req.headers["x-api-key"];
   const parentDomain = req.headers["x-parent-domain"];
 
-  console.log("VERIFY DOMAIN RUNNING");
-  console.log("apiKey:", apiKey);
-  console.log("parentDomain:", parentDomain);
+  // console.log("VERIFY DOMAIN RUNNING"); (only for debugging)
+  // console.log("apiKey:", apiKey); (only for debugging)
+  // console.log("parentDomain:", parentDomain); (only for debugging)
 
   if (!apiKey) {
     return res.status(401).json({ error: "API key missing" });
@@ -43,10 +43,10 @@ export const verifyDomain = async (req, res, next) => {
     return res.status(403).json({ error: "Invalid API key" });
   }
 
-  console.log("Settings found:", settings._id.toString());
+  // console.log("Settings found:", settings._id.toString()); (only for debugging)
 
   if (parentDomain && parentDomain.includes("localhost")) {
-    console.log("Localhost allowed");
+            // console.log("Localhost allowed"); (only for debugging)
     req.chatbot = settings;
     return next();
   }

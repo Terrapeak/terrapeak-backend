@@ -266,7 +266,8 @@ export const askGemini = asyncHandler(async (req, res) => {
   ================================ */
   const settings = await ChatbotSettings.findOne({ apiKey });
 
-  console.log("setting ", settings);
+     // use only when debugging 
+  // console.log("setting ", settings);
 
   if (!settings) {
     return res.status(403).json({ success: false, error: "Invalid API key." });
@@ -330,8 +331,8 @@ export const askGemini = asyncHandler(async (req, res) => {
   const lowerMsg = message.toLowerCase().trim();
   let botReply = null;
 
-  // ✅ Cancel appointment anytime
-  const isSimpleCancel =
+ // ✅ Cancel current flow or existing appointment
+const isSimpleCancel =
   lowerMsg === "cancel" ||
   lowerMsg === "stop" ||
   lowerMsg === "exit";
@@ -347,6 +348,18 @@ const isAppointmentCancelRequest =
   );
 
 const cancelRequested = isSimpleCancel || isAppointmentCancelRequest;
+
+const isInsideBookingFlow =
+  session.appointmentStep !== null ||
+  session.reservationStep !== null ||
+  session.bookingType === "appointment" ||
+  session.bookingType === "reservation" ||
+  session.bookingType === "clarify";
+
+if (!botReply && isSimpleCancel && isInsideBookingFlow) {
+  resetBookingSession(session);
+  botReply = "Okay 👍 I cancelled the current booking process. How else can I help you?";
+}
 
 if (!botReply && session.cancelStep === "selectAppointmentToCancel") {
   const choice = parseInt(message.trim(), 10);
