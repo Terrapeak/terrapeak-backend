@@ -69,6 +69,9 @@ appointmentName: String,
 appointmentEmail: String,
 appointmentPhone: String,
 
+cancelTypeStep: String,
+forceAppointmentCancel: Boolean,
+cancelAppointmentLookupStep: String,
 
 cancelStep: String,
 cancelAppointmentId: String,

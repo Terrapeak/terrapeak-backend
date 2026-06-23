@@ -340,11 +340,19 @@ export const askGemini = asyncHandler(async (req, res) => {
   const lowerMsg = message.toLowerCase().trim();
   let botReply = null;
 
- // ✅ Cancel current flow or existing appointment
-const isSimpleCancel =
+   // ✅ Cancel current flow or existing appointment
+  const isSimpleCancel =
   lowerMsg === "cancel" ||
   lowerMsg === "stop" ||
   lowerMsg === "exit";
+
+const isReservationCancelRequest =
+  lowerMsg.includes("cancel") &&
+  (
+    lowerMsg.includes("reservation") ||
+    lowerMsg.includes("table") ||
+    lowerMsg.includes("booking")
+  );
 
 const isAppointmentCancelRequest =
   lowerMsg.includes("cancel") &&
@@ -358,13 +366,23 @@ const isAppointmentCancelRequest =
 
 const cancelRequested = isSimpleCancel || isAppointmentCancelRequest;
 
-const isReservationCancelRequest =
-  lowerMsg.includes("cancel") &&
-  (
-    lowerMsg.includes("reservation") ||
-    lowerMsg.includes("table") ||
-    lowerMsg.includes("booking")
-  );
+if (
+  !botReply &&
+  isSimpleCancel &&
+  !session.cancelStep &&
+  !session.cancelTypeStep
+) {
+  session.cancelTypeStep = "chooseCancelType";
+
+  botReply = `What would you like to cancel?
+
+1. Appointment
+2. Reservation
+
+Please reply with 1 or 2.`;
+}
+
+
 
 const isInsideBookingFlow =
   session.appointmentStep !== null ||
@@ -452,6 +470,30 @@ Which reservation would you like to cancel? Please reply with the reservation nu
   }
 }
 
+if (!botReply && session.cancelTypeStep === "chooseCancelType") {
+  if (lowerMsg === "1" || lowerMsg.includes("appointment")) {
+  session.cancelTypeStep = null;
+  session.cancelAppointmentLookupStep = "askPhone";
+
+  botReply =
+    "Okay. Please provide the phone number used for the appointment.";
+}
+
+  else if (lowerMsg === "2" || lowerMsg.includes("reservation")) {
+    session.cancelTypeStep = null;
+
+    session.reservationCancelStep = "awaitingLookup";
+
+    botReply =
+      "Sure. Please provide your reservation reference number or the phone number used for the reservation.";
+  }
+
+  else {
+    botReply =
+      "Please reply with:\n\n1. Appointment\n2. Reservation";
+  }
+}
+
 if (!botReply && session.cancelReservationStep === "selectReservationToCancel") {
   const choice = parseInt(message.trim(), 10);
   const reservationId = session.cancelReservationOptions?.[choice - 1];
@@ -520,6 +562,59 @@ if (!botReply && isReservationCancelRequest) {
 
   botReply =
     "Sure. Please provide your reservation reference number or the phone number used for the reservation.";
+}
+
+if (!botReply && session.cancelAppointmentLookupStep === "askPhone") {
+  const phone = message.trim();
+
+  const activeAppointments = await Appointment.find({
+    ownerId: settings.userId,
+    phone,
+    status: { $ne: "cancelled" },
+  })
+    .populate("timeSlotId")
+    .sort({ createdAt: -1 });
+
+  session.cancelAppointmentLookupStep = null;
+
+  if (!activeAppointments.length) {
+    botReply =
+      "I could not find an active appointment with that phone number.";
+  } else if (activeAppointments.length === 1) {
+    const appointment = activeAppointments[0];
+    const slot = appointment.timeSlotId;
+
+    const formatted = formatAppointmentForChat(appointment, slot);
+
+    session.cancelStep = "confirmCancel";
+    session.cancelAppointmentId = appointment._id.toString();
+
+    botReply = `I found this appointment:
+
+${formatted}
+
+Are you sure you want to cancel this appointment? Please reply **yes** or **no**.`;
+  } else {
+    session.cancelStep = "selectAppointmentToCancel";
+    session.cancelAppointmentOptions = activeAppointments.map((appointment) =>
+      appointment._id.toString()
+    );
+
+    const appointmentList = activeAppointments
+      .map((appointment, index) => {
+        const slot = appointment.timeSlotId;
+        const formatted = formatAppointmentShortForChat(appointment, slot);
+
+        return `**${index + 1}.** ${formatted}`;
+      })
+      .join("\n");
+
+    botReply = `I found multiple active appointments with that phone number:
+
+${appointmentList}
+
+Which appointment would you like to cancel? Please reply with the appointment number.`;
+  }
 }
 
 if (!botReply && session.cancelStep === "selectAppointmentToCancel") {
@@ -600,8 +695,10 @@ if (!botReply && session.cancelStep === "confirmCancel") {
   }
 }
 
-if (!botReply && cancelRequested) {
-  const activeAppointments = await Appointment.find({
+if (!botReply && isAppointmentCancelRequest) {
+    session.forceAppointmentCancel = false;
+
+    const activeAppointments = await Appointment.find({
     ownerId: settings.userId,
     status: { $ne: "cancelled" },
   })
