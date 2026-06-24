@@ -178,3 +178,35 @@ export async function cancelReservationById({
 
   return data;
 }
+
+export async function updateReservationById({
+  businessId,
+  reservationId,
+  reservationDate,
+  reservationTime,
+  partySize,
+  specialRequest,
+  customData = {},
+}) {
+
+  const { data, error } = await supabase
+    .from("reservations")
+    .update({
+  reservation_date: reservationDate,
+  reservation_time: reservationTime,
+  party_size: Number(partySize),
+  special_request: specialRequest,
+  custom_data: customData,
+})
+    .eq("business_id", businessId)
+    .eq("id", reservationId)
+    .eq("status", "confirmed")
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error("Could not update reservation");
+  }
+
+  return data;
+}

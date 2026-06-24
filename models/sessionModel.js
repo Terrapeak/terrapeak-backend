@@ -56,6 +56,17 @@ reservationName: String,
 reservationPhone: String,
 reservationSpecialRequest: String,
 
+reservationRescheduleStep: String,
+rescheduleReservationId: String,
+rescheduleReservationOptions: {
+  type: [String],
+  default: [],
+},
+rescheduleReservationData: {
+  type: mongoose.Schema.Types.Mixed,
+  default: {},
+},
+
 cancelReservationStep: String,
 cancelReservationId: String,
 cancelReservationOptions: {
