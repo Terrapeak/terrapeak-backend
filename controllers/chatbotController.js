@@ -364,11 +364,23 @@ const isAppointmentCancelRequest =
     lowerMsg.includes("scheduled")
   );
 
-const cancelRequested = isSimpleCancel || isAppointmentCancelRequest;
+const isAppointmentRescheduleRequest =
+  lowerMsg === "reschedule" ||
+  lowerMsg.includes("reschedule appointment") ||
+  lowerMsg.includes("reschedule my appointment") ||
+  lowerMsg.includes("reschedule meeting") ||
+  lowerMsg.includes("reschedule my meeting") ||
+  lowerMsg.includes("reschedule callback") ||
+  lowerMsg.includes("change my appointment") ||
+  lowerMsg.includes("change appointment") ||
+  lowerMsg.includes("move my appointment") ||
+  lowerMsg.includes("move appointment");
+
+
 
 if (
   !botReply &&
-  isSimpleCancel &&
+  lowerMsg === "cancel" &&
   !session.cancelStep &&
   !session.cancelTypeStep
 ) {
@@ -389,11 +401,32 @@ const isInsideBookingFlow =
   session.reservationStep !== null ||
   session.bookingType === "appointment" ||
   session.bookingType === "reservation" ||
-  session.bookingType === "clarify";
+  session.bookingType === "clarify" ||
+  session.rescheduleStep !== null ||
+  session.rescheduleAppointmentId !== null;
 
-if (!botReply && isSimpleCancel && isInsideBookingFlow) {
+if (!botReply && isSimpleCancel) {
   resetBookingSession(session);
-  botReply = "Okay 👍 I cancelled the current booking process. How else can I help you?";
+
+  session.cancelTypeStep = null;
+  session.forceAppointmentCancel = false;
+
+  session.cancelStep = null;
+  session.cancelAppointmentId = null;
+  session.cancelAppointmentOptions = [];
+  session.cancelAppointmentLookupStep = null;
+
+  session.cancelReservationStep = null;
+  session.cancelReservationId = null;
+  session.cancelReservationOptions = [];
+
+  session.rescheduleStep = null;
+  session.rescheduleAppointmentId = null;
+  session.rescheduleAppointmentOptions = [];
+  session.isRescheduling = false;
+
+  botReply =
+    "Okay 👍 I cancelled the current process. How else can I help you?";
 }
 
 if (!botReply && session.cancelReservationStep === "askLookup") {
@@ -564,6 +597,60 @@ if (!botReply && isReservationCancelRequest) {
     "Sure. Please provide your reservation reference number or the phone number used for the reservation.";
 }
 
+if (!botReply && session.rescheduleStep === "askPhone") {
+  const phone = message.trim();
+
+  const activeAppointments = await Appointment.find({
+    ownerId: settings.userId,
+    phone,
+    status: { $ne: "cancelled" },
+  })
+    .populate("timeSlotId")
+    .sort({ createdAt: -1 });
+
+  if (!activeAppointments.length) {
+    session.rescheduleStep = null;
+    session.rescheduleAppointmentId = null;
+    session.rescheduleAppointmentOptions = [];
+
+    botReply =
+      "I could not find an active appointment with that phone number.";
+  } else if (activeAppointments.length === 1) {
+    const appointment = activeAppointments[0];
+    const slot = appointment.timeSlotId;
+    const formatted = formatAppointmentForChat(appointment, slot);
+
+    session.rescheduleStep = "confirmReschedule";
+    session.rescheduleAppointmentId = appointment._id.toString();
+
+    botReply = `I found this appointment:
+
+${formatted}
+
+Do you want to reschedule this appointment? Please reply **yes** or **no**.`;
+  } else {
+    session.rescheduleStep = "selectAppointmentToReschedule";
+    session.rescheduleAppointmentOptions = activeAppointments.map((appointment) =>
+      appointment._id.toString()
+    );
+
+    const appointmentList = activeAppointments
+      .map((appointment, index) => {
+        const slot = appointment.timeSlotId;
+        const formatted = formatAppointmentShortForChat(appointment, slot);
+
+        return `**${index + 1}.** ${formatted}`;
+      })
+      .join("\n");
+
+    botReply = `I found multiple active appointments with that phone number:
+
+${appointmentList}
+
+Which appointment would you like to reschedule? Please reply with the appointment number.`;
+  }
+}
+
 if (!botReply && session.cancelAppointmentLookupStep === "askPhone") {
   const phone = message.trim();
 
@@ -617,6 +704,44 @@ Which appointment would you like to cancel? Please reply with the appointment nu
   }
 }
 
+if (!botReply && session.rescheduleStep === "selectAppointmentToReschedule") {
+  const choice = parseInt(message.trim(), 10);
+  const appointmentId = session.rescheduleAppointmentOptions?.[choice - 1];
+
+  if (!appointmentId) {
+    botReply =
+      "Please reply with a valid appointment number from the list.";
+  } else {
+    const appointment = await Appointment.findById(appointmentId).populate(
+      "timeSlotId"
+    );
+
+    if (!appointment || appointment.status === "cancelled") {
+      session.rescheduleStep = null;
+      session.rescheduleAppointmentId = null;
+      session.rescheduleAppointmentOptions = [];
+
+      botReply =
+        "I could not find that active appointment anymore.";
+    } else {
+      const formatted = formatAppointmentForChat(
+        appointment,
+        appointment.timeSlotId
+      );
+
+      session.rescheduleStep = "confirmReschedule";
+      session.rescheduleAppointmentId = appointment._id.toString();
+      session.rescheduleAppointmentOptions = [];
+
+      botReply = `You selected this appointment:
+
+${formatted}
+
+Do you want to reschedule this appointment? Please reply **yes** or **no**.`;
+    }
+  }
+}
+
 if (!botReply && session.cancelStep === "selectAppointmentToCancel") {
   const choice = parseInt(message.trim(), 10);
   const appointmentId = session.cancelAppointmentOptions?.[choice - 1];
@@ -650,6 +775,53 @@ ${formatted}
 
 Are you sure you want to cancel this appointment? Please reply **yes** or **no**.`;
     }
+  }
+}
+
+if (!botReply && session.rescheduleStep === "confirmReschedule") {
+  if (lowerMsg === "yes") {
+    const oldAppointment = await Appointment.findById(
+      session.rescheduleAppointmentId
+    );
+
+    if (!oldAppointment || oldAppointment.status === "cancelled") {
+      session.rescheduleStep = null;
+      session.rescheduleAppointmentId = null;
+      session.rescheduleAppointmentOptions = [];
+
+      botReply =
+        "I could not find that active appointment anymore.";
+    } else {
+      const owner = await User.findById(oldAppointment.ownerId);
+
+      if (oldAppointment.googleEventId && owner) {
+        await deleteGoogleEvent(owner, oldAppointment.googleEventId);
+      }
+
+      session.rescheduleStep = null;
+session.rescheduleAppointmentOptions = [];
+session.isRescheduling = true;
+
+session.bookingType = "appointment";
+session.appointmentStep = "askDate";
+
+session.appointmentName = oldAppointment.name;
+session.appointmentEmail = oldAppointment.email;
+session.appointmentPhone = oldAppointment.phone;
+
+botReply =
+  "Okay, I found your existing appointment. Please provide the new appointment date in YYYY-MM-DD format. Your old appointment will stay active until the new one is successfully booked.";
+    }
+  } else if (lowerMsg === "no") {
+    session.rescheduleStep = null;
+    session.rescheduleAppointmentId = null;
+    session.rescheduleAppointmentOptions = [];
+    session.isRescheduling = false;
+
+    botReply = "No problem. Your appointment remains scheduled.";
+  } else {
+    botReply =
+      "Please reply **yes** to reschedule this appointment or **no** to keep it.";
   }
 }
 
@@ -768,6 +940,17 @@ const inAppointmentFlow =
 const inReservationFlow =
   session.bookingType === "reservation" && session.reservationStep !== null;
 const inAnyBookingFlow = inAppointmentFlow || inReservationFlow;
+
+const cancelRequested = isSimpleCancel || isAppointmentCancelRequest;
+
+if (!botReply && isAppointmentRescheduleRequest) {
+  session.rescheduleStep = "askPhone";
+  session.rescheduleAppointmentId = null;
+  session.rescheduleAppointmentOptions = [];
+
+  botReply =
+    "Sure. Please provide the phone number used for the appointment you want to reschedule.";
+}
 
 if (!botReply && !inAnyBookingFlow && detectedBookingType === "unknown") {
   session.bookingType = "clarify";
@@ -1028,10 +1211,17 @@ if (!botReply && (session.bookingType === "appointment" || inAppointmentFlow)) {
         }
 
         session.selectedSlot = slotId;
-        session.appointmentStep = "askName";
 
-        botReply = "Please provide your full name.";
-        break;
+if (session.isRescheduling) {
+  session.appointmentStep = "askPhone";
+  botReply =
+    "I will use your existing appointment details. Please confirm your phone number by typing it again.";
+} else {
+  session.appointmentStep = "askName";
+  botReply = "Please provide your full name.";
+}
+
+break;
       }
 
       /* ---------------------------
@@ -1109,9 +1299,31 @@ if (!botReply && (session.bookingType === "appointment" || inAppointmentFlow)) {
           await slot.save();
           await appointment.save();
 
-          botReply = `✅ **Appointment Confirmed!**
+if (session.isRescheduling && session.rescheduleAppointmentId) {
+  const oldAppointment = await Appointment.findById(
+    session.rescheduleAppointmentId
+  );
+
+     if (oldAppointment && oldAppointment.status !== "cancelled") {
+
+const owner = await User.findById(oldAppointment.ownerId);
+    if (oldAppointment.googleEventId && owner) {
+      await deleteGoogleEvent(owner, oldAppointment.googleEventId);
+    }
+
+    oldAppointment.status = "cancelled";
+    await oldAppointment.save();
+
+    await TimeSlot.findByIdAndUpdate(oldAppointment.timeSlotId, {
+      isBooked: false,
+    });
+  }
+}
+
+botReply = `✅ **Appointment Confirmed!**
 
 Great news — your appointment is now successfully booked!
+Your previous appointment has been cancelled.
 
 **Meeting Link:**  
 ${meeting.hangoutLink}
@@ -1126,7 +1338,9 @@ See you soon. 😊
           session.appointmentStep = null;
           session.tempSlots = [];
           session.selectedSlot = null;
-        } catch (err) {
+          session.isRescheduling = false;
+          session.rescheduleAppointmentId = null;
+          } catch (err) {
           console.error("Booking Error:", err);
 
           botReply =

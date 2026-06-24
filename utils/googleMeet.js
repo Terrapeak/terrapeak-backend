@@ -52,6 +52,15 @@ export const createGoogleMeet = async ({
   attendeeName,
 }) => {
   try {
+    console.log("ALLOW_FAKE_GOOGLE_MEET:", process.env.ALLOW_FAKE_GOOGLE_MEET);
+        
+    // LOCAL TESTING ONLY
+    if (process.env.ALLOW_FAKE_GOOGLE_MEET === "true") {
+      return {
+        hangoutLink: "https://meet.google.com/local-test-meet",
+        eventId: `local-test-${Date.now()}`,
+      };
+    }
     const user = await User.findById(userId);
     if (!user || !user.isGoogleOauth) return null;
 

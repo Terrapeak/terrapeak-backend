@@ -72,6 +72,16 @@ appointmentPhone: String,
 cancelTypeStep: String,
 forceAppointmentCancel: Boolean,
 cancelAppointmentLookupStep: String,
+rescheduleStep: String,
+rescheduleAppointmentId: String,
+rescheduleAppointmentOptions: {
+  type: [String],
+  default: [],
+},
+isRescheduling: {
+  type: Boolean,
+  default: false,
+},
 
 cancelStep: String,
 cancelAppointmentId: String,
