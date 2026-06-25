@@ -433,7 +433,10 @@ const isInsideBookingFlow =
   session.cancelReservationStep !== null ||
 
   session.rescheduleStep !== null ||
-  session.rescheduleAppointmentId !== null;
+  session.rescheduleAppointmentId !== null ||
+
+  session.reservationRescheduleStep !== null ||
+  session.rescheduleReservationId !== null;
 
 if (!botReply && isSimpleCancel && isInsideBookingFlow) {
   resetBookingSession(session);
@@ -454,6 +457,11 @@ if (!botReply && isSimpleCancel && isInsideBookingFlow) {
   session.rescheduleAppointmentId = null;
   session.rescheduleAppointmentOptions = [];
   session.isRescheduling = false;
+
+  session.reservationRescheduleStep = null;
+  session.rescheduleReservationId = null;
+  session.rescheduleReservationOptions = [];
+  session.rescheduleReservationData = {};
 
   botReply =
     "Okay 👍 I cancelled the current process. How else can I help you?";
@@ -873,35 +881,26 @@ if (!botReply && session.reservationRescheduleStep === "askSpecialRequest") {
       return;
     }
 
-    const updatedReservation = await updateReservationById({
-      businessId: business.id,
-      reservationId: session.rescheduleReservationId,
-      reservationDate: session.rescheduleReservationData.reservation_date,
-      reservationTime: session.rescheduleReservationData.reservation_time,
-      partySize: session.rescheduleReservationData.party_size,
-      specialRequest: session.rescheduleReservationData.special_request,
-      customData: session.rescheduleReservationData.custom_data || {},
-    });
+    session.reservationRescheduleStep = "confirmUpdate";
 
-    session.reservationRescheduleStep = null;
-    session.rescheduleReservationId = null;
-    session.rescheduleReservationOptions = [];
-    session.rescheduleReservationData = {};
+const customData =
+  session.rescheduleReservationData.custom_data || {};
 
-    const customData = updatedReservation.custom_data || {};
+botReply = `Please confirm the updated reservation details:
 
-botReply = `✅ Your reservation has been updated successfully.
+Reference: ${session.rescheduleReservationData.reservation_reference}
 
-Reference: ${updatedReservation.reservation_reference}
-
-Date: ${updatedReservation.reservation_date}
-Time: ${updatedReservation.reservation_time}
-Party size: ${updatedReservation.party_size}
+Date: ${session.rescheduleReservationData.reservation_date}
+Time: ${session.rescheduleReservationData.reservation_time}
+Party size: ${session.rescheduleReservationData.party_size}
 
 Occasion: ${customData.Occasion || "None"}
 Allergies: ${customData.Allergies || "None"}
 Seating Preference: ${customData["Seating Preference"] || "None"}
-Special Request: ${updatedReservation.special_request || "None"}`;
+Special Request: ${session.rescheduleReservationData.special_request || "None"}
+
+Reply YES to update the reservation.
+Reply NO to cancel the reschedule request.`;
 
   } catch (err) {
     console.error("Reservation reschedule update error:", err);
@@ -913,6 +912,69 @@ Special Request: ${updatedReservation.special_request || "None"}`;
 
     botReply =
       "Sorry, I could not update the reservation right now. Please try again or use the reservation form.";
+  }
+}
+
+if (!botReply && session.reservationRescheduleStep === "confirmUpdate") {
+  if (lowerMsg === "yes" || lowerMsg === "y") {
+    try {
+      const businessSlug =
+        session.reservationBusinessSlug ||
+        process.env.RESERVATION_BUSINESS_SLUG ||
+        "dim-sum-dragon";
+
+      const business = await getBusinessBySlug(businessSlug);
+
+      const updatedReservation = await updateReservationById({
+        businessId: business.id,
+        reservationId: session.rescheduleReservationId,
+        reservationDate: session.rescheduleReservationData.reservation_date,
+        reservationTime: session.rescheduleReservationData.reservation_time,
+        partySize: session.rescheduleReservationData.party_size,
+        specialRequest: session.rescheduleReservationData.special_request,
+        customData: session.rescheduleReservationData.custom_data || {},
+      });
+
+      session.reservationRescheduleStep = null;
+      session.rescheduleReservationId = null;
+      session.rescheduleReservationOptions = [];
+      session.rescheduleReservationData = {};
+
+      const customData = updatedReservation.custom_data || {};
+
+      botReply = `✅ Your reservation has been updated successfully.
+
+Reference: ${updatedReservation.reservation_reference}
+
+Date: ${updatedReservation.reservation_date}
+Time: ${updatedReservation.reservation_time}
+Party size: ${updatedReservation.party_size}
+
+Occasion: ${customData.Occasion || "None"}
+Allergies: ${customData.Allergies || "None"}
+Seating Preference: ${customData["Seating Preference"] || "None"}
+Special Request: ${updatedReservation.special_request || "None"}`;
+    } catch (err) {
+      console.error("Reservation reschedule confirmation error:", err);
+
+      session.reservationRescheduleStep = null;
+      session.rescheduleReservationId = null;
+      session.rescheduleReservationOptions = [];
+      session.rescheduleReservationData = {};
+
+      botReply =
+        "Sorry, I could not update the reservation right now. Please try again or use the reservation form.";
+    }
+  } else if (lowerMsg === "no" || lowerMsg === "n") {
+    session.reservationRescheduleStep = null;
+    session.rescheduleReservationId = null;
+    session.rescheduleReservationOptions = [];
+    session.rescheduleReservationData = {};
+
+    botReply = "No problem. Your reservation was not changed.";
+  } else {
+    botReply =
+      "Please reply **yes** to update the reservation or **no** to cancel the reschedule request.";
   }
 }
 
