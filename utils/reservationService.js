@@ -24,6 +24,7 @@ export async function checkReservationAvailability({
   reservationDate,
   reservationTime,
   partySize,
+  excludeReservationId = null,
 }) {
   const { data: settings, error: settingsError } = await supabase
     .from("restaurant_settings")
@@ -31,11 +32,50 @@ export async function checkReservationAvailability({
     .eq("business_id", businessId)
     .single();
 
-  if (settingsError) {
+  if (settingsError || !settings) {
+    console.error("Reservation settings error:", settingsError);
     throw new Error("Could not load reservation settings");
   }
 
-  const { data: reservations, error } = await supabase
+  const timeToMinutes = (time) => {
+    if (!time || typeof time !== "string") return null;
+
+    const cleanTime = time.slice(0, 5);
+    const [hours, minutes] = cleanTime.split(":").map(Number);
+
+    if (
+      Number.isNaN(hours) ||
+      Number.isNaN(minutes) ||
+      hours < 0 ||
+      hours > 23 ||
+      minutes < 0 ||
+      minutes > 59
+    ) {
+      return null;
+    }
+
+    return hours * 60 + minutes;
+  };
+
+  const requestedTime = timeToMinutes(reservationTime);
+  const openingTime = timeToMinutes(settings.opening_time);
+  const closingTime = timeToMinutes(settings.closing_time);
+
+  if (requestedTime === null || openingTime === null || closingTime === null) {
+    console.error("Invalid reservation/settings time:", {
+      reservationTime,
+      opening_time: settings.opening_time,
+      closing_time: settings.closing_time,
+    });
+
+    return false;
+  }
+
+  if (requestedTime < openingTime || requestedTime >= closingTime) {
+    return false;
+  }
+
+  let query = supabase
     .from("reservations")
     .select("*")
     .eq("business_id", businessId)
@@ -43,16 +83,23 @@ export async function checkReservationAvailability({
     .eq("reservation_time", reservationTime)
     .eq("status", "confirmed");
 
+  if (excludeReservationId) {
+    query = query.neq("id", String(excludeReservationId));
+  }
+
+  const { data: reservations, error } = await query;
+
   if (error) {
+    console.error("Reservation availability query error:", error);
     throw new Error("Could not check reservation availability");
   }
 
-  const currentGuests = reservations.reduce(
+  const currentGuests = (reservations || []).reduce(
     (total, reservation) => total + Number(reservation.party_size || 0),
     0
   );
 
-  return currentGuests + Number(partySize) <= settings.max_guests_per_slot;
+  return currentGuests + Number(partySize) <= Number(settings.max_guests_per_slot);
 }
 
 export async function generateReservationReference({

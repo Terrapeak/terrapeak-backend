@@ -403,40 +403,24 @@ const isReservationRescheduleRequest =
   lowerMsg.includes("change table booking") ||
   lowerMsg.includes("reschedule table");
 
-if (
-  !botReply &&
-  lowerMsg === "cancel" &&
-  !session.cancelStep &&
-  !session.cancelTypeStep
-) {
-  session.cancelTypeStep = "chooseCancelType";
-
-  botReply =
-  "What would you like to cancel?<br><br>" +
-  "<b>1)</b> Appointment<br>" +
-  "<b>2)</b> Reservation<br><br>" +
-  "Please reply with 1 or 2.";
-}
-
-
-
 const isInsideBookingFlow =
-  session.appointmentStep !== null ||
-  session.reservationStep !== null ||
+  session.appointmentStep != null ||
+  session.reservationStep != null ||
   session.bookingType === "appointment" ||
   session.bookingType === "reservation" ||
   session.bookingType === "clarify" ||
 
-  session.cancelTypeStep !== null ||
-  session.cancelStep !== null ||
-  session.cancelAppointmentLookupStep !== null ||
-  session.cancelReservationStep !== null ||
+  session.cancelTypeStep != null ||
+  session.cancelStep != null ||
+  session.cancelAppointmentLookupStep != null ||
+  session.cancelReservationStep != null ||
+  session.reservationCancelStep != null ||
 
-  session.rescheduleStep !== null ||
-  session.rescheduleAppointmentId !== null ||
+  session.rescheduleStep != null ||
+  session.rescheduleAppointmentId != null ||
 
-  session.reservationRescheduleStep !== null ||
-  session.rescheduleReservationId !== null;
+  session.reservationRescheduleStep != null ||
+  session.rescheduleReservationId != null;
 
 if (!botReply && isSimpleCancel && isInsideBookingFlow) {
   resetBookingSession(session);
@@ -450,6 +434,7 @@ if (!botReply && isSimpleCancel && isInsideBookingFlow) {
   session.cancelAppointmentLookupStep = null;
 
   session.cancelReservationStep = null;
+  session.reservationCancelStep = null;
   session.cancelReservationId = null;
   session.cancelReservationOptions = [];
 
@@ -465,6 +450,21 @@ if (!botReply && isSimpleCancel && isInsideBookingFlow) {
 
   botReply =
     "Okay 👍 I cancelled the current process. How else can I help you?";
+}
+
+if (
+  !botReply &&
+  lowerMsg === "cancel" &&
+  !isInsideBookingFlow
+) {
+  
+  session.cancelTypeStep = "chooseCancelType";
+
+  botReply =
+  "What would you like to cancel?<br><br>" +
+  "<b>1)</b> Appointment<br>" +
+  "<b>2)</b> Reservation<br><br>" +
+  "Please reply with 1 or 2.";
 }
 
 if (!botReply && session.reservationRescheduleStep === "askLookup") {
@@ -737,18 +737,33 @@ if (!botReply && session.reservationRescheduleStep === "askDate") {
 if (!botReply && session.reservationRescheduleStep === "askTime") {
   const currentReservation = session.rescheduleReservationData || {};
 
+  const normalizedTime =
+    lowerMsg === "same"
+      ? currentReservation.reservation_time
+      : message.trim().replace(".", ":");
+
+  const available = await checkReservationAvailability({
+    businessId: currentReservation.business_id,
+    reservationDate: currentReservation.reservation_date,
+    reservationTime: normalizedTime,
+    partySize: currentReservation.party_size,
+    excludeReservationId: session.rescheduleReservationId,
+  });
+
+  if (!available) {
+  botReply =
+    "Sorry, that time is outside opening hours or fully booked. Please choose another time in HH:MM format.";
+} else {
   session.rescheduleReservationData = {
     ...currentReservation,
-    reservation_time:
-      lowerMsg === "same"
-        ? currentReservation.reservation_time
-        : message.trim(),
+    reservation_time: normalizedTime,
   };
 
   session.reservationRescheduleStep = "askPartySize";
 
   botReply =
     "How many people should the reservation be for? Type **same** to keep the current party size.";
+  }
 }
 
 if (!botReply && session.reservationRescheduleStep === "askPartySize") {
@@ -758,19 +773,33 @@ if (!botReply && session.reservationRescheduleStep === "askPartySize") {
     botReply =
       "Please enter a valid number of guests, or type **same** to keep the current party size.";
   } else {
-    session.rescheduleReservationData = {
-      ...currentReservation,
-      party_size:
-        lowerMsg === "same"
-          ? Number(currentReservation.party_size)
-          : Number(message),
-    };
+    const newPartySize =
+      lowerMsg === "same"
+        ? Number(currentReservation.party_size)
+        : Number(message);
 
-    session.reservationRescheduleStep = "askOccasion";
+    const available = await checkReservationAvailability({
+      businessId: currentReservation.business_id,
+      reservationDate: currentReservation.reservation_date,
+      reservationTime: currentReservation.reservation_time,
+      partySize: newPartySize,
+      excludeReservationId: session.rescheduleReservationId,
+    });
 
-    botReply =
+    if (!available) {
       botReply =
-  "What is the occasion? Type a new occasion, **same** to keep the current occasion, or **none** if there is none.";
+        "Sorry, that party size is too large for the selected time slot. Please enter a smaller number of guests or choose another time.";
+    } else {
+      session.rescheduleReservationData = {
+        ...currentReservation,
+        party_size: newPartySize,
+      };
+
+      session.reservationRescheduleStep = "askOccasion";
+
+      botReply =
+        "What is the occasion? Type a new occasion, **same** to keep the current occasion, or **none** if there is none.";
+    }
   }
 }
 
@@ -866,11 +895,20 @@ if (!botReply && session.reservationRescheduleStep === "askSpecialRequest") {
 
     const business = await getBusinessBySlug(businessSlug);
 
+    console.log("RESCHEDULE AVAILABILITY CHECK:", {
+  businessId: business.id,
+  reservationDate: session.rescheduleReservationData.reservation_date,
+  reservationTime: session.rescheduleReservationData.reservation_time,
+  partySize: session.rescheduleReservationData.party_size,
+  excludeReservationId: session.rescheduleReservationId,
+});
+
     const available = await checkReservationAvailability({
       businessId: business.id,
       reservationDate: session.rescheduleReservationData.reservation_date,
       reservationTime: session.rescheduleReservationData.reservation_time,
       partySize: session.rescheduleReservationData.party_size,
+      excludeReservationId: session.rescheduleReservationId,
     });
 
     if (!available) {
