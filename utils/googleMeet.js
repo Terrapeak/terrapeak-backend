@@ -54,7 +54,7 @@ export const createGoogleMeet = async ({
   try {
     console.log("ALLOW_FAKE_GOOGLE_MEET:", process.env.ALLOW_FAKE_GOOGLE_MEET);
         
-    // LOCAL TESTING ONLY
+    // LOCAL TESTING ONLY - (disabled so set env to true if needed)
     if (process.env.ALLOW_FAKE_GOOGLE_MEET === "true") {
       return {
         hangoutLink: "https://meet.google.com/local-test-meet",
