@@ -105,9 +105,20 @@ export async function checkReservationAvailability({
 export async function generateReservationReference({
   businessId,
   reservationDate,
-  prefix = "BOT",
 }) {
   const dateCode = reservationDate.replaceAll("-", "");
+
+  const { data: profile, error: profileError } = await supabase
+    .from("business_profile")
+    .select("reference_prefix")
+    .eq("business_id", businessId)
+    .single();
+
+  if (profileError) {
+    throw new Error("Could not load business profile");
+  }
+
+  const prefix = profile?.reference_prefix || "BOT";
 
   const { data, error } = await supabase
     .from("reservations")
@@ -119,7 +130,7 @@ export async function generateReservationReference({
     throw new Error("Could not generate reservation reference");
   }
 
-  const nextNumber = data.length + 1;
+  const nextNumber = (data?.length || 0) + 1;
   const paddedNumber = String(nextNumber).padStart(3, "0");
 
   return `${prefix}-${dateCode}-${paddedNumber}`;

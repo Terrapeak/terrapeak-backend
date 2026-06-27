@@ -1599,6 +1599,12 @@ case "askSeatingPreference":
           break;
         }
 
+        console.log("BOOKING CUSTOM DATA:", {
+  Occasion: session.reservationOccasion || "",
+  Allergies: session.reservationAllergies || "",
+  "Seating Preference": session.reservationSeatingPreference || "",
+});
+
         const reservation = await createReservation({
           businessId: business.id,
           customerName: session.reservationName,
