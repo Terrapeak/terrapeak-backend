@@ -133,7 +133,9 @@ export async function createReservation({
   reservationTime,
   partySize,
   specialRequest = "",
+  customData = {},
 }) {
+
   const reservationReference = await generateReservationReference({
     businessId,
     reservationDate,
@@ -153,7 +155,7 @@ export async function createReservation({
         reservation_reference: reservationReference,
         status: "confirmed",
         is_archived: false,
-        custom_data: {},
+        custom_data: customData,
       },
     ])
     .select()

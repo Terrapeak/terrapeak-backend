@@ -26,6 +26,7 @@ import {
 const ALLOWED_FIELDS = [
   "allowedDomains",
   "brandName",
+  "reservationBusinessSlug",
   "botName",
   "welcomeMessage",
   "language",
@@ -296,6 +297,11 @@ export const askGemini = asyncHandler(async (req, res) => {
     });
   }
 
+  const reservationBusinessSlug =
+  settings.reservationBusinessSlug ||
+  process.env.RESERVATION_BUSINESS_SLUG ||
+  "dim-sum-dragon";
+
   /* ===============================
      SESSION HANDLING
   ================================ */
@@ -471,10 +477,7 @@ if (!botReply && session.reservationRescheduleStep === "askLookup") {
   const lookupValue = message.trim();
 
   try {
-    const businessSlug =
-      session.reservationBusinessSlug ||
-      process.env.RESERVATION_BUSINESS_SLUG ||
-      "dim-sum-dragon";
+    const businessSlug = reservationBusinessSlug;
 
     const business = await getBusinessBySlug(businessSlug);
 
@@ -548,10 +551,7 @@ if (!botReply && session.cancelReservationStep === "askLookup") {
   const lookupValue = message.trim();
 
   try {
-    const businessSlug =
-      session.reservationBusinessSlug ||
-      process.env.RESERVATION_BUSINESS_SLUG ||
-      "dim-sum-dragon";
+    const businessSlug = reservationBusinessSlug;
 
     const business = await getBusinessBySlug(businessSlug);
 
@@ -651,10 +651,7 @@ if (!botReply && session.reservationRescheduleStep === "selectReservationToResch
       "Please reply with a valid reservation number from the list.";
   } else {
     try {
-      const businessSlug =
-        session.reservationBusinessSlug ||
-        process.env.RESERVATION_BUSINESS_SLUG ||
-        "dim-sum-dragon";
+      const businessSlug = reservationBusinessSlug;
 
       const business = await getBusinessBySlug(businessSlug);
 
@@ -888,10 +885,7 @@ if (!botReply && session.reservationRescheduleStep === "askSpecialRequest") {
   };
 
   try {
-    const businessSlug =
-      session.reservationBusinessSlug ||
-      process.env.RESERVATION_BUSINESS_SLUG ||
-      "dim-sum-dragon";
+    const businessSlug = reservationBusinessSlug;
 
     const business = await getBusinessBySlug(businessSlug);
 
@@ -956,10 +950,7 @@ Reply NO to cancel the reschedule request.`;
 if (!botReply && session.reservationRescheduleStep === "confirmUpdate") {
   if (lowerMsg === "yes" || lowerMsg === "y") {
     try {
-      const businessSlug =
-        session.reservationBusinessSlug ||
-        process.env.RESERVATION_BUSINESS_SLUG ||
-        "dim-sum-dragon";
+      const businessSlug = reservationBusinessSlug;
 
       const business = await getBusinessBySlug(businessSlug);
 
@@ -1019,10 +1010,7 @@ Special Request: ${updatedReservation.special_request || "None"}`;
 if (!botReply && session.cancelReservationStep === "confirmCancel") {
   if (lowerMsg === "yes") {
     try {
-      const businessSlug =
-        session.reservationBusinessSlug ||
-        process.env.RESERVATION_BUSINESS_SLUG ||
-        "dim-sum-dragon";
+      const businessSlug = reservationBusinessSlug;
 
       const business = await getBusinessBySlug(businessSlug);
 
@@ -1499,22 +1487,57 @@ if (!botReply && (session.bookingType === "reservation" || inReservationFlow)) {
       botReply = "Great. What time would you like? Please use HH:MM format, for example 19:00.";
       break;
 
-    case "askTime":
-      session.reservationTime = message.trim();
-      session.reservationStep = "askPartySize";
-      botReply = "How many people is the reservation for?";
-      break;
+    case "askTime": {
+  const normalizedTime = message.trim().replace(".", ":");
 
-    case "askPartySize":
-      if (isNaN(Number(message)) || Number(message) < 1) {
-        botReply = "Please enter a valid number of guests.";
-        break;
-      }
+  const business = await getBusinessBySlug(reservationBusinessSlug);
 
-      session.reservationPartySize = Number(message);
-      session.reservationStep = "askName";
-      botReply = "Please provide the reservation name.";
-      break;
+  const available = await checkReservationAvailability({
+    businessId: business.id,
+    reservationDate: session.reservationDate,
+    reservationTime: normalizedTime,
+    partySize: 1,
+  });
+
+  if (!available) {
+    botReply =
+      "Sorry, that time is outside opening hours or fully booked. Please choose another time in HH:MM format.";
+    break;
+  }
+
+  session.reservationTime = normalizedTime;
+  session.reservationStep = "askPartySize";
+  botReply = "How many people is the reservation for?";
+  break;
+}
+
+    case "askPartySize": {
+  if (isNaN(Number(message)) || Number(message) < 1) {
+    botReply = "Please enter a valid number of guests.";
+    break;
+  }
+
+  const newPartySize = Number(message);
+  const business = await getBusinessBySlug(reservationBusinessSlug);
+
+  const available = await checkReservationAvailability({
+    businessId: business.id,
+    reservationDate: session.reservationDate,
+    reservationTime: session.reservationTime,
+    partySize: newPartySize,
+  });
+
+  if (!available) {
+    botReply =
+      "Sorry, that party size is too large for the selected time slot. Please enter a smaller number of guests or choose another time.";
+    break;
+  }
+
+  session.reservationPartySize = newPartySize;
+  session.reservationStep = "askName";
+  botReply = "Please provide the reservation name.";
+  break;
+}
 
     case "askName":
       session.reservationName = message.trim();
@@ -1523,20 +1546,42 @@ if (!botReply && (session.bookingType === "reservation" || inReservationFlow)) {
       break;
 
     case "askPhone":
-      session.reservationPhone = message.trim();
-      session.reservationStep = "askSpecialRequest";
-      botReply = "Any special requests? Type **none** if there are no special requests.";
-      break;
+  session.reservationPhone = message.trim();
+  session.reservationStep = "askOccasion";
+  botReply =
+    "What is the occasion? Type **none** if there is no occasion.";
+  break;
+
+case "askOccasion":
+  session.reservationOccasion =
+    lowerMsg === "none" ? "" : message.trim();
+  session.reservationStep = "askAllergies";
+  botReply =
+    "Any allergies? Type **none** if there are no allergies.";
+  break;
+
+case "askAllergies":
+  session.reservationAllergies =
+    lowerMsg === "none" ? "" : message.trim();
+  session.reservationStep = "askSeatingPreference";
+  botReply =
+    "Any seating preference? Type **none** if there is no seating preference.";
+  break;
+
+case "askSeatingPreference":
+  session.reservationSeatingPreference =
+    lowerMsg === "none" ? "" : message.trim();
+  session.reservationStep = "askSpecialRequest";
+  botReply =
+    "Any special requests? Type **none** if there are no special requests.";
+  break;
 
     case "askSpecialRequest": {
       session.reservationSpecialRequest =
         lowerMsg === "none" ? "" : message.trim();
 
       try {
-        const businessSlug =
-          session.reservationBusinessSlug ||
-          process.env.RESERVATION_BUSINESS_SLUG ||
-          "dim-sum-dragon";
+        const businessSlug = reservationBusinessSlug;
 
         const business = await getBusinessBySlug(businessSlug);
 
@@ -1562,6 +1607,11 @@ if (!botReply && (session.bookingType === "reservation" || inReservationFlow)) {
           reservationTime: session.reservationTime,
           partySize: session.reservationPartySize,
           specialRequest: session.reservationSpecialRequest,
+          customData: {
+          Occasion: session.reservationOccasion || "",
+          Allergies: session.reservationAllergies || "",
+          "Seating Preference": session.reservationSeatingPreference || "",
+        },
         });
 
         botReply = `✅ Reservation confirmed!

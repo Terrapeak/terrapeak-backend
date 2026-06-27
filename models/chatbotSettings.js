@@ -7,6 +7,10 @@ const ChatbotSettingsSchema = new mongoose.Schema(
   type: String,
   default: "Terrapeak",
 },
+reservationBusinessSlug: {
+  type: String,
+  default: "",
+},
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
