@@ -26,6 +26,7 @@ import {
 const ALLOWED_FIELDS = [
   "allowedDomains",
   "brandName",
+  "companyId",
   "reservationBusinessSlug",
   "botName",
   "welcomeMessage",

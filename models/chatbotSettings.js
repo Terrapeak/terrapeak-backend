@@ -16,6 +16,11 @@ reservationBusinessSlug: {
       ref: "User",
       required: true,
     },
+    companyId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Company",
+      default: null,
+    },
     googleApiKey: { type: String },
     apiKey: {
       type: String,
