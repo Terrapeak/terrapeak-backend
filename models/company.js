@@ -8,6 +8,16 @@ const CompanySchema = new mongoose.Schema(
       trim: true,
     },
 
+    displayName: {
+      type: String,
+      default: "",
+    },
+
+    referencePrefix: {
+      type: String,
+      default: "BOT",
+    },
+
     slug: {
       type: String,
       required: true,

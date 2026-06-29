@@ -132,6 +132,9 @@ export const saveChatbotSettings = asyncHandler(async (req, res) => {
 
 export const getChatbotSettings = asyncHandler(async (req, res) => {
   const userId = req.userId;
+  console.log("===============");
+console.log("Logged in user:", req.userId);
+console.log("===============");
   console.log(userId);
 
   const settings = await ChatbotSettings.findOne({ userId });
