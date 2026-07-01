@@ -31,6 +31,22 @@ const CompanySchema = new mongoose.Schema(
       default: "",
     },
 
+    installedApps: {
+      type: [String],
+      default: ["ai-assistant"],
+    },
+
+    plan: {
+      type: String,
+      enum: ["starter", "growth", "professional", "enterprise"],
+      default: "starter",
+    },
+
+    maxUsers: {
+      type: Number,
+      default: 1,
+    },
+
     ownerUserId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

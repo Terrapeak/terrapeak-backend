@@ -1,4 +1,7 @@
+import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
+
+dotenv.config();
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -267,6 +270,183 @@ export async function updateReservationById({
   if (error) {
     throw new Error("Could not update reservation");
   }
+
+  return data;
+}
+
+export async function createOrGetReservationBusiness({
+  businessName,
+  businessSlug,
+  businessType = "restaurant",
+}) {
+  const { data: existingBusiness } = await supabase
+    .from("businesses")
+    .select("*")
+    .eq("business_slug", businessSlug)
+    .maybeSingle();
+
+  if (existingBusiness) {
+    return existingBusiness;
+  }
+
+  const { data, error } = await supabase
+    .from("businesses")
+    .insert([
+      {
+        business_name: businessName,
+        business_slug: businessSlug,
+        business_type: businessType,
+      },
+    ])
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Create reservation business error:", error);
+    throw new Error("Could not create reservation business");
+  }
+
+  return data;
+}
+
+export async function createOrUpdateBusinessProfile({
+  businessId,
+  businessName,
+  businessType = "restaurant",
+  referencePrefix = "BOT",
+}) {
+  const profileData = {
+    business_id: businessId,
+    business_name: businessName,
+    business_type: businessType,
+    booking_label: "Reservation",
+    customer_label: "Customer",
+    capacity_label: "Guests",
+    industry_template: businessType,
+    uses_capacity: true,
+    reference_prefix: referencePrefix,
+  };
+
+  const { data: existingProfile } = await supabase
+    .from("business_profile")
+    .select("*")
+    .eq("business_id", businessId)
+    .maybeSingle();
+
+  if (existingProfile) {
+    const { data, error } = await supabase
+      .from("business_profile")
+      .update(profileData)
+      .eq("business_id", businessId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Update business profile error:", error);
+      throw new Error("Could not update business profile");
+    }
+
+    return data;
+  }
+
+  const { data, error } = await supabase
+    .from("business_profile")
+    .insert([profileData])
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Create business profile error:", error);
+    throw new Error("Could not create business profile");
+  }
+
+  return data;
+}
+
+export async function createOrUpdateRestaurantSettings({ businessId }) {
+  const settingsData = {
+  business_id: businessId,
+  opening_time: "11:00:00",
+  closing_time: "22:00:00",
+  max_guests_per_slot: 20,
+  default_duration_minutes: 90,
+};
+
+  const { data: existingSettings } = await supabase
+    .from("restaurant_settings")
+    .select("*")
+    .eq("business_id", businessId)
+    .maybeSingle();
+
+  if (existingSettings) {
+    const { data, error } = await supabase
+      .from("restaurant_settings")
+      .update(settingsData)
+      .eq("business_id", businessId)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Update restaurant settings error:", error);
+      throw new Error("Could not update restaurant settings");
+    }
+
+    return data;
+  }
+
+  const { data, error } = await supabase
+    .from("restaurant_settings")
+    .insert([settingsData])
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Create restaurant settings error:", error);
+    throw new Error("Could not create restaurant settings");
+  }
+
+  return data;
+}
+
+export async function createOrUpdateRestaurantBranding({
+  businessId,
+  restaurantName,
+}) {
+  const brandingData = {
+    business_id: businessId,
+    restaurant_name: restaurantName,
+    primary_color: "#2563eb",
+    background_start: "#eff6ff",
+    background_end: "#dbeafe",
+    logo_url: "",
+  };
+
+  const { data: existing } = await supabase
+    .from("restaurant_branding")
+    .select("*")
+    .eq("business_id", businessId)
+    .maybeSingle();
+
+  if (existing) {
+    const { data, error } = await supabase
+      .from("restaurant_branding")
+      .update(brandingData)
+      .eq("business_id", businessId)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    return data;
+  }
+
+  const { data, error } = await supabase
+    .from("restaurant_branding")
+    .insert([brandingData])
+    .select()
+    .single();
+
+  if (error) throw error;
 
   return data;
 }
