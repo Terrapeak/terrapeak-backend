@@ -43,7 +43,11 @@ router.post("/webhook", async (req, res) => {
   try {
     const body = req.body;
 
+    console.log("Facebook webhook POST received");
+    console.log("Facebook webhook body:", JSON.stringify(body, null, 2));
+
     if (body.object !== "page") {
+      console.log("Facebook webhook ignored because object is not page");
       return;
     }
 
