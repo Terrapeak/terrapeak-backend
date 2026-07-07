@@ -1,6 +1,22 @@
 import express from "express";
+import axios from "axios";
 
 const router = express.Router();
+
+async function sendFacebookMessage(recipientId, text) {
+  if (!process.env.FB_PAGE_ACCESS_TOKEN) {
+    console.error("FB_PAGE_ACCESS_TOKEN is missing in Railway variables");
+    return;
+  }
+
+  await axios.post(
+    `https://graph.facebook.com/v22.0/me/messages?access_token=${process.env.FB_PAGE_ACCESS_TOKEN}`,
+    {
+      recipient: { id: recipientId },
+      message: { text },
+    }
+  );
+}
 
 // Facebook webhook verification
 // Meta calls this route when you connect the webhook in the Meta Developer Console.
@@ -19,11 +35,44 @@ router.get("/webhook", (req, res) => {
 });
 
 // Facebook incoming messages
-// For now this only confirms that the backend received the message.
-// In the next step we will connect this to the existing chatbot logic.
-router.post("/webhook", (req, res) => {
-  console.log("Facebook webhook event received:", JSON.stringify(req.body, null, 2));
-  return res.sendStatus(200);
+// This first version sends a simple fixed test reply.
+// After this works, we will connect it to the existing TerraPeak chatbot logic.
+router.post("/webhook", async (req, res) => {
+  res.sendStatus(200);
+
+  try {
+    const body = req.body;
+
+    if (body.object !== "page") {
+      return;
+    }
+
+    for (const entry of body.entry || []) {
+      for (const event of entry.messaging || []) {
+        const senderId = event.sender?.id;
+        const messageText = event.message?.text;
+
+        // Ignore events without a sender or text message.
+        // This avoids replying to delivery receipts, echoes, attachments, etc.
+        if (!senderId || !messageText) {
+          continue;
+        }
+
+        console.log("Facebook message received from:", senderId);
+        console.log("Facebook message text:", messageText);
+
+        await sendFacebookMessage(
+          senderId,
+          "Hi, this is TerraPeak AI. I received your message."
+        );
+      }
+    }
+  } catch (error) {
+    console.error(
+      "Facebook webhook processing error:",
+      error.response?.data || error.message
+    );
+  }
 });
 
 export default router;
