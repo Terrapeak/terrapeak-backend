@@ -53,14 +53,35 @@ const AppSchema = new mongoose.Schema(
     },
 
     isComingSoon: {
-      type: Boolean,
-      default: false,
-    },
+  type: Boolean,
+  default: false,
+},
 
-    sortOrder: {
-      type: Number,
-      default: 100,
-    },
+allowInstall: {
+  type: Boolean,
+  default: true,
+},
+
+minimumPlan: {
+  type: String,
+  enum: ["demo", "starter", "business", "pro", "enterprise"],
+  default: "starter",
+},
+
+dependencies: {
+  type: [String],
+  default: [],
+},
+
+icon: {
+  type: String,
+  default: "",
+},
+
+sortOrder: {
+  type: Number,
+  default: 100,
+},
   },
   {
     timestamps: true,

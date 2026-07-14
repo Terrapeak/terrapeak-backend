@@ -2,12 +2,8 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import readline from "readline";
 
-import User from "../models/user.js";
-import Company from "../models/company.js";
-import CompanyMembership from "../models/companyMembership.js";
-import ChatbotSettings from "../models/chatbotSettings.js";
 import App from "../models/app.js";
-import installApps from "../installers/installApps.js";
+import onboardCustomerEnvironment from "../services/customerOnboardingService.js";
 
 dotenv.config();
 
@@ -118,92 +114,92 @@ async function onboardCustomer() {
     await mongoose.connect(process.env.MONGO_URI);
     console.log("MongoDB connected");
 
-    CUSTOMER.installedApps = await chooseInstalledApps();
+    CUSTOMER.installedApps =
+      await chooseInstalledApps();
 
-    let user = await User.findOne({ email: CUSTOMER.ownerEmail });
-
-    if (!user) {
-      user = new User({
-        name: CUSTOMER.ownerName,
-        email: CUSTOMER.ownerEmail,
-        phone: CUSTOMER.ownerPhone,
-        password: CUSTOMER.ownerPassword,
-        country: CUSTOMER.country,
-        companyName: CUSTOMER.companyName,
-        isAdmin: false,
-        role: "user",
-        isApproved: true,
+    const result =
+      await onboardCustomerEnvironment({
+        owner: {
+          name: CUSTOMER.ownerName,
+          email: CUSTOMER.ownerEmail,
+          phone: CUSTOMER.ownerPhone,
+          password: CUSTOMER.ownerPassword,
+          country: CUSTOMER.country,
+        },
+        company: {
+          name: CUSTOMER.companyName,
+          displayName: CUSTOMER.displayName,
+          slug: CUSTOMER.companySlug,
+          referencePrefix:
+            CUSTOMER.referencePrefix,
+          reservationBusinessSlug:
+            CUSTOMER.reservationBusinessSlug,
+          plan: "starter",
+          maxUsers: 1,
+        },
+        installedApps: CUSTOMER.installedApps,
       });
-
-      await user.save();
-      console.log("Created user:", user.email);
-    } else {
-      console.log("User already exists:", user.email);
-    }
-
-    let company = await Company.findOne({ slug: CUSTOMER.companySlug });
-
-    if (!company) {
-      company = new Company({
-      name: CUSTOMER.companyName,
-      displayName: CUSTOMER.displayName,
-      slug: CUSTOMER.companySlug,
-      referencePrefix: CUSTOMER.referencePrefix,
-      reservationBusinessSlug: CUSTOMER.reservationBusinessSlug,
-      installedApps: CUSTOMER.installedApps,
-       plan: "starter",
-      maxUsers: 1,
-      ownerUserId: user._id,
-      isActive: true,
-    });
-
-      await company.save();
-      console.log("Created company:", company.name);
-    } else {
-      console.log("Company already exists:", company.name);
-    }
-
-    await CompanyMembership.findOneAndUpdate(
-      {
-        companyId: company._id,
-        userId: user._id,
-      },
-      {
-        companyId: company._id,
-        userId: user._id,
-        role: "owner",
-        isActive: true,
-      },
-      {
-        upsert: true,
-        new: true,
-      }
-    );
-
-    console.log("Created/updated company membership");
-
-    const installResults = await installApps({
-      company,
-      user,
-      installedApps: CUSTOMER.installedApps,
-    });
-
-const chatbotSettings = installResults["ai-assistant"];
 
     console.log("");
     console.log("ONBOARDING COMPLETE");
     console.log("-------------------");
-    console.log("User email:", user.email);
-    console.log("Company:", company.name);
-    console.log("Company ID:", company._id.toString());
-    console.log("Chatbot ID:", chatbotSettings._id.toString());
-    console.log("API Key:", chatbotSettings.apiKey);
+    console.log(
+      "User email:",
+      result.user.email
+    );
+    console.log(
+      "Company:",
+      result.company.name
+    );
+    console.log(
+      "Company ID:",
+      result.company._id.toString()
+    );
+
+    if (result.contract) {
+  console.log(
+    "Contract:",
+    result.contract.status
+  );
+
+  console.log(
+    "Contract Ends:",
+    result.contract.endDate
+  );
+}
+
+    if (result.chatbotSettings) {
+      console.log(
+        "Chatbot ID:",
+        result.chatbotSettings._id.toString()
+      );
+      console.log(
+        "API Key:",
+        result.chatbotSettings.apiKey
+      );
+    } else {
+      console.log(
+        "AI Assistant:",
+        "Not installed"
+      );
+    }
+
+    console.log(
+      "Validation:",
+      result.validation
+    );
     console.log("");
 
+    await mongoose.disconnect();
     rl.close();
     process.exit(0);
   } catch (error) {
-    console.error("Onboarding failed:", error);
+    console.error(
+      "Onboarding failed:",
+      error.message
+    );
+
+    await mongoose.disconnect().catch(() => {});
     rl.close();
     process.exit(1);
   }

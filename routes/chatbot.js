@@ -20,7 +20,6 @@ import upload from "../utils/upload.js";
 
 const router = express.Router();
 
-
 // Protected routes for logged-in users
 router.get("/settings", isAuthenticated, isVerifiedUser, getChatbotSettings);
 router.get("/settingByKey", verifyDomain, getChatbotSettingsByKey);

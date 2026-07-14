@@ -1,5 +1,7 @@
 import User from "../models/user.js";
+import App from "../models/app.js";
 import sendEmail from "../utils/sendEmail.js";
+import onboardCustomerEnvironment from "../services/customerOnboardingService.js";
 
 // Admin: Get all users
 // Admin: Get all users with pagination + filters
@@ -51,42 +53,191 @@ export const getAllUsers = async (req, res) => {
 
 
 // Admin: Approve user
+// Admin: Approve user and create the complete customer environment
 export const approveUser = async (req, res) => {
   try {
     const userId = req.params.id;
     const user = await User.findById(userId);
 
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
 
-    user.isApproved = true;
-    await user.save();
+    if (!user.companyName?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "The user must have a company name before onboarding can be completed.",
+      });
+    }
 
-    // Send email to user
+    /*
+     * App Registry is the source of truth.
+     *
+     * Core apps are always installed.
+     * Optional apps may be supplied later by the Platform Admin UI as:
+     * req.body.installedApps = ["reservations", ...]
+     */
+    const requestedOptionalApps = Array.isArray(
+      req.body?.installedApps
+    )
+      ? req.body.installedApps
+      : [];
+
+    const registryApps = await App.find({
+      isVisible: true,
+      isComingSoon: false,
+    }).select(
+      "slug isCore allowInstall"
+    );
+
+    const coreAppSlugs = registryApps
+      .filter((app) => app.isCore)
+      .map((app) => app.slug);
+
+    const allowedOptionalSlugs = new Set(
+      registryApps
+        .filter(
+          (app) =>
+            !app.isCore &&
+            app.allowInstall !== false
+        )
+        .map((app) => app.slug)
+    );
+
+    const validOptionalApps =
+      requestedOptionalApps.filter((slug) =>
+        allowedOptionalSlugs.has(slug)
+      );
+
+    const installedApps = Array.from(
+      new Set([
+        ...coreAppSlugs,
+        ...validOptionalApps,
+      ])
+    );
+
+    /*
+     * The reusable onboarding service creates or reuses:
+     * - User
+     * - Company
+     * - Owner membership
+     * - Company app installations
+     * - App-specific initialization
+     * - Linked AI Assistant settings
+     */
+    const onboarding =
+      await onboardCustomerEnvironment({
+        owner: {
+          name: user.name,
+          email: user.email,
+          phone: user.phone,
+          country: user.country || "PH",
+        },
+        company: {
+          name: user.companyName,
+          displayName: user.companyName,
+          plan: "starter",
+          maxUsers: 1,
+        },
+        installedApps,
+      });
+
+    const onboardingComplete =
+      onboarding.validation.userReady &&
+      onboarding.validation.companyReady &&
+      onboarding.validation.membershipReady &&
+      onboarding.validation.aiAssistantReady !==
+        false;
+
+    if (!onboardingComplete) {
+      return res.status(500).json({
+        success: false,
+        message:
+          "Customer onboarding validation failed.",
+        validation: onboarding.validation,
+      });
+    }
+
+    /*
+     * Send approval only after the full customer
+     * environment has been created successfully.
+     */
     await sendEmail({
       to: user.email,
-      subject: "Your Account Has Been Verified 🎉",
-      text: `Hi ${user.name || "User"}, your account has been successfully verified. You can now log in and start using our platform.`,
+      subject:
+        "Your Terrapeak account is ready 🎉",
+      text: `Hi ${
+        user.name || "User"
+      }, your account and company environment are ready. You can now log in and start using the Terrapeak platform.`,
       html: `
         <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-          <h2 style="color: #4CAF50;">Account Verified ✅</h2>
-          <p>Hi <b>${user.name || "User"}</b>,</p>
-          <p>Your account has been successfully <b>verified</b>. You can now log in and start using all features of <b>MyApp</b>.</p>
-          <a href="${process.env.FRONTEND_URL}/auth" 
-             style="display: inline-block; padding: 10px 20px; margin-top: 15px; background: #4CAF50; color: #fff; text-decoration: none; border-radius: 5px;">
+          <h2 style="color: #4CAF50;">
+            Your Terrapeak account is ready ✅
+          </h2>
+
+          <p>
+            Hi <b>${user.name || "User"}</b>,
+          </p>
+
+          <p>
+            Your account and company environment for
+            <b>${onboarding.company.displayName || onboarding.company.name}</b>
+            have been successfully created.
+          </p>
+
+          <p>
+            You can now log in and use the apps enabled for your company.
+          </p>
+
+          <a
+            href="${process.env.FRONTEND_URL}/auth"
+            style="display: inline-block; padding: 10px 20px; margin-top: 15px; background: #4CAF50; color: #fff; text-decoration: none; border-radius: 5px;"
+          >
             Login Now
           </a>
-          <p style="margin-top: 20px;">If you didn’t request this, please ignore this email.</p>
-          <p>Thanks,<br>The ${process.env.APP_NAME} Team</p>
+
+          <p style="margin-top: 20px;">
+            Thanks,<br>
+            The ${process.env.APP_NAME || "Terrapeak"} Team
+          </p>
         </div>
       `,
     });
 
-    res
-      .status(200)
-      .json({ message: "User approved and email sent successfully" });
+    return res.status(200).json({
+      success: true,
+      message:
+        "User approved and customer environment created successfully.",
+      onboarding: {
+        userId: onboarding.user._id,
+        companyId: onboarding.company._id,
+        companyName:
+          onboarding.company.displayName ||
+          onboarding.company.name,
+        installedApps:
+          onboarding.installedApps,
+        chatbotId:
+          onboarding.chatbotSettings?._id ||
+          null,
+        validation: onboarding.validation,
+      },
+    });
   } catch (err) {
-    console.error("Error approving user:", err);
-    res.status(500).json({ message: err.message });
+    console.error(
+      "Error approving and onboarding user:",
+      err
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        err.message ||
+        "User approval and onboarding failed.",
+    });
   }
 };
 
