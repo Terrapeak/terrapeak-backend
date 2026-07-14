@@ -1,188 +1,392 @@
 import asyncHandler from "express-async-handler";
 import jwt from "jsonwebtoken";
+
 import User from "../models/user.js";
-import Otp from "../models/otp.js"; // new OTP model
+import Otp from "../models/otp.js";
 import sendEmail from "../utils/sendEmail.js";
 
-// Helpers
-const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-const isValidPhone = (phone) => /^[0-9]{10}$/.test(phone);
+/* =====================================================
+   HELPERS
+===================================================== */
 
-// Cookie options
+const isValidEmail = (email) =>
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+const isValidPhone = (phone) =>
+  /^[0-9]{10}$/.test(phone);
+
 const cookieOptions = {
   httpOnly: true,
-  secure: true, // Required for HTTPS
+  secure: true,
   sameSite: "None",
-  maxAge: 24 * 60 * 60 * 1000, // 1 day
+  maxAge: 24 * 60 * 60 * 1000,
 };
 
-// Generate 6-digit OTP
 const generateOTP = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 
-// 📌 STEP 1: Request OTP for Signup
-export const requestSignupOTP = asyncHandler(async (req, res) => {
-  const { name, email, password, phone, country, companyName } = req.body;
-
-  if (!name || !email || !password || !phone) {
-    return res.status(400).json({
-      success: false,
-      message: "Name, email, password, and phone are required",
-    });
-  }
-
-  if (!isValidEmail(email)) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid email format",
-    });
-  }
-
-  if (!isValidPhone(phone)) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid phone number",
-    });
-  }
-
-  if (password.length < 6) {
-    return res.status(400).json({
-      success: false,
-      message: "Password must be at least 6 characters long",
-    });
-  }
-
-  if (await User.findOne({ email })) {
-    return res.status(400).json({
-      success: false,
-      message: "Email is already registered",
-    });
-  }
-
-  if (await User.findOne({ phone })) {
-    return res.status(400).json({
-      success: false,
-      message: "Phone is already registered",
-    });
-  }
-
-  const user = new User({
-    name,
-    email,
-    password,
-    phone,
-    country,
-    companyName,
-  });
-
-  await user.save();
-
-  const token = jwt.sign(
-    { _id: user._id, isAdmin: user.isAdmin },
+const createAuthToken = (user) =>
+  jwt.sign(
+    {
+      _id: user._id,
+      isAdmin: user.isAdmin,
+      role: user.role || "user",
+      platformRole: user.platformRole || "none",
+    },
     process.env.JWT_SECRET,
-    { expiresIn: "1d" }
+    {
+      expiresIn: "1d",
+    }
   );
 
-  res.cookie("token", token, cookieOptions).status(201).json({
-    success: true,
-    message: "Signup successful",
-    token,
-    user,
-  });
+const buildUserResponse = (user) => ({
+  _id: user._id,
+  name: user.name,
+  email: user.email,
+  phone: user.phone,
+  country: user.country,
+  companyName: user.companyName,
+  isAdmin: user.isAdmin,
+  isApproved: user.isApproved,
+  role: user.role || "user",
+  platformRole: user.platformRole || "none",
 });
 
-// 📌 STEP 2: Verify OTP & Create Account
-export const verifySignupOTP = asyncHandler(async (req, res) => {
-  const { name, email, password, phone, country, companyName, otp } = req.body;
+/* =====================================================
+   STEP 1 — REQUEST SIGNUP OTP
+===================================================== */
 
-  if (!email || !otp)
+export const requestSignupOTP = asyncHandler(
+  async (req, res) => {
+    const {
+      name,
+      email,
+      password,
+      phone,
+      country,
+      companyName,
+    } = req.body;
+
+    if (
+      !name ||
+      !email ||
+      !password ||
+      !phone ||
+      !companyName
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Name, email, password, phone, and company name are required.",
+      });
+    }
+
+    const normalizedEmail = email
+      .trim()
+      .toLowerCase();
+
+    const normalizedPhone = phone.trim();
+
+    if (!isValidEmail(normalizedEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid email format.",
+      });
+    }
+
+    if (!isValidPhone(normalizedPhone)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid phone number.",
+      });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Password must be at least 6 characters long.",
+      });
+    }
+
+    const existingEmail = await User.findOne({
+      email: normalizedEmail,
+    });
+
+    if (existingEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is already registered.",
+      });
+    }
+
+    const existingPhone = await User.findOne({
+      phone: normalizedPhone,
+    });
+
+    if (existingPhone) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone is already registered.",
+      });
+    }
+
+    const otp = generateOTP();
+
+    /*
+     * Keep only the latest OTP for this email.
+     * The User is NOT created at this stage.
+     */
+    await Otp.deleteMany({
+      email: normalizedEmail,
+    });
+
+    await Otp.create({
+      email: normalizedEmail,
+      otp,
+    });
+
+    await sendEmail({
+      to: normalizedEmail,
+      subject: "Your Terrapeak verification code",
+      text: `Your Terrapeak verification code is ${otp}.`,
+      html: `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+          <h2>Email Verification</h2>
+
+          <p>
+            Hi <b>${name}</b>,
+          </p>
+
+          <p>
+            Use the following verification code to complete your signup:
+          </p>
+
+          <div style="font-size: 28px; font-weight: bold; letter-spacing: 6px; margin: 20px 0;">
+            ${otp}
+          </div>
+
+          <p>
+            After verification, your account will await Terrapeak approval.
+          </p>
+        </div>
+      `,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "Verification code sent successfully.",
+    });
+  }
+);
+
+/* =====================================================
+   STEP 2 — VERIFY OTP AND CREATE PENDING USER
+===================================================== */
+
+export const verifySignupOTP = asyncHandler(
+  async (req, res) => {
+    const {
+      name,
+      email,
+      password,
+      phone,
+      country,
+      companyName,
+      otp,
+    } = req.body;
+
+    if (
+      !name ||
+      !email ||
+      !password ||
+      !phone ||
+      !companyName ||
+      !otp
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Name, email, password, phone, company name, and OTP are required.",
+      });
+    }
+
+    const normalizedEmail = email
+      .trim()
+      .toLowerCase();
+
+    const normalizedPhone = phone.trim();
+
+    const record = await Otp.findOne({
+      email: normalizedEmail,
+      otp: otp.toString().trim(),
+    });
+
+    if (!record) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid or expired verification code.",
+      });
+    }
+
+    /*
+     * Check again because another request could have
+     * created the user after the OTP was requested.
+     */
+    const existingEmail = await User.findOne({
+      email: normalizedEmail,
+    });
+
+    if (existingEmail) {
+      await Otp.deleteMany({
+        email: normalizedEmail,
+      });
+
+      return res.status(400).json({
+        success: false,
+        message: "Email is already registered.",
+      });
+    }
+
+    const existingPhone = await User.findOne({
+      phone: normalizedPhone,
+    });
+
+    if (existingPhone) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone is already registered.",
+      });
+    }
+
+    /*
+     * The new user remains pending until a Terrapeak
+     * platform administrator approves the account.
+     */
+    const user = new User({
+      name: name.trim(),
+      email: normalizedEmail,
+      password,
+      phone: normalizedPhone,
+      country,
+      companyName: companyName.trim(),
+      isAdmin: false,
+      role: "user",
+      platformRole: "none",
+      isApproved: false,
+    });
+
+    await user.save();
+
+    await Otp.deleteMany({
+      email: normalizedEmail,
+    });
+
+    /*
+     * No JWT and no authentication cookie are created.
+     * Email verification is not platform approval.
+     */
+    return res.status(201).json({
+      success: true,
+      approvalRequired: true,
+      message:
+        "Email verified successfully. Your account is awaiting Terrapeak approval.",
+      user: buildUserResponse(user),
+    });
+  }
+);
+
+/* =====================================================
+   LOGIN
+===================================================== */
+
+export const login = asyncHandler(
+  async (req, res) => {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Email and password are required.",
+      });
+    }
+
+    const normalizedEmail = email
+      .trim()
+      .toLowerCase();
+
+    if (!isValidEmail(normalizedEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid email format.",
+      });
+    }
+
+    const user = await User.findOne({
+      email: normalizedEmail,
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+      });
+    }
+
+    const isMatch =
+      await user.matchPassword(password);
+
+    if (!isMatch) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid email or password.",
+      });
+    }
+
+    if (!user.isApproved) {
+      return res.status(403).json({
+        success: false,
+        code: "ACCOUNT_PENDING_APPROVAL",
+        message:
+          "Your account is awaiting Terrapeak approval. You will receive an email when your company environment is ready.",
+      });
+    }
+
+    const token = createAuthToken(user);
+    const userData = buildUserResponse(user);
+
     return res
-      .status(400)
-      .json({ success: false, message: "Email and OTP are required" });
+      .cookie("token", token, cookieOptions)
+      .status(200)
+      .json({
+        success: true,
+        message: "Login successful.",
+        user: userData,
+        token,
+      });
+  }
+);
 
-  const record = await Otp.findOne({ email, otp });
-  if (!record)
+/* =====================================================
+   LOGOUT
+===================================================== */
+
+export const logout = asyncHandler(
+  async (req, res) => {
     return res
-      .status(400)
-      .json({ success: false, message: "Invalid or expired OTP" });
-
-  // OTP is valid → create user
-  const user = new User({ name, email, password, phone, country, companyName });
-  await user.save();
-
-  // Delete OTP after verification
-  await Otp.deleteMany({ email });
-
-  // Create JWT
-  const token = jwt.sign(
-    { _id: user._id, isAdmin: user.isAdmin },
-    process.env.JWT_SECRET,
-    { expiresIn: "1d" }
-  );
-
-  res.cookie("token", token, cookieOptions).status(201).json({
-    success: true,
-    message: "Signup successful",
-    token,
-  });
-});
-
-// 📌 LOGIN
-
-export const login = asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
-
-  if (!email || !password)
-    return res
-      .status(400)
-      .json({ success: false, message: "Email and password are required" });
-  if (!isValidEmail(email))
-    return res
-      .status(400)
-      .json({ success: false, message: "Invalid email format" });
-
-  const user = await User.findOne({ email });
-  if (!user)
-    return res.status(404).json({ success: false, message: "User not found" });
-
-  const isMatch = await user.matchPassword(password);
-  if (!isMatch)
-    return res
-      .status(400)
-      .json({ success: false, message: "Invalid email or password" });
-
-  const token = jwt.sign(
-    { _id: user._id, isAdmin: user.isAdmin },
-    process.env.JWT_SECRET,
-    { expiresIn: "1d" }
-  );
-
-  const userData = {
-    name: user.name,
-    email: user.email,
-    phone: user.phone, // Added phone
-    country: user.country, // Added country
-    companyName: user.companyName, // Added companyName
-    isAdmin: user.isAdmin,
-    role: user.role || "user",
-  };
-
-  res.cookie("token", token, cookieOptions).status(200).json({
-    success: true,
-    message: "Login successful",
-    user: userData,
-    token,
-  });
-});
-
-// 📌 LOGOUT
-export const logout = asyncHandler(async (req, res) => {
-  res
-    .clearCookie("token", {
-      httpOnly: true,
-      secure: true,
-      sameSite: "None",
-    })
-    .status(200)
-    .json({ success: true, message: "Logged out successfully" });
-});
+      .clearCookie("token", {
+        httpOnly: true,
+        secure: true,
+        sameSite: "None",
+      })
+      .status(200)
+      .json({
+        success: true,
+        message: "Logged out successfully.",
+      });
+  }
+);

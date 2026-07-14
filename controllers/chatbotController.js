@@ -89,6 +89,10 @@ const SAFE_SYSTEM_TOKEN_LIMIT = 500000; // Recommended safe limit for system ins
 export const saveChatbotSettings = asyncHandler(async (req, res) => {
   const userId = req.userId;
 
+  //for debugging
+console.log("SAVE SETTINGS USER:", req.userId);
+console.log("SAVE BODY brandName:", req.body.brandName);
+
   // Extract only whitelisted fields from body
   const updateData = {};
   ALLOWED_FIELDS.forEach((field) => {
@@ -132,11 +136,8 @@ export const saveChatbotSettings = asyncHandler(async (req, res) => {
 
 export const getChatbotSettings = asyncHandler(async (req, res) => {
   const userId = req.userId;
-  console.log("===============");
-console.log("Logged in user:", req.userId);
-console.log("===============");
-  console.log(userId);
 
+  // TODO (Platform): lookup by companyId instead of userId
   const settings = await ChatbotSettings.findOne({ userId });
 
   if (!settings) {
@@ -2027,6 +2028,16 @@ export const getChatbotSettingsByKey = asyncHandler(async (req, res) => {
   console.log("parent domain received:", req.headers["x-parent-domain"]);
 
   const settings = await ChatbotSettings.findOne({ apiKey });
+
+  //for debugging
+//console.log("GET BY KEY apiKey:", apiKey);
+//console.log("FOUND SETTINGS:", {
+  //id: settings?._id?.toString(),
+  //userId: settings?.userId?.toString(),
+  //companyId: settings?.companyId?.toString(),
+  //brandName: settings?.brandName,
+  //allowedDomains: settings?.allowedDomains,
+//});
 
   if (!settings) {
     console.log("No settings found for this API key");

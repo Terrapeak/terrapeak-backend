@@ -15,6 +15,22 @@ const userSchema = new mongoose.Schema({
     default: "user",
     required: true,
   },
+
+  platformRole: {
+  type: String,
+  enum: [
+    "none",
+    "platform-owner",
+    "platform-admin",
+    "support-admin",
+    "billing-admin",
+    "developer-admin",
+    "sales-admin",
+    "viewer",
+  ],
+  default: "none",
+},
+
   isApproved: { type: Boolean, default: false },
   isGoogleOauth:{type:Boolean,default:false},
   googleRefreshToken: { type: String },

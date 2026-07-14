@@ -3,6 +3,8 @@ import authRoutes from "./auth.js";
 import chatbotRoutes from "./chatbot.js";
 import userRoutes from "./user.js";
 import appointmentRoutes from "./appointment.js";
+import companyRoutes from "./company.js";
+import platformAdminRoutes from "./platformAdmin.js";
 import widgetRouter from "./widget.js";
 import facebookRoutes from "./facebook.js";
 
@@ -12,6 +14,8 @@ router.use("/auth", authRoutes);
 router.use("/chatbot", chatbotRoutes);
 router.use("/admin/users", userRoutes);
 router.use("/appointments", appointmentRoutes);
+router.use("/company", companyRoutes);
+router.use("/platform-admin", platformAdminRoutes);
 router.use("/api", widgetRouter);
 router.use("/facebook", facebookRoutes);
 
