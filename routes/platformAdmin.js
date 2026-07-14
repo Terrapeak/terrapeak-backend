@@ -11,6 +11,7 @@ import {
   getPlatformApps,
   updatePlatformApp,
 } from "../controllers/platformAdminController.js";
+import { listPlatformCompanies } from "../controllers/platformCompanyListController.js";
 
 const router = express.Router();
 
@@ -19,6 +20,13 @@ router.get(
   isAuthenticated,
   isPlatformAdmin,
   getPlatformDashboardSummary
+);
+
+router.get(
+  "/companies",
+  isAuthenticated,
+  isPlatformAdmin,
+  listPlatformCompanies
 );
 
 router.get(
