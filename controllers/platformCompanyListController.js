@@ -15,3 +15,12 @@ export const listPlatformCompanies = asyncHandler(async (req, res) => {
     : {};
 
   const companies = await Company.find(filter)
+    .select("name displayName slug plan isActive email country createdAt")
+    .sort({ createdAt: -1 })
+    .lean();
+
+  res.json({
+    success: true,
+    companies,
+  });
+});
