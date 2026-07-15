@@ -65,3 +65,15 @@ export const getPlatformDashboardSummary = asyncHandler(async (req, res) => {
     },
   });
 });
+
+export const runPlatformAttentionScanNow = asyncHandler(async (req, res) => {
+  const attentionScan = await runPlatformAttentionScan();
+
+  res.json({
+    success: true,
+    scannedAt: attentionScan.scannedAt,
+    scannedCompanies: attentionScan.scannedCompanies,
+    needsAttentionCount: attentionScan.needsAttentionCount,
+    needsAttention: attentionScan.needsAttention,
+  });
+});
