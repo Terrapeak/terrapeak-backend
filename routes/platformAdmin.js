@@ -4,13 +4,13 @@ import isAuthenticated from "../middleware/isAuthenticated.js";
 import isPlatformAdmin from "../middleware/isPlatformAdmin.js";
 
 import {
-  getPlatformDashboardSummary,
   searchPlatformCompanies,
   getPlatformCompanyDetail,
   toggleCompanyApp,
   getPlatformApps,
   updatePlatformApp,
 } from "../controllers/platformAdminController.js";
+import { getPlatformDashboardSummary } from "../controllers/platformAttentionController.js";
 import { listPlatformCompanies } from "../controllers/platformCompanyListController.js";
 
 const router = express.Router();
