@@ -6,6 +6,13 @@ import Session from "../models/sessionModel.js";
 
 const HEALTHY_BILLING_STATUSES = new Set(["trial", "active", "manual"]);
 
+const getHealthStatus = (score) => {
+  if (score >= 80) return "Healthy";
+  if (score >= 60) return "Needs Follow-up";
+  if (score >= 40) return "Needs Attention";
+  return "Critical";
+};
+
 const calculateCompanyHealth = ({
   company,
   installations,
@@ -52,19 +59,9 @@ const calculateCompanyHealth = ({
     attention.push("No installed apps");
   }
 
-  let status = "Critical";
-
-  if (score >= 90) {
-    status = "Excellent";
-  } else if (score >= 70) {
-    status = "Healthy";
-  } else if (score >= 40) {
-    status = "Needs Attention";
-  }
-
   return {
     score,
-    status,
+    status: getHealthStatus(score),
     attention,
   };
 };
@@ -111,26 +108,43 @@ export const runPlatformAttentionScan = async () => {
 
   const results = await Promise.all(companies.map(scanCompany));
 
-  const needsAttention = results
-    .filter((result) =>
-      ["Critical", "Needs Attention"].includes(result.status)
-    )
+  const customerHealth = results
     .sort((a, b) => a.score - b.score)
     .map((result) => ({
       companyId: result.companyId,
+      companyName: result.companyName,
       title: `${result.companyName} — ${result.status} (${result.score}%)`,
       message:
         result.attention.join(" · ") ||
-        "Customer health requires review.",
+        "Customer health is operating normally.",
       score: result.score,
       status: result.status,
       reasons: result.attention,
     }));
+
+  const needsAttention = customerHealth.filter((result) =>
+    ["Critical", "Needs Attention"].includes(result.status)
+  );
+
+  const statusCounts = customerHealth.reduce(
+    (counts, result) => {
+      counts[result.status] = (counts[result.status] || 0) + 1;
+      return counts;
+    },
+    {
+      Critical: 0,
+      "Needs Attention": 0,
+      "Needs Follow-up": 0,
+      Healthy: 0,
+    }
+  );
 
   return {
     scannedAt: new Date(),
     scannedCompanies: results.length,
     needsAttentionCount: needsAttention.length,
     needsAttention,
+    customerHealth,
+    statusCounts,
   };
 };
