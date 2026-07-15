@@ -15,6 +15,7 @@ import {
   runPlatformAttentionScanNow,
 } from "../controllers/platformAttentionController.js";
 import { listPlatformCompanies } from "../controllers/platformCompanyListController.js";
+import { listPlatformUsers } from "../controllers/platformUserController.js";
 
 const router = express.Router();
 
@@ -37,6 +38,13 @@ router.get(
   isAuthenticated,
   isPlatformAdmin,
   listPlatformCompanies
+);
+
+router.get(
+  "/users",
+  isAuthenticated,
+  isPlatformAdmin,
+  listPlatformUsers
 );
 
 router.get(
