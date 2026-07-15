@@ -116,35 +116,19 @@ export const runPlatformAttentionScan = async () => {
       title: `${result.companyName} — ${result.status} (${result.score}%)`,
       message:
         result.attention.join(" · ") ||
-        "Customer health is operating normally.",
+        "Customer health checks are currently clear.",
       score: result.score,
       status: result.status,
       reasons: result.attention,
     }));
 
-  const needsAttention = customerHealth.filter((result) =>
-    ["Critical", "Needs Attention"].includes(result.status)
-  );
-
-  const statusCounts = customerHealth.reduce(
-    (counts, result) => {
-      counts[result.status] = (counts[result.status] || 0) + 1;
-      return counts;
-    },
-    {
-      Critical: 0,
-      "Needs Attention": 0,
-      "Needs Follow-up": 0,
-      Healthy: 0,
-    }
-  );
+  const needsAttention = customerHealth.filter((result) => result.score < 60);
 
   return {
     scannedAt: new Date(),
-    scannedCompanies: results.length,
+    scannedCompanies: customerHealth.length,
     needsAttentionCount: needsAttention.length,
-    needsAttention,
     customerHealth,
-    statusCounts,
+    needsAttention,
   };
 };
