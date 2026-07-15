@@ -45,3 +45,150 @@ const CompanySchema = new mongoose.Schema(
     },
 
     website: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    email: {
+      type: String,
+      default: "",
+      lowercase: true,
+      trim: true,
+    },
+
+    phone: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    installedApps: {
+      type: [String],
+      default: ["ai-assistant"],
+    },
+
+    plan: {
+      type: String,
+      enum: ["starter", "growth", "professional", "enterprise"],
+      default: "starter",
+    },
+
+    billing: {
+      status: {
+        type: String,
+        enum: [
+          "not_configured",
+          "trial",
+          "active",
+          "past_due",
+          "cancelled",
+          "manual",
+        ],
+        default: "not_configured",
+      },
+
+      trialEndDate: {
+        type: Date,
+        default: null,
+      },
+
+      renewalDate: {
+        type: Date,
+        default: null,
+      },
+
+      contractEndDate: {
+        type: Date,
+        default: null,
+      },
+
+      creditsRemaining: {
+        type: Number,
+        default: null,
+      },
+
+      paymentStatus: {
+        type: String,
+        enum: [
+          "not_configured",
+          "paid",
+          "unpaid",
+          "past_due",
+          "failed",
+          "manual",
+        ],
+        default: "not_configured",
+      },
+    },
+
+    maxUsers: {
+      type: Number,
+      default: 1,
+    },
+
+    ownerUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+
+    activityEvents: {
+      type: [
+        {
+          eventType: {
+            type: String,
+            enum: ["installed", "uninstalled", "enabled", "disabled", "updated"],
+            required: true,
+          },
+          title: {
+            type: String,
+            required: true,
+          },
+          appSlug: {
+            type: String,
+            required: true,
+            lowercase: true,
+            trim: true,
+          },
+          appName: {
+            type: String,
+            default: "",
+          },
+          actorUserId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+            default: null,
+          },
+          actorName: {
+            type: String,
+            default: "",
+          },
+          actorEmail: {
+            type: String,
+            default: "",
+          },
+          createdAt: {
+            type: Date,
+            default: Date.now,
+          },
+          metadata: {
+            type: mongoose.Schema.Types.Mixed,
+            default: {},
+          },
+        },
+      ],
+      default: [],
+    },
+  },
+  {
+    timestamps: true,
+  }
+);
+
+export default mongoose.model("Company", CompanySchema);
