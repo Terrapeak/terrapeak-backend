@@ -7,6 +7,7 @@ import widgetRoutes from "./routes/widget.js";
 import swaggerRoutes from "./swagger.js";
 import cors from "cors";
 import path from "path";
+import ensureChannelRegistry from "./services/channelRegistryService.js";
 
 // ⬇️ Fix __dirname for ES Modules
 import { fileURLToPath } from "url";
@@ -18,7 +19,10 @@ dotenv.config();
 // Connect to MongoDB
 mongoose
   .connect(process.env.MONGO_URI, {})
-  .then(() => console.log("MongoDB connected"))
+  .then(async () => {
+    console.log("MongoDB connected");
+    await ensureChannelRegistry();
+  })
   .catch((error) => console.error("MongoDB connection error:", error));
 
 const app = express();
