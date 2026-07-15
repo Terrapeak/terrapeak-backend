@@ -52,6 +52,10 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
     companySlug,
     referencePrefix,
     reservationBusinessSlug,
+    companyAddress,
+    companyWebsite,
+    companyEmail,
+    companyPhone,
     plan = "starter",
     maxUsers = 1,
     installedApps = [],
@@ -62,9 +66,9 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
     throw new Error("Owner name, email, phone and temporary password are required.");
   }
 
-  if (!companyName) {
+  if (!companyName || !companyAddress || !companyEmail || !companyPhone) {
     res.status(400);
-    throw new Error("Company name is required.");
+    throw new Error("Company name, address, email and phone are required.");
   }
 
   const normalizedSlug = companySlug || slugify(companyName);
@@ -92,7 +96,11 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
     for (const app of availableApps) {
       if (!finalApps.has(app.slug)) continue;
 
-      if (app.requiresAIAssistant && availableSlugs.has("ai-assistant") && !finalApps.has("ai-assistant")) {
+      if (
+        app.requiresAIAssistant &&
+        availableSlugs.has("ai-assistant") &&
+        !finalApps.has("ai-assistant")
+      ) {
         finalApps.add("ai-assistant");
         changed = true;
       }
@@ -126,6 +134,13 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
     installedApps: Array.from(finalApps),
   });
 
+  result.company.country = country;
+  result.company.address = companyAddress.trim();
+  result.company.website = companyWebsite?.trim() || "";
+  result.company.email = companyEmail.toLowerCase().trim();
+  result.company.phone = companyPhone.trim();
+  await result.company.save();
+
   res.status(201).json({
     success: true,
     message: "Customer onboarding completed.",
@@ -141,6 +156,11 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
       slug: result.company.slug,
       plan: result.company.plan,
       maxUsers: result.company.maxUsers,
+      country: result.company.country,
+      address: result.company.address,
+      website: result.company.website,
+      email: result.company.email,
+      phone: result.company.phone,
     },
     contract: result.contract
       ? {
