@@ -10,7 +10,10 @@ import {
   getPlatformApps,
   updatePlatformApp,
 } from "../controllers/platformAdminController.js";
-import { getPlatformDashboardSummary } from "../controllers/platformAttentionController.js";
+import {
+  getPlatformDashboardSummary,
+  runPlatformAttentionScanNow,
+} from "../controllers/platformAttentionController.js";
 import { listPlatformCompanies } from "../controllers/platformCompanyListController.js";
 
 const router = express.Router();
@@ -20,6 +23,13 @@ router.get(
   isAuthenticated,
   isPlatformAdmin,
   getPlatformDashboardSummary
+);
+
+router.post(
+  "/attention-scan",
+  isAuthenticated,
+  isPlatformAdmin,
+  runPlatformAttentionScanNow
 );
 
 router.get(
