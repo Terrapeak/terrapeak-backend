@@ -51,6 +51,7 @@ export const getPlatformDashboardSummary = asyncHandler(async (req, res) => {
       scannedCompanies: attentionScan.scannedCompanies,
       scannedAt: attentionScan.scannedAt,
     },
+    customerHealth: attentionScan.customerHealth,
     needsAttention,
     morningBrief: {
       title: "Good morning",
@@ -60,7 +61,7 @@ export const getPlatformDashboardSummary = asyncHandler(async (req, res) => {
           } attention.`
         : "Platform is operational. No critical customer issues detected.",
       recommendations: hasAttentionItems
-        ? ["Review the customer workspaces listed under Needs Attention."]
+        ? ["Review the customer workspaces listed under Customer Health."]
         : ["Continue monitoring customer onboarding and platform activity."],
     },
   });
@@ -74,6 +75,7 @@ export const runPlatformAttentionScanNow = asyncHandler(async (req, res) => {
     scannedAt: attentionScan.scannedAt,
     scannedCompanies: attentionScan.scannedCompanies,
     needsAttentionCount: attentionScan.needsAttentionCount,
+    customerHealth: attentionScan.customerHealth,
     needsAttention: attentionScan.needsAttention,
   });
 });
