@@ -2,6 +2,7 @@ import asyncHandler from "express-async-handler";
 import CompanyMembership from "../models/companyMembership.js";
 import SupportConversation from "../models/supportConversation.js";
 import User from "../models/user.js";
+import { analyzeSupportConversation } from "../services/supportAiService.js";
 
 const getActiveMembership = async (userId) =>
   CompanyMembership.findOne({ userId, isActive: true });
@@ -16,20 +17,32 @@ const serializeConversation = (conversation) => ({
   status: conversation.status,
   assignedToUserId: conversation.assignedToUserId,
   messages: conversation.messages,
+  aiAnalysis: conversation.aiAnalysis,
   lastMessageAt: conversation.lastMessageAt,
   resolvedAt: conversation.resolvedAt,
   createdAt: conversation.createdAt,
   updatedAt: conversation.updatedAt,
 });
 
+const refreshAiAnalysis = async (conversation) => {
+  const analysis = await analyzeSupportConversation({
+    subject: conversation.subject,
+    messages: conversation.messages,
+  });
+
+  if (!analysis) return;
+  conversation.aiAnalysis = analysis;
+  conversation.category = analysis.category;
+  conversation.priority = analysis.priority;
+  await conversation.save();
+};
+
 export const listMySupportConversations = asyncHandler(async (req, res) => {
   const membership = await getActiveMembership(req.userId);
-
-  if (!membership) {
-    return res.status(404).json({ success: false, message: "No active company membership found." });
-  }
+  if (!membership) return res.status(404).json({ success: false, message: "No active company membership found." });
 
   const conversations = await SupportConversation.find({ companyId: membership.companyId })
+    .select("-aiAnalysis")
     .sort({ lastMessageAt: -1 })
     .lean();
 
@@ -38,18 +51,12 @@ export const listMySupportConversations = asyncHandler(async (req, res) => {
 
 export const createSupportConversation = asyncHandler(async (req, res) => {
   const membership = await getActiveMembership(req.userId);
-
-  if (!membership) {
-    return res.status(404).json({ success: false, message: "No active company membership found." });
-  }
+  if (!membership) return res.status(404).json({ success: false, message: "No active company membership found." });
 
   const user = await User.findById(req.userId).select("name email");
   const subject = String(req.body.subject || "").trim();
   const body = String(req.body.body || "").trim();
-
-  if (!subject || !body) {
-    return res.status(400).json({ success: false, message: "Subject and message are required." });
-  }
+  if (!subject || !body) return res.status(400).json({ success: false, message: "Subject and message are required." });
 
   const conversation = await SupportConversation.create({
     companyId: membership.companyId,
@@ -58,43 +65,31 @@ export const createSupportConversation = asyncHandler(async (req, res) => {
     category: req.body.category || "general",
     priority: req.body.priority || "normal",
     status: "new",
-    messages: [
-      {
-        senderType: "customer",
-        senderUserId: req.userId,
-        senderName: user?.name || user?.email || "Customer",
-        body,
-        readByCustomer: true,
-        readByPlatform: false,
-      },
-    ],
+    messages: [{
+      senderType: "customer",
+      senderUserId: req.userId,
+      senderName: user?.name || user?.email || "Customer",
+      body,
+      readByCustomer: true,
+      readByPlatform: false,
+    }],
     lastMessageAt: new Date(),
   });
 
+  await refreshAiAnalysis(conversation);
   res.status(201).json({ success: true, conversation: serializeConversation(conversation) });
 });
 
 export const replyToMySupportConversation = asyncHandler(async (req, res) => {
   const membership = await getActiveMembership(req.userId);
-
-  if (!membership) {
-    return res.status(404).json({ success: false, message: "No active company membership found." });
-  }
+  if (!membership) return res.status(404).json({ success: false, message: "No active company membership found." });
 
   const body = String(req.body.body || "").trim();
-  if (!body) {
-    return res.status(400).json({ success: false, message: "Message is required." });
-  }
+  if (!body) return res.status(400).json({ success: false, message: "Message is required." });
 
   const user = await User.findById(req.userId).select("name email");
-  const conversation = await SupportConversation.findOne({
-    _id: req.params.conversationId,
-    companyId: membership.companyId,
-  });
-
-  if (!conversation) {
-    return res.status(404).json({ success: false, message: "Support conversation not found." });
-  }
+  const conversation = await SupportConversation.findOne({ _id: req.params.conversationId, companyId: membership.companyId });
+  if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
 
   conversation.messages.push({
     senderType: "customer",
@@ -108,6 +103,7 @@ export const replyToMySupportConversation = asyncHandler(async (req, res) => {
   conversation.lastMessageAt = new Date();
   conversation.resolvedAt = null;
   await conversation.save();
+  await refreshAiAnalysis(conversation);
 
   res.json({ success: true, conversation: serializeConversation(conversation) });
 });
@@ -132,9 +128,7 @@ export const getPlatformSupportConversation = asyncHandler(async (req, res) => {
     .populate("createdByUserId", "name email")
     .populate("assignedToUserId", "name email");
 
-  if (!conversation) {
-    return res.status(404).json({ success: false, message: "Support conversation not found." });
-  }
+  if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
 
   conversation.messages.forEach((message) => {
     if (message.senderType === "customer") message.readByPlatform = true;
@@ -146,14 +140,10 @@ export const getPlatformSupportConversation = asyncHandler(async (req, res) => {
 
 export const replyToPlatformSupportConversation = asyncHandler(async (req, res) => {
   const body = String(req.body.body || "").trim();
-  if (!body) {
-    return res.status(400).json({ success: false, message: "Message is required." });
-  }
+  if (!body) return res.status(400).json({ success: false, message: "Message is required." });
 
   const conversation = await SupportConversation.findById(req.params.conversationId);
-  if (!conversation) {
-    return res.status(404).json({ success: false, message: "Support conversation not found." });
-  }
+  if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
 
   conversation.messages.push({
     senderType: "agent",
@@ -176,9 +166,7 @@ export const updatePlatformSupportConversation = asyncHandler(async (req, res) =
   const updates = {};
 
   if (req.body.status !== undefined) {
-    if (!allowedStatuses.has(req.body.status)) {
-      return res.status(400).json({ success: false, message: "Invalid support status." });
-    }
+    if (!allowedStatuses.has(req.body.status)) return res.status(400).json({ success: false, message: "Invalid support status." });
     updates.status = req.body.status;
     updates.resolvedAt = req.body.status === "resolved" ? new Date() : null;
   }
@@ -187,15 +175,8 @@ export const updatePlatformSupportConversation = asyncHandler(async (req, res) =
   if (req.body.category !== undefined) updates.category = req.body.category;
   if (req.body.assignedToUserId !== undefined) updates.assignedToUserId = req.body.assignedToUserId || null;
 
-  const conversation = await SupportConversation.findByIdAndUpdate(
-    req.params.conversationId,
-    updates,
-    { new: true, runValidators: true }
-  );
-
-  if (!conversation) {
-    return res.status(404).json({ success: false, message: "Support conversation not found." });
-  }
+  const conversation = await SupportConversation.findByIdAndUpdate(req.params.conversationId, updates, { new: true, runValidators: true });
+  if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
 
   res.json({ success: true, conversation: serializeConversation(conversation) });
 });
