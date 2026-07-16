@@ -17,6 +17,11 @@ import {
   removePlatformCompanyUser,
 } from "../controllers/platformCompanyEditController.js";
 import {
+  invitePlatformCompanyUser,
+  resendPlatformCompanyInvitation,
+  sendPlatformUserPasswordReset,
+} from "../controllers/platformUserLifecycleController.js";
+import {
   getPlatformDashboardSummary,
   runPlatformAttentionScanNow,
 } from "../controllers/platformAttentionController.js";
@@ -39,8 +44,11 @@ router.get("/companies/search", isAuthenticated, isPlatformAdmin, searchPlatform
 router.get("/companies/:companyId", isAuthenticated, isPlatformAdmin, getPlatformCompanyDetail);
 router.patch("/companies/:companyId", isAuthenticated, isPlatformAdmin, updatePlatformCompany);
 router.post("/companies/:companyId/users", isAuthenticated, isPlatformAdmin, addPlatformCompanyUser);
+router.post("/companies/:companyId/users/invite", isAuthenticated, isPlatformAdmin, invitePlatformCompanyUser);
 router.patch("/companies/:companyId/users/:membershipId", isAuthenticated, isPlatformAdmin, updatePlatformCompanyUser);
 router.delete("/companies/:companyId/users/:membershipId", isAuthenticated, isPlatformAdmin, removePlatformCompanyUser);
+router.post("/companies/:companyId/users/:membershipId/resend-invitation", isAuthenticated, isPlatformAdmin, resendPlatformCompanyInvitation);
+router.post("/companies/:companyId/users/:membershipId/password-reset", isAuthenticated, isPlatformAdmin, sendPlatformUserPasswordReset);
 router.post("/companies/:companyId/apps/:appId/toggle", isAuthenticated, isPlatformAdmin, toggleCompanyApp);
 router.get("/apps", isAuthenticated, isPlatformAdmin, getPlatformApps);
 router.put("/apps/:appId", isAuthenticated, isPlatformAdmin, updatePlatformApp);
