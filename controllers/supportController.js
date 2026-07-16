@@ -1,9 +1,9 @@
 import asyncHandler from "express-async-handler";
-import Company from "../models/company.js";
 import CompanyMembership from "../models/companyMembership.js";
 import SupportConversation from "../models/supportConversation.js";
 import User from "../models/user.js";
 import { analyzeSupportConversation } from "../services/supportAiService.js";
+import { buildSupportCompanyContext } from "../services/supportContextService.js";
 
 const getActiveMembership = async (userId) =>
   CompanyMembership.findOne({ userId, isActive: true });
@@ -25,33 +25,9 @@ const serializeConversation = (conversation) => ({
   updatedAt: conversation.updatedAt,
 });
 
-const buildCompanyContext = async (companyId) => {
-  const [company, activeUserCount] = await Promise.all([
-    Company.findById(companyId)
-      .select("name displayName country installedApps plan billing maxUsers isActive")
-      .lean(),
-    CompanyMembership.countDocuments({ companyId, isActive: true }),
-  ]);
-
-  if (!company) return null;
-
-  return {
-    companyName: company.displayName || company.name,
-    country: company.country || null,
-    accountStatus: company.isActive ? "active" : "inactive",
-    plan: company.plan || null,
-    billingStatus: company.billing?.status || null,
-    paymentStatus: company.billing?.paymentStatus || null,
-    creditsRemaining: company.billing?.creditsRemaining ?? null,
-    installedApps: Array.isArray(company.installedApps) ? company.installedApps : [],
-    activeUsers: activeUserCount,
-    maximumUsers: company.maxUsers ?? null,
-  };
-};
-
 const refreshAiAnalysis = async (conversation, { throwOnError = false } = {}) => {
   try {
-    const companyContext = await buildCompanyContext(conversation.companyId);
+    const companyContext = await buildSupportCompanyContext(conversation.companyId);
     const analysis = await analyzeSupportConversation({
       subject: conversation.subject,
       messages: conversation.messages,
