@@ -4,6 +4,7 @@ import SupportConversation from "../models/supportConversation.js";
 import User from "../models/user.js";
 import { analyzeSupportConversation } from "../services/supportAiService.js";
 import { buildSupportCompanyContext } from "../services/supportContextService.js";
+import { findRelevantSupportKnowledge } from "../services/supportKnowledgeService.js";
 
 const getActiveMembership = async (userId) =>
   CompanyMembership.findOne({ userId, isActive: true });
@@ -27,11 +28,19 @@ const serializeConversation = (conversation) => ({
 
 const refreshAiAnalysis = async (conversation, { throwOnError = false } = {}) => {
   try {
-    const companyContext = await buildSupportCompanyContext(conversation.companyId);
+    const [companyContext, knowledgeContext] = await Promise.all([
+      buildSupportCompanyContext(conversation.companyId),
+      findRelevantSupportKnowledge({
+        subject: conversation.subject,
+        messages: conversation.messages,
+      }),
+    ]);
+
     const analysis = await analyzeSupportConversation({
       subject: conversation.subject,
       messages: conversation.messages,
       companyContext,
+      knowledgeContext,
     });
 
     conversation.aiAnalysis = analysis;
