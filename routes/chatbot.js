@@ -16,14 +16,30 @@ import isAuthenticated from "../middleware/isAuthenticated.js";
 import isVerifiedUser from "../middleware/isVerifiedUser.js";
 import { askRateLimiter } from "../middleware/rateLimiter.js";
 import { verifyDomain } from "../middleware/validateChatbotApiKey.js";
+import {
+  maskCustomerAIConfigResponse,
+  stripCustomerAIConfigUpdates,
+} from "../middleware/protectCustomerAIConfig.js";
 import upload from "../utils/upload.js";
 
 const router = express.Router();
 
 // Protected routes for logged-in users
-router.get("/settings", isAuthenticated, isVerifiedUser, getChatbotSettings);
+router.get(
+  "/settings",
+  isAuthenticated,
+  isVerifiedUser,
+  maskCustomerAIConfigResponse,
+  getChatbotSettings
+);
 router.get("/settingByKey", verifyDomain, getChatbotSettingsByKey);
-router.post("/settings", isVerifiedUser, saveChatbotSettings);
+router.post(
+  "/settings",
+  isVerifiedUser,
+  stripCustomerAIConfigUpdates,
+  maskCustomerAIConfigResponse,
+  saveChatbotSettings
+);
 
 router.post("/extract-instruction", upload.single("file"), extractInstructions);
 
