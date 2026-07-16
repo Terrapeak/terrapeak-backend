@@ -7,6 +7,7 @@ import {
   replyToMySupportConversation,
   listPlatformSupportConversations,
   getPlatformSupportConversation,
+  analyzePlatformSupportConversation,
   replyToPlatformSupportConversation,
   updatePlatformSupportConversation,
 } from "../controllers/supportController.js";
@@ -32,6 +33,12 @@ router.get(
   isAuthenticated,
   isPlatformAdmin,
   getPlatformSupportConversation
+);
+router.post(
+  "/platform/conversations/:conversationId/analyze",
+  isAuthenticated,
+  isPlatformAdmin,
+  analyzePlatformSupportConversation
 );
 router.post(
   "/platform/conversations/:conversationId/messages",
