@@ -62,7 +62,12 @@ const mapGeminiError = (status, payload) => {
   );
 };
 
-export const analyzeSupportConversation = async ({ subject, messages, companyContext = null }) => {
+export const analyzeSupportConversation = async ({
+  subject,
+  messages,
+  companyContext = null,
+  knowledgeContext = [],
+}) => {
   const apiKey = getSupportApiKey();
   if (!apiKey) {
     throw createSupportAiError(
@@ -80,6 +85,10 @@ export const analyzeSupportConversation = async ({ subject, messages, companyCon
   const contextText = companyContext
     ? JSON.stringify(companyContext, null, 2)
     : "No company context available.";
+
+  const knowledgeText = knowledgeContext.length
+    ? JSON.stringify(knowledgeContext, null, 2)
+    : "No relevant support knowledge articles were found.";
 
   const prompt = `You are an internal customer-support triage assistant for Terrapeak.
 Observation mode only. Never answer the customer and never claim an action was completed.
@@ -107,8 +116,17 @@ For app and channel questions, treat appAccess as the source of truth:
 - State the exact reason from appAccess.reason in the suggested reply when it directly answers the customer's question.
 - If a feature is not in the current plan, explain that clearly and suggest Terrapeak review an upgrade or activation request.
 
+Use relevant support knowledge articles as approved Terrapeak guidance:
+- Follow them when they directly address the question.
+- Do not invent policies, prices, promises, timelines, or technical steps that are not in the articles or company context.
+- If the knowledge is incomplete, say Terrapeak will review and confirm the next step.
+- Do not mention that an internal knowledge article was used.
+
 Company context:
 ${contextText}
+
+Relevant support knowledge:
+${knowledgeText}
 
 Subject: ${subject}
 Conversation:
