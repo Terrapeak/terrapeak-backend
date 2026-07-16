@@ -24,18 +24,23 @@ const serializeConversation = (conversation) => ({
   updatedAt: conversation.updatedAt,
 });
 
-const refreshAiAnalysis = async (conversation) => {
-  const analysis = await analyzeSupportConversation({
-    subject: conversation.subject,
-    messages: conversation.messages,
-  });
+const refreshAiAnalysis = async (conversation, { throwOnError = false } = {}) => {
+  try {
+    const analysis = await analyzeSupportConversation({
+      subject: conversation.subject,
+      messages: conversation.messages,
+    });
 
-  if (!analysis) return null;
-  conversation.aiAnalysis = analysis;
-  conversation.category = analysis.category;
-  conversation.priority = analysis.priority;
-  await conversation.save();
-  return analysis;
+    conversation.aiAnalysis = analysis;
+    conversation.category = analysis.category;
+    conversation.priority = analysis.priority;
+    await conversation.save();
+    return analysis;
+  } catch (error) {
+    if (throwOnError) throw error;
+    console.error("Support AI observation failed:", error?.code || error?.message || error);
+    return null;
+  }
 };
 
 export const listMySupportConversations = asyncHandler(async (req, res) => {
@@ -143,15 +148,16 @@ export const analyzePlatformSupportConversation = asyncHandler(async (req, res) 
   const conversation = await SupportConversation.findById(req.params.conversationId);
   if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
 
-  const analysis = await refreshAiAnalysis(conversation);
-  if (!analysis) {
-    return res.status(503).json({
+  try {
+    await refreshAiAnalysis(conversation, { throwOnError: true });
+    res.json({ success: true, conversation: serializeConversation(conversation) });
+  } catch (error) {
+    res.status(error?.status || 503).json({
       success: false,
-      message: "AI analysis is unavailable. Check GEMINI_API_KEY and the configured support model.",
+      code: error?.code || "SUPPORT_AI_ERROR",
+      message: error?.message || "AI analysis is unavailable.",
     });
   }
-
-  res.json({ success: true, conversation: serializeConversation(conversation) });
 });
 
 export const replyToPlatformSupportConversation = asyncHandler(async (req, res) => {
