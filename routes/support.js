@@ -11,6 +11,12 @@ import {
   replyToPlatformSupportConversation,
   updatePlatformSupportConversation,
 } from "../controllers/supportController.js";
+import {
+  listSupportKnowledgeArticles,
+  createSupportKnowledgeArticle,
+  updateSupportKnowledgeArticle,
+  deleteSupportKnowledgeArticle,
+} from "../controllers/supportKnowledgeController.js";
 
 const router = express.Router();
 
@@ -51,6 +57,31 @@ router.patch(
   isAuthenticated,
   isPlatformAdmin,
   updatePlatformSupportConversation
+);
+
+router.get(
+  "/platform/knowledge",
+  isAuthenticated,
+  isPlatformAdmin,
+  listSupportKnowledgeArticles
+);
+router.post(
+  "/platform/knowledge",
+  isAuthenticated,
+  isPlatformAdmin,
+  createSupportKnowledgeArticle
+);
+router.patch(
+  "/platform/knowledge/:articleId",
+  isAuthenticated,
+  isPlatformAdmin,
+  updateSupportKnowledgeArticle
+);
+router.delete(
+  "/platform/knowledge/:articleId",
+  isAuthenticated,
+  isPlatformAdmin,
+  deleteSupportKnowledgeArticle
 );
 
 export default router;
