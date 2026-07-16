@@ -97,6 +97,16 @@ Always require a human for API key replacement, billing or contract changes, rem
 Do not include secrets or request an API key in chat.
 Use the company context only to improve relevance. Never reveal internal-only fields, billing details, user counts, or platform metadata unless the customer already mentioned them.
 
+For app and channel questions, treat appAccess as the source of truth:
+- includedInPlan=false means the feature is not part of the customer's current plan.
+- installed=false but includedInPlan=true means Terrapeak has not yet activated or configured it.
+- enabled=false with status=disabled means Terrapeak disabled it.
+- status=pending means setup is still in progress.
+- status=failed means setup failed and needs Terrapeak review.
+- Never tell the customer to click Enable when the feature is plan-locked or requires Terrapeak action.
+- State the exact reason from appAccess.reason in the suggested reply when it directly answers the customer's question.
+- If a feature is not in the current plan, explain that clearly and suggest Terrapeak review an upgrade or activation request.
+
 Company context:
 ${contextText}
 
