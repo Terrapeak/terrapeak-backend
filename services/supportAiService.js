@@ -18,19 +18,4 @@ const createSupportAiError = (code, message, status = 503) => {
 };
 
 const getSupportApiKey = () =>
-  process.env.SUPPORT_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
-
-const mapGeminiError = (status, payload) => {
-  const rawMessage = String(payload?.error?.message || "").toLowerCase();
-
-  if (status === 400 && rawMessage.includes("api key")) {
-    return createSupportAiError(
-      "INVALID_API_KEY",
-      "Gemini rejected the support API key. Check SUPPORT_GEMINI_API_KEY in Railway.",
-      400
-    );
-  }
-  if (status === 401 || status === 403) {
-    return createSupportAiError(
-      "PERMISSION_DENIED",
-      "Gemini denied access
+  process
