@@ -11,6 +11,12 @@ import {
   updatePlatformApp,
 } from "../controllers/platformAdminController.js";
 import {
+  updatePlatformCompany,
+  addPlatformCompanyUser,
+  updatePlatformCompanyUser,
+  removePlatformCompanyUser,
+} from "../controllers/platformCompanyEditController.js";
+import {
   getPlatformDashboardSummary,
   runPlatformAttentionScanNow,
 } from "../controllers/platformAttentionController.js";
@@ -31,6 +37,10 @@ router.get("/onboarding/options", isAuthenticated, isPlatformAdmin, getPlatformO
 router.post("/onboarding", isAuthenticated, isPlatformAdmin, onboardPlatformCustomer);
 router.get("/companies/search", isAuthenticated, isPlatformAdmin, searchPlatformCompanies);
 router.get("/companies/:companyId", isAuthenticated, isPlatformAdmin, getPlatformCompanyDetail);
+router.patch("/companies/:companyId", isAuthenticated, isPlatformAdmin, updatePlatformCompany);
+router.post("/companies/:companyId/users", isAuthenticated, isPlatformAdmin, addPlatformCompanyUser);
+router.patch("/companies/:companyId/users/:membershipId", isAuthenticated, isPlatformAdmin, updatePlatformCompanyUser);
+router.delete("/companies/:companyId/users/:membershipId", isAuthenticated, isPlatformAdmin, removePlatformCompanyUser);
 router.post("/companies/:companyId/apps/:appId/toggle", isAuthenticated, isPlatformAdmin, toggleCompanyApp);
 router.get("/apps", isAuthenticated, isPlatformAdmin, getPlatformApps);
 router.put("/apps/:appId", isAuthenticated, isPlatformAdmin, updatePlatformApp);
