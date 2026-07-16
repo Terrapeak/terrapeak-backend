@@ -21,6 +21,7 @@ import {
   resendPlatformCompanyInvitation,
   sendPlatformUserPasswordReset,
 } from "../controllers/platformUserLifecycleController.js";
+import { updatePlatformCommercialSettings } from "../controllers/platformCommercialController.js";
 import {
   getPlatformDashboardSummary,
   runPlatformAttentionScanNow,
@@ -43,6 +44,7 @@ router.post("/onboarding", isAuthenticated, isPlatformAdmin, onboardPlatformCust
 router.get("/companies/search", isAuthenticated, isPlatformAdmin, searchPlatformCompanies);
 router.get("/companies/:companyId", isAuthenticated, isPlatformAdmin, getPlatformCompanyDetail);
 router.patch("/companies/:companyId", isAuthenticated, isPlatformAdmin, updatePlatformCompany);
+router.patch("/companies/:companyId/commercial", isAuthenticated, isPlatformAdmin, updatePlatformCommercialSettings);
 router.post("/companies/:companyId/users", isAuthenticated, isPlatformAdmin, addPlatformCompanyUser);
 router.post("/companies/:companyId/users/invite", isAuthenticated, isPlatformAdmin, invitePlatformCompanyUser);
 router.patch("/companies/:companyId/users/:membershipId", isAuthenticated, isPlatformAdmin, updatePlatformCompanyUser);
