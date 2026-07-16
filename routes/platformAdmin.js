@@ -23,6 +23,11 @@ import {
 } from "../controllers/platformUserLifecycleController.js";
 import { updatePlatformCommercialSettings } from "../controllers/platformCommercialController.js";
 import {
+  getPlatformAIConfig,
+  updatePlatformAIConfig,
+  testPlatformAIConfig,
+} from "../controllers/platformAIConfigController.js";
+import {
   getPlatformDashboardSummary,
   runPlatformAttentionScanNow,
 } from "../controllers/platformAttentionController.js";
@@ -45,6 +50,9 @@ router.get("/companies/search", isAuthenticated, isPlatformAdmin, searchPlatform
 router.get("/companies/:companyId", isAuthenticated, isPlatformAdmin, getPlatformCompanyDetail);
 router.patch("/companies/:companyId", isAuthenticated, isPlatformAdmin, updatePlatformCompany);
 router.patch("/companies/:companyId/commercial", isAuthenticated, isPlatformAdmin, updatePlatformCommercialSettings);
+router.get("/companies/:companyId/ai-config", isAuthenticated, isPlatformAdmin, getPlatformAIConfig);
+router.patch("/companies/:companyId/ai-config", isAuthenticated, isPlatformAdmin, updatePlatformAIConfig);
+router.post("/companies/:companyId/ai-config/test", isAuthenticated, isPlatformAdmin, testPlatformAIConfig);
 router.post("/companies/:companyId/users", isAuthenticated, isPlatformAdmin, addPlatformCompanyUser);
 router.post("/companies/:companyId/users/invite", isAuthenticated, isPlatformAdmin, invitePlatformCompanyUser);
 router.patch("/companies/:companyId/users/:membershipId", isAuthenticated, isPlatformAdmin, updatePlatformCompanyUser);
