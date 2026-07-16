@@ -20,6 +20,22 @@ const SupportMessageSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+const SupportAiAnalysisSchema = new mongoose.Schema(
+  {
+    summary: { type: String, default: "" },
+    category: { type: String, default: "general" },
+    priority: { type: String, default: "normal" },
+    needsHuman: { type: Boolean, default: true },
+    escalationReason: { type: String, default: "" },
+    suggestedReply: { type: String, default: "" },
+    suggestedAction: { type: String, default: "" },
+    confidence: { type: Number, default: 0 },
+    model: { type: String, default: "" },
+    analyzedAt: { type: Date, default: null },
+  },
+  { _id: false }
+);
+
 const SupportConversationSchema = new mongoose.Schema(
   {
     companyId: {
@@ -56,6 +72,7 @@ const SupportConversationSchema = new mongoose.Schema(
       default: null,
     },
     messages: { type: [SupportMessageSchema], default: [] },
+    aiAnalysis: { type: SupportAiAnalysisSchema, default: null },
     lastMessageAt: { type: Date, default: Date.now, index: true },
     resolvedAt: { type: Date, default: null },
   },
