@@ -17,4 +17,14 @@ export const maskCustomerAIConfigResponse = (_req, res, next) => {
   const originalJson = res.json.bind(res);
 
   res.json = (payload) => {
-    if (payload
+    if (payload?.data && typeof payload.data === "object") {
+      const data = payload.data.toObject ? payload.data.toObject() : { ...payload.data };
+      data.geminiKey = maskGeminiKey(data.geminiKey);
+      payload = { ...payload, data };
+    }
+
+    return originalJson(payload);
+  };
+
+  next();
+};
