@@ -30,11 +30,12 @@ const refreshAiAnalysis = async (conversation) => {
     messages: conversation.messages,
   });
 
-  if (!analysis) return;
+  if (!analysis) return null;
   conversation.aiAnalysis = analysis;
   conversation.category = analysis.category;
   conversation.priority = analysis.priority;
   await conversation.save();
+  return analysis;
 };
 
 export const listMySupportConversations = asyncHandler(async (req, res) => {
@@ -136,6 +137,21 @@ export const getPlatformSupportConversation = asyncHandler(async (req, res) => {
   await conversation.save();
 
   res.json({ success: true, conversation });
+});
+
+export const analyzePlatformSupportConversation = asyncHandler(async (req, res) => {
+  const conversation = await SupportConversation.findById(req.params.conversationId);
+  if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
+
+  const analysis = await refreshAiAnalysis(conversation);
+  if (!analysis) {
+    return res.status(503).json({
+      success: false,
+      message: "AI analysis is unavailable. Check GEMINI_API_KEY and the configured support model.",
+    });
+  }
+
+  res.json({ success: true, conversation: serializeConversation(conversation) });
 });
 
 export const replyToPlatformSupportConversation = asyncHandler(async (req, res) => {
