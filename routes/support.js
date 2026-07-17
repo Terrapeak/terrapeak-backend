@@ -29,6 +29,11 @@ import {
   listConversationInternalNotes,
   createConversationInternalNote,
 } from "../controllers/supportInternalNoteController.js";
+import {
+  listMySupportNotifications,
+  markSupportNotificationRead,
+  markAllSupportNotificationsRead,
+} from "../controllers/supportNotificationController.js";
 
 const router = express.Router();
 
@@ -81,6 +86,25 @@ router.post(
   isAuthenticated,
   isPlatformAdmin,
   createConversationInternalNote
+);
+
+router.get(
+  "/platform/notifications",
+  isAuthenticated,
+  isPlatformAdmin,
+  listMySupportNotifications
+);
+router.patch(
+  "/platform/notifications/read-all",
+  isAuthenticated,
+  isPlatformAdmin,
+  markAllSupportNotificationsRead
+);
+router.patch(
+  "/platform/notifications/:notificationId/read",
+  isAuthenticated,
+  isPlatformAdmin,
+  markSupportNotificationRead
 );
 
 router.get(
