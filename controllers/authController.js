@@ -9,6 +9,8 @@ import sendEmail from "../utils/sendEmail.js";
    HELPERS
 ===================================================== */
 
+const PLATFORM_ROLES = ["platform-owner", "platform-admin"];
+
 const isValidEmail = (email) =>
   /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -22,6 +24,11 @@ const cookieOptions = {
   maxAge: 24 * 60 * 60 * 1000,
 };
 
+const platformCookieOptions = {
+  ...cookieOptions,
+  maxAge: 8 * 60 * 60 * 1000,
+};
+
 const generateOTP = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 
@@ -32,10 +39,24 @@ const createAuthToken = (user) =>
       isAdmin: user.isAdmin,
       role: user.role || "user",
       platformRole: user.platformRole || "none",
+      authScope: "dashboard",
     },
     process.env.JWT_SECRET,
     {
       expiresIn: "1d",
+    }
+  );
+
+const createPlatformToken = (user) =>
+  jwt.sign(
+    {
+      _id: user._id,
+      platformRole: user.platformRole,
+      authScope: "platform",
+    },
+    process.env.JWT_SECRET,
+    {
+      expiresIn: "8h",
     }
   );
 
@@ -50,6 +71,13 @@ const buildUserResponse = (user) => ({
   isApproved: user.isApproved,
   role: user.role || "user",
   platformRole: user.platformRole || "none",
+});
+
+const buildPlatformUserResponse = (user) => ({
+  _id: user._id,
+  name: user.name,
+  email: user.email,
+  platformRole: user.platformRole,
 });
 
 /* =====================================================
@@ -133,10 +161,6 @@ export const requestSignupOTP = asyncHandler(
 
     const otp = generateOTP();
 
-    /*
-     * Keep only the latest OTP for this email.
-     * The User is NOT created at this stage.
-     */
     await Otp.deleteMany({
       email: normalizedEmail,
     });
@@ -153,22 +177,12 @@ export const requestSignupOTP = asyncHandler(
       html: `
         <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
           <h2>Email Verification</h2>
-
-          <p>
-            Hi <b>${name}</b>,
-          </p>
-
-          <p>
-            Use the following verification code to complete your signup:
-          </p>
-
+          <p>Hi <b>${name}</b>,</p>
+          <p>Use the following verification code to complete your signup:</p>
           <div style="font-size: 28px; font-weight: bold; letter-spacing: 6px; margin: 20px 0;">
             ${otp}
           </div>
-
-          <p>
-            After verification, your account will await Terrapeak approval.
-          </p>
+          <p>After verification, your account will await Terrapeak approval.</p>
         </div>
       `,
     });
@@ -231,10 +245,6 @@ export const verifySignupOTP = asyncHandler(
       });
     }
 
-    /*
-     * Check again because another request could have
-     * created the user after the OTP was requested.
-     */
     const existingEmail = await User.findOne({
       email: normalizedEmail,
     });
@@ -261,10 +271,6 @@ export const verifySignupOTP = asyncHandler(
       });
     }
 
-    /*
-     * The new user remains pending until a Terrapeak
-     * platform administrator approves the account.
-     */
     const user = new User({
       name: name.trim(),
       email: normalizedEmail,
@@ -284,10 +290,6 @@ export const verifySignupOTP = asyncHandler(
       email: normalizedEmail,
     });
 
-    /*
-     * No JWT and no authentication cookie are created.
-     * Email verification is not platform approval.
-     */
     return res.status(201).json({
       success: true,
       approvalRequired: true,
@@ -299,7 +301,7 @@ export const verifySignupOTP = asyncHandler(
 );
 
 /* =====================================================
-   LOGIN
+   DASHBOARD LOGIN
 ===================================================== */
 
 export const login = asyncHandler(
@@ -372,7 +374,77 @@ export const login = asyncHandler(
 );
 
 /* =====================================================
-   LOGOUT
+   PLATFORM LOGIN
+===================================================== */
+
+export const platformLogin = asyncHandler(
+  async (req, res) => {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and password are required.",
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!isValidEmail(normalizedEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid email format.",
+      });
+    }
+
+    const user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid platform credentials.",
+      });
+    }
+
+    const isMatch = await user.matchPassword(password);
+
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid platform credentials.",
+      });
+    }
+
+    if (!user.isApproved) {
+      return res.status(403).json({
+        success: false,
+        message: "This platform account is not active.",
+      });
+    }
+
+    if (!PLATFORM_ROLES.includes(user.platformRole)) {
+      return res.status(403).json({
+        success: false,
+        message: "Terrapeak platform access required.",
+      });
+    }
+
+    const platformToken = createPlatformToken(user);
+
+    return res
+      .cookie("platformToken", platformToken, platformCookieOptions)
+      .status(200)
+      .json({
+        success: true,
+        message: "Platform login successful.",
+        platformUser: buildPlatformUserResponse(user),
+        platformToken,
+      });
+  }
+);
+
+/* =====================================================
+   LOGOUTS
 ===================================================== */
 
 export const logout = asyncHandler(
@@ -387,6 +459,22 @@ export const logout = asyncHandler(
       .json({
         success: true,
         message: "Logged out successfully.",
+      });
+  }
+);
+
+export const platformLogout = asyncHandler(
+  async (req, res) => {
+    return res
+      .clearCookie("platformToken", {
+        httpOnly: true,
+        secure: true,
+        sameSite: "None",
+      })
+      .status(200)
+      .json({
+        success: true,
+        message: "Platform logout successful.",
       });
   }
 );
