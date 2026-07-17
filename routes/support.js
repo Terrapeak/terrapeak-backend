@@ -25,6 +25,10 @@ import {
   createTaskFromAiSuggestion,
   updateConversationTask,
 } from "../controllers/supportTaskController.js";
+import {
+  listConversationInternalNotes,
+  createConversationInternalNote,
+} from "../controllers/supportInternalNoteController.js";
 
 const router = express.Router();
 
@@ -65,6 +69,18 @@ router.patch(
   isAuthenticated,
   isPlatformAdmin,
   updatePlatformSupportConversation
+);
+router.get(
+  "/platform/conversations/:conversationId/internal-notes",
+  isAuthenticated,
+  isPlatformAdmin,
+  listConversationInternalNotes
+);
+router.post(
+  "/platform/conversations/:conversationId/internal-notes",
+  isAuthenticated,
+  isPlatformAdmin,
+  createConversationInternalNote
 );
 
 router.get(
