@@ -40,6 +40,14 @@ const normalizeAssignee = async (value) => {
   return user._id;
 };
 
+const syncConversationOwnerIfUnassigned = async (conversationId, assignedToUserId) => {
+  if (!assignedToUserId) return;
+  await SupportConversation.updateOne(
+    { _id: conversationId, assignedToUserId: null },
+    { $set: { assignedToUserId } }
+  );
+};
+
 export const listSupportAssignees = asyncHandler(async (req, res) => {
   const users = await User.find({
     platformRole: { $in: PLATFORM_ROLES },
@@ -120,7 +128,9 @@ export const createConversationTask = asyncHandler(async (req, res) => {
   const priority = ALLOWED_PRIORITIES.has(req.body.priority)
     ? req.body.priority
     : conversation.priority || "normal";
-  const assignedToUserId = await normalizeAssignee(req.body.assignedToUserId);
+  const requestedAssignee = req.body.assignedToUserId !== undefined
+    ? await normalizeAssignee(req.body.assignedToUserId)
+    : conversation.assignedToUserId || null;
 
   const task = await SupportTask.create({
     conversationId: conversation._id,
@@ -128,12 +138,13 @@ export const createConversationTask = asyncHandler(async (req, res) => {
     title,
     notes: String(req.body.notes || "").trim(),
     priority,
-    assignedToUserId,
+    assignedToUserId: requestedAssignee,
     dueAt: req.body.dueAt || null,
     createdByUserId: req.userId || null,
     source: req.body.source === "ai_suggestion" ? "ai_suggestion" : "manual",
   });
 
+  await syncConversationOwnerIfUnassigned(conversation._id, requestedAssignee);
   await task.populate("assignedToUserId", "name email platformRole");
   res.status(201).json({ success: true, task });
 });
@@ -159,18 +170,21 @@ export const createTaskFromAiSuggestion = asyncHandler(async (req, res) => {
     return res.status(409).json({ success: false, message: "An open task already exists for this AI suggestion." });
   }
 
-  const assignedToUserId = await normalizeAssignee(req.body.assignedToUserId);
+  const requestedAssignee = req.body.assignedToUserId !== undefined
+    ? await normalizeAssignee(req.body.assignedToUserId)
+    : conversation.assignedToUserId || null;
   const task = await SupportTask.create({
     conversationId: conversation._id,
     companyId: conversation.companyId,
     title: suggestedAction,
     priority: conversation.priority || "normal",
-    assignedToUserId,
+    assignedToUserId: requestedAssignee,
     dueAt: req.body.dueAt || null,
     createdByUserId: req.userId || null,
     source: "ai_suggestion",
   });
 
+  await syncConversationOwnerIfUnassigned(conversation._id, requestedAssignee);
   await task.populate("assignedToUserId", "name email platformRole");
   res.status(201).json({ success: true, task });
 });
@@ -206,12 +220,17 @@ export const updateConversationTask = asyncHandler(async (req, res) => {
     task.completedAt = req.body.status === "done" ? new Date() : null;
   }
 
+  let normalizedAssignee;
   if (req.body.assignedToUserId !== undefined) {
-    task.assignedToUserId = await normalizeAssignee(req.body.assignedToUserId);
+    normalizedAssignee = await normalizeAssignee(req.body.assignedToUserId);
+    task.assignedToUserId = normalizedAssignee;
   }
   if (req.body.dueAt !== undefined) task.dueAt = req.body.dueAt || null;
 
   await task.save();
+  if (normalizedAssignee) {
+    await syncConversationOwnerIfUnassigned(task.conversationId, normalizedAssignee);
+  }
   await task.populate("assignedToUserId", "name email platformRole");
   res.json({ success: true, task });
 });
