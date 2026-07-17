@@ -18,6 +18,8 @@ import {
   deleteSupportKnowledgeArticle,
 } from "../controllers/supportKnowledgeController.js";
 import {
+  listSupportAssignees,
+  listPlatformTasks,
   listConversationTasks,
   createConversationTask,
   createTaskFromAiSuggestion,
@@ -65,6 +67,18 @@ router.patch(
   updatePlatformSupportConversation
 );
 
+router.get(
+  "/platform/assignees",
+  isAuthenticated,
+  isPlatformAdmin,
+  listSupportAssignees
+);
+router.get(
+  "/platform/tasks",
+  isAuthenticated,
+  isPlatformAdmin,
+  listPlatformTasks
+);
 router.get(
   "/platform/conversations/:conversationId/tasks",
   isAuthenticated,
