@@ -1,6 +1,6 @@
 import express from "express";
 
-import isAuthenticated from "../middleware/isAuthenticated.js";
+import isPlatformAuthenticated from "../middleware/isPlatformAuthenticated.js";
 import isPlatformAdmin from "../middleware/isPlatformAdmin.js";
 
 import {
@@ -40,27 +40,27 @@ import {
 
 const router = express.Router();
 
-router.get("/summary", isAuthenticated, isPlatformAdmin, getPlatformDashboardSummary);
-router.post("/attention-scan", isAuthenticated, isPlatformAdmin, runPlatformAttentionScanNow);
-router.get("/companies", isAuthenticated, isPlatformAdmin, listPlatformCompanies);
-router.get("/users", isAuthenticated, isPlatformAdmin, listPlatformUsers);
-router.get("/onboarding/options", isAuthenticated, isPlatformAdmin, getPlatformOnboardingOptions);
-router.post("/onboarding", isAuthenticated, isPlatformAdmin, onboardPlatformCustomer);
-router.get("/companies/search", isAuthenticated, isPlatformAdmin, searchPlatformCompanies);
-router.get("/companies/:companyId", isAuthenticated, isPlatformAdmin, getPlatformCompanyDetail);
-router.patch("/companies/:companyId", isAuthenticated, isPlatformAdmin, updatePlatformCompany);
-router.patch("/companies/:companyId/commercial", isAuthenticated, isPlatformAdmin, updatePlatformCommercialSettings);
-router.get("/companies/:companyId/ai-config", isAuthenticated, isPlatformAdmin, getPlatformAIConfig);
-router.patch("/companies/:companyId/ai-config", isAuthenticated, isPlatformAdmin, updatePlatformAIConfig);
-router.post("/companies/:companyId/ai-config/test", isAuthenticated, isPlatformAdmin, testPlatformAIConfig);
-router.post("/companies/:companyId/users", isAuthenticated, isPlatformAdmin, addPlatformCompanyUser);
-router.post("/companies/:companyId/users/invite", isAuthenticated, isPlatformAdmin, invitePlatformCompanyUser);
-router.patch("/companies/:companyId/users/:membershipId", isAuthenticated, isPlatformAdmin, updatePlatformCompanyUser);
-router.delete("/companies/:companyId/users/:membershipId", isAuthenticated, isPlatformAdmin, removePlatformCompanyUser);
-router.post("/companies/:companyId/users/:membershipId/resend-invitation", isAuthenticated, isPlatformAdmin, resendPlatformCompanyInvitation);
-router.post("/companies/:companyId/users/:membershipId/password-reset", isAuthenticated, isPlatformAdmin, sendPlatformUserPasswordReset);
-router.post("/companies/:companyId/apps/:appId/toggle", isAuthenticated, isPlatformAdmin, toggleCompanyApp);
-router.get("/apps", isAuthenticated, isPlatformAdmin, getPlatformApps);
-router.put("/apps/:appId", isAuthenticated, isPlatformAdmin, updatePlatformApp);
+router.get("/summary", isPlatformAuthenticated, isPlatformAdmin, getPlatformDashboardSummary);
+router.post("/attention-scan", isPlatformAuthenticated, isPlatformAdmin, runPlatformAttentionScanNow);
+router.get("/companies", isPlatformAuthenticated, isPlatformAdmin, listPlatformCompanies);
+router.get("/users", isPlatformAuthenticated, isPlatformAdmin, listPlatformUsers);
+router.get("/onboarding/options", isPlatformAuthenticated, isPlatformAdmin, getPlatformOnboardingOptions);
+router.post("/onboarding", isPlatformAuthenticated, isPlatformAdmin, onboardPlatformCustomer);
+router.get("/companies/search", isPlatformAuthenticated, isPlatformAdmin, searchPlatformCompanies);
+router.get("/companies/:companyId", isPlatformAuthenticated, isPlatformAdmin, getPlatformCompanyDetail);
+router.patch("/companies/:companyId", isPlatformAuthenticated, isPlatformAdmin, updatePlatformCompany);
+router.patch("/companies/:companyId/commercial", isPlatformAuthenticated, isPlatformAdmin, updatePlatformCommercialSettings);
+router.get("/companies/:companyId/ai-config", isPlatformAuthenticated, isPlatformAdmin, getPlatformAIConfig);
+router.patch("/companies/:companyId/ai-config", isPlatformAuthenticated, isPlatformAdmin, updatePlatformAIConfig);
+router.post("/companies/:companyId/ai-config/test", isPlatformAuthenticated, isPlatformAdmin, testPlatformAIConfig);
+router.post("/companies/:companyId/users", isPlatformAuthenticated, isPlatformAdmin, addPlatformCompanyUser);
+router.post("/companies/:companyId/users/invite", isPlatformAuthenticated, isPlatformAdmin, invitePlatformCompanyUser);
+router.patch("/companies/:companyId/users/:membershipId", isPlatformAuthenticated, isPlatformAdmin, updatePlatformCompanyUser);
+router.delete("/companies/:companyId/users/:membershipId", isPlatformAuthenticated, isPlatformAdmin, removePlatformCompanyUser);
+router.post("/companies/:companyId/users/:membershipId/resend-invitation", isPlatformAuthenticated, isPlatformAdmin, resendPlatformCompanyInvitation);
+router.post("/companies/:companyId/users/:membershipId/password-reset", isPlatformAuthenticated, isPlatformAdmin, sendPlatformUserPasswordReset);
+router.post("/companies/:companyId/apps/:appId/toggle", isPlatformAuthenticated, isPlatformAdmin, toggleCompanyApp);
+router.get("/apps", isPlatformAuthenticated, isPlatformAdmin, getPlatformApps);
+router.put("/apps/:appId", isPlatformAuthenticated, isPlatformAdmin, updatePlatformApp);
 
 export default router;
