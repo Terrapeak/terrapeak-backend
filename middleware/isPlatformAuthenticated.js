@@ -2,7 +2,7 @@ import jwt from "jsonwebtoken";
 
 const isPlatformAuthenticated = async (req, res, next) => {
   try {
-    const token = req.cookies.platformToken;
+    const token = req.cookies?.platformToken;
 
     if (!token) {
       return res.status(401).json({
@@ -23,8 +23,13 @@ const isPlatformAuthenticated = async (req, res, next) => {
     req.userId = decoded._id;
     req.platformRole = decoded.platformRole;
 
-    next();
+    return next();
   } catch (error) {
     return res.status(401).json({
       success: false,
-      message:
+      message: "Invalid or expired platform session.",
+    });
+  }
+};
+
+export default isPlatformAuthenticated;
