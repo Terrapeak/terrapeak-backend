@@ -34,6 +34,7 @@ import {
   markSupportNotificationRead,
   markAllSupportNotificationsRead,
 } from "../controllers/supportNotificationController.js";
+import { getSupportReport } from "../controllers/supportReportController.js";
 
 const router = express.Router();
 
@@ -105,6 +106,13 @@ router.patch(
   isAuthenticated,
   isPlatformAdmin,
   markSupportNotificationRead
+);
+
+router.get(
+  "/platform/reports",
+  isAuthenticated,
+  isPlatformAdmin,
+  getSupportReport
 );
 
 router.get(
