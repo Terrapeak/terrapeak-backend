@@ -2,6 +2,8 @@ import asyncHandler from "express-async-handler";
 import jwt from "jsonwebtoken";
 
 import User from "../models/user.js";
+import Company from "../models/company.js";
+import CompanyMembership from "../models/companyMembership.js";
 import Otp from "../models/otp.js";
 import sendEmail from "../utils/sendEmail.js";
 
@@ -359,7 +361,7 @@ export const login = asyncHandler(
     }
 
     const token = createAuthToken(user);
-    const userData = buildUserResponse(user);
+    const userData = buildUserResponse(user)
 
     return res
       .cookie("token", token, cookieOptions)
@@ -429,6 +431,44 @@ export const platformLogin = asyncHandler(
       });
     }
 
+    const platformCompanies = await Company.find({
+      isPlatformWorkspace: true,
+      isActive: true,
+    }).select("_id");
+
+    if (platformCompanies.length !== 1) {
+      console.error(
+        `Platform configuration error: expected exactly one Platform Workspace, found ${platformCompanies.length}.`
+      );
+
+      return res.status(500).json({
+        success: false,
+        message: "Platform configuration error. Please contact Terrapeak.",
+      });
+     }
+
+const platformCompany = platformCompanies[0];
+                          
+    if (!platformCompany) {
+      return res.status(403).json({
+        success: false,
+        message: "Platform workspace is not configured.",
+      });
+    }
+
+    const platformMembership = await CompanyMembership.findOne({
+      companyId: platformCompany._id,
+      userId: user._id,
+      isActive: true,
+    }).select("_id");
+
+
+if (!platformMembership) {
+  return res.status(403).json({
+    success: false,
+    message: "Terrapeak platform access required.",
+  });
+}
     const platformToken = createPlatformToken(user);
 
     return res

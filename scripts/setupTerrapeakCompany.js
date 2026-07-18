@@ -18,6 +18,7 @@ const TERRAPEAK_COMPANY = {
   plan: "enterprise",
   maxUsers: 10,
   isActive: true,
+  isPlatformWorkspace: true,
 };
 
 const PLATFORM_OWNER_ROLES = ["platform-owner", "platform-admin"];

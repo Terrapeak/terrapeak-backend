@@ -138,6 +138,11 @@ const CompanySchema = new mongoose.Schema(
       default: true,
     },
 
+    isPlatformWorkspace: {
+      type: Boolean,
+      default: false,
+    },
+
     activityEvents: {
       type: [
         {
