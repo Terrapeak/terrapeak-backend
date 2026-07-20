@@ -36,6 +36,34 @@ const SupportAiAnalysisSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const SupportPendingActionSchema = new mongoose.Schema(
+  {
+    type: {
+      type: String,
+      enum: ["resend_invitation", "password_reset"],
+      required: true,
+    },
+    membershipId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "CompanyMembership",
+      required: true,
+    },
+    targetUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    targetEmail: { type: String, required: true, lowercase: true, trim: true },
+    requestedByUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    expiresAt: { type: Date, required: true },
+  },
+  { _id: false }
+);
+
 const SupportConversationSchema = new mongoose.Schema(
   {
     companyId: {
@@ -73,6 +101,7 @@ const SupportConversationSchema = new mongoose.Schema(
     },
     messages: { type: [SupportMessageSchema], default: [] },
     aiAnalysis: { type: SupportAiAnalysisSchema, default: null },
+    pendingAction: { type: SupportPendingActionSchema, default: null },
     lastMessageAt: { type: Date, default: Date.now, index: true },
     resolvedAt: { type: Date, default: null },
   },
