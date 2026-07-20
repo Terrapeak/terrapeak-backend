@@ -162,31 +162,45 @@ test("Facebook OAuth API failures retain Meta diagnostics", async (t) => {
       assert.equal(error.phase, "authorization-code exchange");
       assert.equal(error.status, 500);
       assert.equal(error.metaError.code, 1);
+      assert.equal(error.requestContext.method, "GET");
+      assert.equal(
+        error.requestContext.endpoint,
+        "https://graph.facebook.com/v24.0/oauth/access_token"
+      );
+      assert.deepEqual(error.requestContext.parameterNames, [
+        "client_id",
+        "client_secret",
+        "code",
+        "redirect_uri",
+      ]);
+      assert.doesNotMatch(
+        JSON.stringify(error.requestContext),
+        /test-app-secret|authorization-code/
+      );
       assert.match(error.message, /An unknown error occurred/);
       return true;
     }
   );
-  assert.equal(attempts, 2);
+  assert.equal(attempts, 1);
 });
 
-test("Facebook OAuth retries one transient Meta server failure", async (t) => {
+test("Facebook OAuth does not replay a single-use code after a Meta server failure", async (t) => {
   configureMetaEnvironment();
   let attempts = 0;
   t.mock.method(axios, "get", async () => {
     attempts += 1;
 
-    if (attempts === 1) {
-      const error = new Error("Request failed with status code 500");
-      error.response = { status: 500, data: { error: { message: "Temporary failure" } } };
-      throw error;
-    }
-
-    return { data: { access_token: "user-access-token" } };
+    const error = new Error("Request failed with status code 500");
+    error.response = {
+      status: 500,
+      data: { error: { message: "Temporary failure" } },
+    };
+    throw error;
   });
 
-  assert.equal(
-    await exchangeFacebookAuthorizationCode("authorization-code"),
-    "user-access-token"
+  await assert.rejects(
+    exchangeFacebookAuthorizationCode("authorization-code"),
+    FacebookOAuthApiError
   );
-  assert.equal(attempts, 2);
+  assert.equal(attempts, 1);
 });

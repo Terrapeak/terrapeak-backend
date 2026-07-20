@@ -301,8 +301,14 @@ export const handleFacebookOAuthCallback = async (req, res) => {
       phase: error instanceof FacebookOAuthApiError ? error.phase : phase,
       message: error.message,
       status: error instanceof FacebookOAuthApiError ? error.status : undefined,
+      statusText:
+        error instanceof FacebookOAuthApiError ? error.statusText : undefined,
       metaError:
         error instanceof FacebookOAuthApiError ? error.metaError : undefined,
+      requestContext:
+        error instanceof FacebookOAuthApiError
+          ? error.requestContext
+          : undefined,
       callbackParameters: Object.keys(req.query || {}),
       stack: error.stack,
     });

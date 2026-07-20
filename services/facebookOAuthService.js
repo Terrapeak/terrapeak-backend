@@ -123,16 +123,21 @@ export const buildFacebookAuthorizationUrl = (state) => {
 };
 
 export class FacebookOAuthApiError extends Error {
-  constructor(message, { phase, status, metaError, cause } = {}) {
+  constructor(
+    message,
+    { phase, status, statusText, metaError, requestContext, cause } = {}
+  ) {
     super(message, cause ? { cause } : undefined);
     this.name = "FacebookOAuthApiError";
     this.phase = phase;
     this.status = status;
+    this.statusText = statusText;
     this.metaError = metaError;
+    this.requestContext = requestContext;
   }
 }
 
-const toFacebookOAuthApiError = (error, phase) => {
+const toFacebookOAuthApiError = (error, phase, requestContext) => {
   const metaError = error.response?.data?.error;
   const status = error.response?.status;
   const underlyingMessage =
@@ -145,13 +150,16 @@ const toFacebookOAuthApiError = (error, phase) => {
     {
       phase,
       status,
+      statusText: error.response?.statusText,
+      requestContext,
       metaError: metaError
         ? {
             type: metaError.type,
             code: metaError.code,
             subcode: metaError.error_subcode,
             message: metaError.message,
-            traceId: metaError.fbtrace_id,
+            traceId:
+              metaError.fbtrace_id || error.response?.headers?.["x-fb-trace-id"],
           }
         : undefined,
       cause: error,
@@ -159,16 +167,27 @@ const toFacebookOAuthApiError = (error, phase) => {
   );
 };
 
-const getFromMeta = async (url, options, phase) => {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+const getFromMeta = async (
+  url,
+  options,
+  phase,
+  { retryServerErrors = true, requestContext } = {}
+) => {
+  const maximumAttempts = retryServerErrors ? 2 : 1;
+
+  for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
     try {
       return await axios.get(url, options);
     } catch (error) {
       const status = error.response?.status;
-      const mayRetry = attempt === 0 && status >= 500 && status < 600;
+      const mayRetry =
+        retryServerErrors &&
+        attempt + 1 < maximumAttempts &&
+        status >= 500 &&
+        status < 600;
 
       if (!mayRetry) {
-        throw toFacebookOAuthApiError(error, phase);
+        throw toFacebookOAuthApiError(error, phase, requestContext);
       }
     }
   }
@@ -178,8 +197,10 @@ const getFromMeta = async (url, options, phase) => {
 
 export const exchangeFacebookAuthorizationCode = async (code) => {
   const config = getMetaConfig();
+  const endpoint =
+    `https://graph.facebook.com/${config.graphVersion}/oauth/access_token`;
   const response = await getFromMeta(
-    `https://graph.facebook.com/${config.graphVersion}/oauth/access_token`,
+    endpoint,
     {
       params: {
         client_id: config.appId,
@@ -187,9 +208,20 @@ export const exchangeFacebookAuthorizationCode = async (code) => {
         code,
         redirect_uri: config.redirectUri,
       },
+      headers: { Accept: "application/json" },
       timeout: 15000,
     },
-    "authorization-code exchange"
+    "authorization-code exchange",
+    {
+      retryServerErrors: false,
+      requestContext: {
+        method: "GET",
+        endpoint,
+        graphVersion: config.graphVersion,
+        redirectUri: config.redirectUri,
+        parameterNames: ["client_id", "client_secret", "code", "redirect_uri"],
+      },
+    }
   );
 
   if (!response.data?.access_token) {
