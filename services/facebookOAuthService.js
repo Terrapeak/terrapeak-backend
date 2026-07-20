@@ -9,6 +9,18 @@ const DEFAULT_SCOPES = [
   "pages_messaging",
 ];
 
+const getQueryString = (value) => {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Array.isArray(value) && typeof value[0] === "string") {
+    return value[0];
+  }
+
+  return "";
+};
+
 const requireEnvironmentVariable = (name) => {
   const value = process.env[name]?.trim();
 
@@ -74,6 +86,25 @@ export const verifyFacebookOAuthState = (state) => {
   return payload;
 };
 
+export const parseFacebookOAuthCallbackQuery = (query = {}) => {
+  const state = getQueryString(query.state);
+  const code = getQueryString(query.code);
+  const error = getQueryString(query.error);
+
+  return {
+    state,
+    code,
+    metaError: error
+      ? {
+          error,
+          reason: getQueryString(query.error_reason),
+          description: getQueryString(query.error_description),
+          code: getQueryString(query.error_code),
+        }
+      : null,
+  };
+};
+
 export const buildFacebookAuthorizationUrl = (state) => {
   const config = getMetaConfig();
   const authorizationUrl = new URL(
@@ -91,9 +122,63 @@ export const buildFacebookAuthorizationUrl = (state) => {
   return authorizationUrl.toString();
 };
 
+export class FacebookOAuthApiError extends Error {
+  constructor(message, { phase, status, metaError, cause } = {}) {
+    super(message, cause ? { cause } : undefined);
+    this.name = "FacebookOAuthApiError";
+    this.phase = phase;
+    this.status = status;
+    this.metaError = metaError;
+  }
+}
+
+const toFacebookOAuthApiError = (error, phase) => {
+  const metaError = error.response?.data?.error;
+  const status = error.response?.status;
+  const underlyingMessage =
+    typeof metaError?.message === "string" && metaError.message.trim()
+      ? metaError.message.trim()
+      : error.message;
+
+  return new FacebookOAuthApiError(
+    `Meta ${phase} failed${status ? ` with HTTP ${status}` : ""}: ${underlyingMessage}`,
+    {
+      phase,
+      status,
+      metaError: metaError
+        ? {
+            type: metaError.type,
+            code: metaError.code,
+            subcode: metaError.error_subcode,
+            message: metaError.message,
+            traceId: metaError.fbtrace_id,
+          }
+        : undefined,
+      cause: error,
+    }
+  );
+};
+
+const getFromMeta = async (url, options, phase) => {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await axios.get(url, options);
+    } catch (error) {
+      const status = error.response?.status;
+      const mayRetry = attempt === 0 && status >= 500 && status < 600;
+
+      if (!mayRetry) {
+        throw toFacebookOAuthApiError(error, phase);
+      }
+    }
+  }
+
+  throw new FacebookOAuthApiError(`Meta ${phase} failed.`, { phase });
+};
+
 export const exchangeFacebookAuthorizationCode = async (code) => {
   const config = getMetaConfig();
-  const response = await axios.get(
+  const response = await getFromMeta(
     `https://graph.facebook.com/${config.graphVersion}/oauth/access_token`,
     {
       params: {
@@ -103,7 +188,8 @@ export const exchangeFacebookAuthorizationCode = async (code) => {
         redirect_uri: config.redirectUri,
       },
       timeout: 15000,
-    }
+    },
+    "authorization-code exchange"
   );
 
   if (!response.data?.access_token) {
@@ -123,15 +209,19 @@ const fetchManagedPages = async (userAccessToken) => {
   let after;
 
   for (let pageNumber = 0; pageNumber < 20; pageNumber += 1) {
-    const response = await axios.get(getGraphUrl("me/accounts"), {
-      params: {
-        access_token: userAccessToken,
-        fields: "id,name,access_token,tasks",
-        limit: 100,
-        ...(after ? { after } : {}),
+    const response = await getFromMeta(
+      getGraphUrl("me/accounts"),
+      {
+        params: {
+          access_token: userAccessToken,
+          fields: "id,name,access_token,tasks",
+          limit: 100,
+          ...(after ? { after } : {}),
+        },
+        timeout: 15000,
       },
-      timeout: 15000,
-    });
+      "managed-Pages retrieval"
+    );
 
     pages.push(...(response.data?.data || []));
     const nextCursor = response.data?.paging?.cursors?.after;
@@ -148,14 +238,14 @@ const fetchManagedPages = async (userAccessToken) => {
 
 export const getFacebookOAuthAccountData = async (userAccessToken) => {
   const [userResponse, permissionsResponse, pages] = await Promise.all([
-    axios.get(getGraphUrl("me"), {
+    getFromMeta(getGraphUrl("me"), {
       params: { access_token: userAccessToken, fields: "id" },
       timeout: 15000,
-    }),
-    axios.get(getGraphUrl("me/permissions"), {
+    }, "Meta-user retrieval"),
+    getFromMeta(getGraphUrl("me/permissions"), {
       params: { access_token: userAccessToken },
       timeout: 15000,
-    }),
+    }, "permission retrieval"),
     fetchManagedPages(userAccessToken),
   ]);
 

@@ -9,8 +9,10 @@ import {
   buildFacebookFrontendReturnUrl,
   createFacebookOAuthState,
   exchangeFacebookAuthorizationCode,
+  FacebookOAuthApiError,
   getFacebookOAuthAccountData,
   FacebookConnectionVerificationError,
+  parseFacebookOAuthCallbackQuery,
   verifyFacebookPageConnection,
   verifyFacebookOAuthState,
 } from "../services/facebookOAuthService.js";
@@ -204,15 +206,20 @@ export const connectFacebookChannel = asyncHandler(async (req, res) => {
 
 export const handleFacebookOAuthCallback = async (req, res) => {
   let config;
+  let phase = "callback parameter validation";
 
   try {
-    const { code, state, error: metaError } = req.query;
+    const { code, state, metaError } = parseFacebookOAuthCallbackQuery(
+      req.query
+    );
 
-    if (!state || typeof state !== "string") {
+    if (!state) {
       throw new Error("Missing OAuth state.");
     }
 
+    phase = "signed state validation";
     const statePayload = verifyFacebookOAuthState(state);
+    phase = "company access validation";
     const membership = await CompanyMembership.findOne({
       companyId: statePayload.companyId,
       userId: statePayload.userId,
@@ -223,6 +230,7 @@ export const handleFacebookOAuthCallback = async (req, res) => {
       throw new Error("Company access is no longer active.");
     }
 
+    phase = "stored state validation";
     config = await FacebookChannelConfig.findOne({
       companyId: statePayload.companyId,
     }).select("+oauthStateNonceHash");
@@ -242,14 +250,20 @@ export const handleFacebookOAuthCallback = async (req, res) => {
     await config.save();
 
     if (metaError) {
-      throw new Error("Meta authorization was cancelled or denied.");
+      throw new Error(
+        metaError.description ||
+          metaError.reason ||
+          "Meta authorization was cancelled or denied."
+      );
     }
 
-    if (!code || typeof code !== "string") {
+    if (!code) {
       throw new Error("Meta did not return an authorization code.");
     }
 
+    phase = "authorization-code exchange";
     const userAccessToken = await exchangeFacebookAuthorizationCode(code);
+    phase = "Meta account and managed-Pages retrieval";
     const accountData = await getFacebookOAuthAccountData(userAccessToken);
     const availablePages = accountData.pages
       .filter((page) => page.id && page.name && page.access_token)
@@ -283,7 +297,15 @@ export const handleFacebookOAuthCallback = async (req, res) => {
       }
     }
 
-    console.error("Facebook OAuth callback failed:", error.message);
+    console.error("Facebook OAuth callback failed", {
+      phase: error instanceof FacebookOAuthApiError ? error.phase : phase,
+      message: error.message,
+      status: error instanceof FacebookOAuthApiError ? error.status : undefined,
+      metaError:
+        error instanceof FacebookOAuthApiError ? error.metaError : undefined,
+      callbackParameters: Object.keys(req.query || {}),
+      stack: error.stack,
+    });
     return redirectToFacebookPage(
       res,
       "error",
