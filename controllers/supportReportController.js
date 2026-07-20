@@ -1,6 +1,7 @@
 import asyncHandler from "express-async-handler";
 import SupportConversation from "../models/supportConversation.js";
 import SupportTask from "../models/supportTask.js";
+import { calculateConversationSla, SUPPORT_SLA_TARGETS } from "../services/supportSlaService.js";
 
 const avg = (values) => values.length ? Math.round(values.reduce((a, b) => a + b, 0) / values.length) : null;
 const countBy = (items, key, fallback = "unknown") => {
@@ -49,6 +50,12 @@ export const getSupportReport = asyncHandler(async (req, res) => {
   const previousResponses = previousConversations.map(firstResponse).filter((value) => value !== null);
   const previousResolutions = previousConversations.map(resolutionTime).filter((value) => value !== null);
 
+  const slaRows = conversations.map((conversation) => ({ conversation, sla: calculateConversationSla(conversation, now) }));
+  const slaBreached = slaRows.filter((row) => row.sla.state === "breached");
+  const slaDueSoon = slaRows.filter((row) => row.sla.state === "due_soon");
+  const responseBreached = slaRows.filter((row) => row.sla.firstResponse.breached);
+  const resolutionBreached = slaRows.filter((row) => row.sla.resolution.breached);
+
   const assignees = new Map();
   const rowFor = (assignee) => {
     const id = assignee?._id?.toString() || "unassigned";
@@ -79,7 +86,12 @@ export const getSupportReport = asyncHandler(async (req, res) => {
       averageResolutionMinutes: avg(currentResolutions),
       firstResponseSampleSize: currentResponses.length,
       resolutionSampleSize: currentResolutions.length,
+      slaBreached: slaBreached.length,
+      slaDueSoon: slaDueSoon.length,
+      firstResponseBreached: responseBreached.length,
+      resolutionBreached: resolutionBreached.length,
     },
+    slaTargets: SUPPORT_SLA_TARGETS,
     periodMetrics: {
       newConversations: comparison(currentConversations.length, previousConversations.length),
       completedTasks: comparison(currentDoneTasks.length, previousDoneTasks.length),
@@ -90,6 +102,11 @@ export const getSupportReport = asyncHandler(async (req, res) => {
     conversationsByPriority: countBy(currentConversations, "priority", "normal"),
     conversationsByStatus: countBy(currentConversations, "status", "unknown"),
     tasksByStatus: countBy(days ? tasks.filter((item) => inRange(item.createdAt, start, now) || inRange(item.completedAt, start, now)) : tasks, "status", "unknown"),
+    slaByState: [
+      { name: "on_track", count: slaRows.filter((row) => row.sla.state === "on_track").length },
+      { name: "due_soon", count: slaDueSoon.length },
+      { name: "breached", count: slaBreached.length },
+    ],
     workloadByAssignee: Array.from(assignees.values()).sort((a, b) => (b.openConversations + b.activeTasks) - (a.openConversations + a.activeTasks)),
   }});
 });
