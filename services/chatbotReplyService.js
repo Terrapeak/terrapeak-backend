@@ -10,6 +10,4 @@ const instructionText = (s) => [
   s.systemInstructionFileText2?.setFile ? s.systemInstructionFileText2.FileText : "",
 ].filter((v) => typeof v === "string" && v.trim()).join("\n\n").trim();
 
-export const getChatbotSettingsForCompany = async (companyId) => {
-  if (!companyId) throw new Error("companyId is required.");
-  const settings = await Chat
+export const getChatbotSettingsForCompany =
