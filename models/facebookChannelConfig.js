@@ -74,6 +74,28 @@ const FacebookChannelConfigSchema = new mongoose.Schema(
       default: [],
     },
 
+    wizardStep: {
+      type: Number,
+      enum: [1, 2, 3, 4],
+      default: 1,
+    },
+
+    oauthCompletedAt: {
+      type: Date,
+      default: null,
+    },
+
+    oauthStateNonceHash: {
+      type: String,
+      default: "",
+      select: false,
+    },
+
+    oauthStateExpiresAt: {
+      type: Date,
+      default: null,
+    },
+
     grantedPermissions: {
       type: [String],
       default: [],
@@ -99,9 +121,41 @@ const FacebookChannelConfigSchema = new mongoose.Schema(
       default: "",
       trim: true,
     },
+
+    lastWebhookReceivedAt: {
+      type: Date,
+      default: null,
+    },
+
+    lastWebhookProcessedAt: {
+      type: Date,
+      default: null,
+    },
+
+    lastWebhookSenderId: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    lastWebhookEventType: {
+      type: String,
+      default: "",
+      trim: true,
+    },
   },
   {
     timestamps: true,
+  }
+);
+
+FacebookChannelConfigSchema.index(
+  { pageId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      pageId: { $type: "string", $gt: "" },
+    },
   }
 );
 

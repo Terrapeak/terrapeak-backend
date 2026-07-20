@@ -51,7 +51,15 @@ app.use(
 );
 
 // Middleware
-app.use(express.json());
+app.use(
+  express.json({
+    verify(req, res, buffer) {
+      if (req.originalUrl?.split("?")[0] === "/api/facebook/webhook") {
+        req.rawBody = Buffer.from(buffer);
+      }
+    },
+  })
+);
 app.use(cookieParser());
 
 // Routes

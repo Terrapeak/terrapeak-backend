@@ -6,7 +6,13 @@ import {
   getMyCompanyApps,
   getMyCompanies,
 } from "../controllers/companyController.js";
-import { getFacebookChannel } from "../controllers/facebookChannelController.js";
+import {
+  connectFacebookChannel,
+  getFacebookChannel,
+  handleFacebookOAuthCallback,
+  selectFacebookPage,
+  verifyFacebookConnection,
+} from "../controllers/facebookChannelController.js";
 
 const router = express.Router();
 
@@ -29,6 +35,32 @@ router.get(
   isAuthenticated,
   isVerifiedUser,
   getFacebookChannel
+);
+
+router.get(
+  "/channels/facebook/connect",
+  isAuthenticated,
+  isVerifiedUser,
+  connectFacebookChannel
+);
+
+router.get(
+  "/channels/facebook/oauth/callback",
+  handleFacebookOAuthCallback
+);
+
+router.post(
+  "/channels/facebook/select-page",
+  isAuthenticated,
+  isVerifiedUser,
+  selectFacebookPage
+);
+
+router.post(
+  "/channels/facebook/verify-connection",
+  isAuthenticated,
+  isVerifiedUser,
+  verifyFacebookConnection
 );
 
 export default router;
