@@ -7,6 +7,7 @@ import User from "../models/user.js";
 import { analyzeSupportConversation } from "../services/supportAiService.js";
 import { buildSupportCompanyContext } from "../services/supportContextService.js";
 import { findRelevantSupportKnowledge } from "../services/supportKnowledgeService.js";
+import { attachConversationSla } from "../services/supportSlaService.js";
 
 const PLATFORM_ROLES = ["platform-owner", "platform-admin", "support-admin", "billing-admin", "developer-admin", "sales-admin", "viewer"];
 const getActiveMembership = (userId) => CompanyMembership.findOne({ userId, isActive: true });
@@ -27,7 +28,7 @@ const normalizePlatformAssignee = async (value) => {
   return user._id;
 };
 
-const serializeConversation = (conversation) => ({
+const serializeConversation = (conversation) => attachConversationSla({
   _id: conversation._id,
   companyId: conversation.companyId,
   createdByUserId: conversation.createdByUserId,
@@ -130,7 +131,7 @@ export const listPlatformSupportConversations = asyncHandler(async (req, res) =>
     .populate("assignedToUserId", "name email platformRole")
     .sort({ lastMessageAt: -1 })
     .lean();
-  res.json({ success: true, conversations });
+  res.json({ success: true, conversations: conversations.map((conversation) => attachConversationSla(conversation)) });
 });
 
 export const getPlatformSupportConversation = asyncHandler(async (req, res) => {
@@ -140,12 +141,12 @@ export const getPlatformSupportConversation = asyncHandler(async (req, res) => {
     .populate("assignedToUserId", "name email platformRole");
   if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
   if (markCustomerMessagesRead(conversation)) await conversation.save();
-  res.json({ success: true, conversation });
+  res.json({ success: true, conversation: attachConversationSla(conversation.toObject()) });
 });
 
 export const markAllPlatformSupportConversationsRead = asyncHandler(async (req, res) => {
   const result = await SupportConversation.updateMany(
-    { "messages": { $elemMatch: { senderType: "customer", readByPlatform: { $ne: true } } } },
+    { messages: { $elemMatch: { senderType: "customer", readByPlatform: { $ne: true } } } },
     { $set: { "messages.$[message].readByPlatform": true } },
     { arrayFilters: [{ "message.senderType": "customer", "message.readByPlatform": { $ne: true } }] }
   );
@@ -214,5 +215,5 @@ export const updatePlatformSupportConversation = asyncHandler(async (req, res) =
   if (hasAssigneeUpdate && normalizedAssignee) {
     await SupportTask.updateMany({ conversationId: conversation._id, assignedToUserId: null, status: { $in: ["open", "in_progress"] } }, { $set: { assignedToUserId: normalizedAssignee } });
   }
-  res.json({ success: true, conversation });
+  res.json({ success: true, conversation: attachConversationSla(conversation.toObject()) });
 });
