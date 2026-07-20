@@ -9,6 +9,7 @@ import { buildSupportCompanyContext } from "../services/supportContextService.js
 import { findRelevantSupportKnowledge } from "../services/supportKnowledgeService.js";
 import { attachConversationSla } from "../services/supportSlaService.js";
 import { createAutomaticSupportReply } from "../services/supportSelfServiceService.js";
+import { handleSupportAccountAction } from "../services/supportAccountActionService.js";
 
 const PLATFORM_ROLES = ["platform-owner", "platform-admin", "support-admin", "billing-admin", "developer-admin", "sales-admin", "viewer"];
 const getActiveMembership = (userId) => CompanyMembership.findOne({ userId, isActive: true });
@@ -40,6 +41,7 @@ const serializeConversation = (conversation) => attachConversationSla({
   assignedToUserId: conversation.assignedToUserId,
   messages: conversation.messages,
   aiAnalysis: conversation.aiAnalysis,
+  pendingAction: conversation.pendingAction,
   lastMessageAt: conversation.lastMessageAt,
   resolvedAt: conversation.resolvedAt,
   createdAt: conversation.createdAt,
@@ -57,31 +59,53 @@ const markCustomerMessagesRead = (conversation) => {
   return changed;
 };
 
-const runAutomaticReply = async (conversation, requestBody) => {
+const appendAssistantReply = async (conversation, body, { category = null } = {}) => {
+  markCustomerMessagesRead(conversation);
+  conversation.messages.push({
+    senderType: "agent",
+    senderUserId: null,
+    senderName: "Terrapeak Support Assistant",
+    body,
+    readByCustomer: false,
+    readByPlatform: true,
+  });
+  if (category) conversation.category = category;
+  conversation.status = "waiting_customer";
+  conversation.aiAnalysis = null;
+  conversation.lastMessageAt = new Date();
+  await conversation.save();
+};
+
+const runCustomerAutomation = async ({ conversation, requestBody, membership, user }) => {
   try {
+    const actionResult = await handleSupportAccountAction({
+      conversation,
+      requesterMembership: membership,
+      requester: user,
+      body: requestBody,
+    });
+    if (actionResult?.handled) {
+      await appendAssistantReply(conversation, actionResult.body, { category: "users" });
+      return true;
+    }
+
     const automaticReply = await createAutomaticSupportReply({
       companyId: conversation.companyId,
       subject: conversation.subject,
       body: requestBody,
     });
     if (!automaticReply) return false;
-    markCustomerMessagesRead(conversation);
-    conversation.messages.push({
-      senderType: "agent",
-      senderUserId: null,
-      senderName: "Terrapeak Support Assistant",
-      body: automaticReply.body,
-      readByCustomer: false,
-      readByPlatform: true,
-    });
-    conversation.category = automaticReply.intent === "account_billing_info" ? "billing" : automaticReply.intent === "user_info" ? "users" : automaticReply.intent === "app_info" ? "apps" : "general";
-    conversation.status = "waiting_customer";
-    conversation.aiAnalysis = null;
-    conversation.lastMessageAt = new Date();
-    await conversation.save();
+    const category = automaticReply.intent === "account_billing_info"
+      ? "billing"
+      : automaticReply.intent === "user_info"
+        ? "users"
+        : automaticReply.intent === "app_info"
+          ? "apps"
+          : "general";
+    await appendAssistantReply(conversation, automaticReply.body, { category });
     return true;
   } catch (error) {
-    console.error("Automatic support reply failed:", error?.message || error);
+    console.error("Customer support automation failed:", error?.message || error);
     return false;
   }
 };
@@ -129,7 +153,7 @@ export const createSupportConversation = asyncHandler(async (req, res) => {
     messages: [{ senderType: "customer", senderUserId: req.userId, senderName: user?.name || user?.email || "Customer", body, readByCustomer: true, readByPlatform: false }],
     lastMessageAt: new Date(),
   });
-  const handled = await runAutomaticReply(conversation, body);
+  const handled = await runCustomerAutomation({ conversation, requestBody: body, membership, user });
   if (!handled) await refreshAiAnalysis(conversation);
   res.status(201).json({ success: true, conversation: serializeConversation(conversation), automaticallyHandled: handled });
 });
@@ -147,7 +171,7 @@ export const replyToMySupportConversation = asyncHandler(async (req, res) => {
   conversation.lastMessageAt = new Date();
   conversation.resolvedAt = null;
   await conversation.save();
-  const handled = await runAutomaticReply(conversation, body);
+  const handled = await runCustomerAutomation({ conversation, requestBody: body, membership, user });
   if (!handled) await refreshAiAnalysis(conversation);
   res.json({ success: true, conversation: serializeConversation(conversation), automaticallyHandled: handled });
 });
