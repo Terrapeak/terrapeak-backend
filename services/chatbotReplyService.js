@@ -10,4 +10,17 @@ const getInstructionText = (settings) =>
     settings.systemInstructionFileText1?.setFile
       ? settings.systemInstructionFileText1.FileText
       : "",
-   
+    settings.systemInstructionFileText2?.setFile
+      ? settings.systemInstructionFileText2.FileText
+      : "",
+  ]
+    .filter((value) => typeof value === "string" && value.trim())
+    .join("\n\n")
+    .trim();
+
+export const getChatbotSettingsForCompany = async (companyId) => {
+  if (!companyId) {
+    throw new Error("companyId is required to resolve chatbot settings.");
+  }
+
+  const settings =
