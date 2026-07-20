@@ -28,7 +28,7 @@ const CHANNEL_APPS = [
     isCore: false,
     standalone: false,
     requiresAIAssistant: true,
-    launchUrl: "",
+    launchUrl: "/dashboard/channels/facebook",
     isVisible: true,
     isComingSoon: false,
     allowInstall: true,

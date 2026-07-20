@@ -6,6 +6,7 @@ import {
   getMyCompanyApps,
   getMyCompanies,
 } from "../controllers/companyController.js";
+import { getFacebookChannel } from "../controllers/facebookChannelController.js";
 
 const router = express.Router();
 
@@ -21,6 +22,13 @@ router.get(
   isAuthenticated,
   isVerifiedUser,
   getMyCompanies
+);
+
+router.get(
+  "/channels/facebook",
+  isAuthenticated,
+  isVerifiedUser,
+  getFacebookChannel
 );
 
 export default router;

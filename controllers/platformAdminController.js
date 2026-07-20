@@ -7,6 +7,7 @@ import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import App from "../models/app.js";
 import ChatbotSettings from "../models/chatbotSettings.js";
 import Session from "../models/sessionModel.js";
+import { canEnableCompanyApp } from "../services/companyAppAccessService.js";
 
 const ACTIVITY_LIMIT = 50;
 
@@ -16,95 +17,6 @@ const APP_ACTIVITY_ACTION_LABELS = {
   enabled: "enabled",
   disabled: "disabled",
   updated: "updated",
-};
-
-const BILLING_ENABLED_STATUSES = new Set([
-  "trial",
-  "active",
-  "manual",
-]);
-
-const PLAN_LEVELS = {
-  starter: 1,
-  growth: 2,
-  professional: 3,
-  enterprise: 4,
-};
-
-const hasValidBillingAccess = (company) =>
-  BILLING_ENABLED_STATUSES.has(
-    company?.billing?.status
-  );
-
-const meetsMinimumPlan = ({
-  companyPlan,
-  minimumPlan,
-}) => {
-  if (!minimumPlan) return true;
-
-  const currentLevel =
-    PLAN_LEVELS[companyPlan] ||
-    PLAN_LEVELS.starter;
-
-  const requiredLevel =
-    PLAN_LEVELS[minimumPlan] ||
-    PLAN_LEVELS.starter;
-
-  return currentLevel >= requiredLevel;
-};
-
-const canEnableCompanyApp = ({
-  company,
-  app,
-}) => {
-  if (app.isComingSoon) {
-    return {
-      allowed: false,
-      reason: "This app is coming soon.",
-    };
-  }
-
-  if (app.allowInstall === false) {
-    return {
-      allowed: false,
-      reason:
-        "This app cannot currently be installed.",
-    };
-  }
-
-  if (
-    !meetsMinimumPlan({
-      companyPlan: company.plan,
-      minimumPlan: app.minimumPlan,
-    })
-  ) {
-    return {
-      allowed: false,
-      reason: `This app requires the ${
-        app.minimumPlan || "required"
-      } plan.`,
-    };
-  }
-
-  /*
-   * Core apps form part of the base customer environment.
-   * Optional apps require valid billing.
-   */
-  if (
-    !app.isCore &&
-    !hasValidBillingAccess(company)
-  ) {
-    return {
-      allowed: false,
-      reason:
-        "Billing must be active, in trial, or manually approved before this app can be enabled.",
-    };
-  }
-
-  return {
-    allowed: true,
-    reason: null,
-  };
 };
 
 const buildCompanyAppActivity = ({ eventType, app, actor, metadata = {} }) => {
@@ -551,7 +463,7 @@ export const toggleCompanyApp = asyncHandler(async (req, res) => {
   const { companyId, appId } = req.params;
 
   const company = await Company.findById(companyId).select(
-  "_id plan billing"
+  "_id slug plan billing"
 );
   if (!company) {
     return res.status(404).json({

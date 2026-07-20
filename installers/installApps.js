@@ -1,10 +1,12 @@
 import installAIAssistant from "./installAIAssistant.js";
 import installReservations from "./installReservations.js";
+import installFacebook from "./installFacebook.js";
 import CompanyAppInstallation from "../models/companyAppInstallation.js";
 
 const INSTALLERS = {
   "ai-assistant": installAIAssistant,
   reservations: installReservations,
+  facebook: installFacebook,
 };
 
 export default async function installApps({
