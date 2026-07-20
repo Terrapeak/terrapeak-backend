@@ -23,4 +23,21 @@ export const getChatbotSettingsForCompany = async (companyId) => {
     throw new Error("companyId is required to resolve chatbot settings.");
   }
 
-  const settings =
+  const settings = await ChatbotSettings.findOne({ companyId });
+
+  if (!settings) {
+    throw new Error("No chatbot settings were found for this company.");
+  }
+
+  if (!settings.geminiKey || !settings.gemini_model) {
+    throw new Error("Gemini API key and model must be configured.");
+  }
+
+  return settings;
+};
+
+const loadConversationHistory = async ({ conversationId }) => {
+  if (!conversationId) return [];
+
+  const messages = await ChannelMessage.find({ conversationId })
+    .sort({ eventTimestamp: -1, createdAt: -1
