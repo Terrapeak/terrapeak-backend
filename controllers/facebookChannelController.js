@@ -10,9 +10,11 @@ import {
   createFacebookOAuthState,
   exchangeFacebookAuthorizationCode,
   FacebookOAuthApiError,
+  FacebookPageSubscriptionError,
   getFacebookOAuthAccountData,
   FacebookConnectionVerificationError,
   parseFacebookOAuthCallbackQuery,
+  subscribeFacebookPageToWebhook,
   verifyFacebookPageConnection,
   verifyFacebookOAuthState,
 } from "../services/facebookOAuthService.js";
@@ -120,6 +122,11 @@ export const getFacebookChannel = asyncHandler(async (req, res) => {
         pageId: config?.pageId || null,
         tokenValid: config?.connectionStatus === "connected",
         oauthCompleted: Boolean(config?.oauthCompletedAt),
+        webhookSubscribed: Boolean(config?.webhookSubscribed),
+        webhookSubscriptionStatus:
+          (config?.webhookSubscribed && "subscribed") ||
+          config?.webhookSubscriptionStatus ||
+          "not_subscribed",
         lastWebhookReceivedAt: config?.lastWebhookReceivedAt || null,
         lastWebhookProcessedAt: config?.lastWebhookProcessedAt || null,
         lastWebhookSenderId: config?.lastWebhookSenderId || null,
@@ -185,6 +192,8 @@ export const connectFacebookChannel = asyncHandler(async (req, res) => {
         metaUserId: "",
         availablePages: [],
         grantedPermissions: [],
+        webhookSubscribed: false,
+        webhookSubscriptionStatus: "not_subscribed",
         lastError: "",
       },
       $setOnInsert: {
@@ -280,6 +289,7 @@ export const handleFacebookOAuthCallback = async (req, res) => {
     config.wizardStep = 2;
     config.connectionStatus = "not_connected";
     config.webhookSubscribed = false;
+    config.webhookSubscriptionStatus = "not_subscribed";
     config.lastError = "";
     await config.save();
 
@@ -382,6 +392,8 @@ export const selectFacebookPage = asyncHandler(async (req, res) => {
   config.availablePages = [];
   config.wizardStep = 3;
   config.connectionStatus = "not_connected";
+  config.webhookSubscribed = false;
+  config.webhookSubscriptionStatus = "not_subscribed";
   config.connectedAt = null;
   config.lastError = "";
   await config.save();
@@ -427,7 +439,7 @@ export const verifyFacebookConnection = asyncHandler(async (req, res) => {
 
   if (
     !config ||
-    config.wizardStep !== 3 ||
+    ![3, 4].includes(config.wizardStep) ||
     !config.pageId ||
     !config.pageAccessTokenEncrypted
   ) {
@@ -443,10 +455,16 @@ export const verifyFacebookConnection = asyncHandler(async (req, res) => {
       pageId: config.pageId,
       pageAccessToken,
     });
+    const subscription = await subscribeFacebookPageToWebhook({
+      pageId: config.pageId,
+      pageAccessToken,
+    });
 
     config.pageName = verification.pageName || config.pageName;
     config.connectionStatus = "connected";
     config.wizardStep = 4;
+    config.webhookSubscribed = true;
+    config.webhookSubscriptionStatus = "subscribed";
     config.connectedAt = new Date();
     config.disconnectedAt = null;
     config.lastError = "";
@@ -459,16 +477,40 @@ export const verifyFacebookConnection = asyncHandler(async (req, res) => {
         metaAccountConnected: true,
         pageSelected: true,
         pageAccessVerified: true,
+        webhookSubscribed: true,
+        subscribedFields: subscription.subscribedFields,
       },
     });
   } catch (error) {
+    const subscriptionError =
+      error instanceof FacebookPageSubscriptionError ||
+      (error instanceof FacebookOAuthApiError &&
+        error.phase?.startsWith("Page webhook subscription"));
     const message =
       error instanceof FacebookConnectionVerificationError
         ? error.message
+        : subscriptionError
+          ? "Facebook Page webhook subscription failed. Check the Meta app configuration and try again."
         : "Facebook connection verification failed. Please reconnect Meta and try again.";
+
+    if (subscriptionError) {
+      console.error("Facebook Page webhook subscription failed", {
+        phase: error.phase,
+        endpoint: error.requestContext?.endpoint,
+        status: error.status,
+        metaErrorType: error.metaError?.type,
+        metaCode: error.metaError?.code,
+        metaSubcode: error.metaError?.subcode,
+        metaTraceId: error.metaError?.traceId,
+      });
+    }
 
     config.connectionStatus = "error";
     config.wizardStep = 3;
+    config.webhookSubscribed = false;
+    config.webhookSubscriptionStatus = subscriptionError
+      ? "error"
+      : "not_subscribed";
     config.connectedAt = null;
     config.lastError = message;
     await config.save();

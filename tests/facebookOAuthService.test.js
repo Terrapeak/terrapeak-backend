@@ -121,6 +121,16 @@ test("Facebook OAuth account retrieval collects paginated managed Pages", async 
       return { data: { id: "meta-user-1" } };
     }
 
+    if (url.endsWith("/debug_token")) {
+      return {
+        data: {
+          data: {
+            granular_scopes: [],
+          },
+        },
+      };
+    }
+
     throw new Error(`Unexpected Meta URL: ${url}`);
   });
 

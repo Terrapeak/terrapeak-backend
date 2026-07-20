@@ -4,6 +4,11 @@ import jwt from "jsonwebtoken";
 const STATE_ISSUER = "terrapeak";
 const STATE_AUDIENCE = "facebook-channel-oauth";
 const DEFAULT_SCOPES = ["pages_show_list", "pages_manage_metadata", "pages_messaging"];
+export const FACEBOOK_WEBHOOK_SUBSCRIBED_FIELDS = [
+  "messages",
+  "message_deliveries",
+  "message_reads",
+];
 
 const getQueryString = (value) => typeof value === "string" ? value : Array.isArray(value) && typeof value[0] === "string" ? value[0] : "";
 const requireEnvironmentVariable = (name) => {
@@ -84,6 +89,18 @@ const getFromMeta = async (url, options, phase, { retryServerErrors = true, requ
     }
   }
   throw new FacebookOAuthApiError(`Meta ${phase} failed.`, { phase });
+};
+
+const postToMeta = async (url, options, phase, { retryServerErrors = true, requestContext } = {}) => {
+  const max = retryServerErrors ? 2 : 1;
+  for (let attempt = 0; attempt < max; attempt += 1) {
+    try { return await axios.post(url, null, options); }
+    catch (error) {
+      const status = error.response?.status;
+      if (!(retryServerErrors && attempt + 1 < max && status >= 500 && status < 600)) throw toFacebookOAuthApiError(error, phase, requestContext);
+    }
+  }
+  throw new FacebookOAuthApiError(`Meta ${phase} failed.`, { phase, requestContext });
 };
 
 export const exchangeFacebookAuthorizationCode = async (code) => {
@@ -169,6 +186,16 @@ export class FacebookConnectionVerificationError extends Error {
   constructor(message) { super(message); this.name = "FacebookConnectionVerificationError"; }
 }
 
+export class FacebookPageSubscriptionError extends Error {
+  constructor(message, { phase, method = "GET", endpoint, missingFields } = {}) {
+    super(message);
+    this.name = "FacebookPageSubscriptionError";
+    this.phase = phase;
+    this.requestContext = { method, endpoint };
+    this.missingFields = missingFields;
+  }
+}
+
 export const verifyFacebookPageConnection = async ({ pageId, pageAccessToken }) => {
   const config = getMetaConfig();
   let pageResponse;
@@ -190,4 +217,118 @@ export const verifyFacebookPageConnection = async ({ pageId, pageAccessToken }) 
   const hasGranular = Boolean(granular && (!granular.target_ids?.length || granular.target_ids.includes(pageId)));
   if (!hasGeneral && !hasGranular) throw new FacebookConnectionVerificationError("The selected Facebook Page has not granted the pages_messaging permission.");
   return { pageId: page.id, pageName: page.name, tokenValid: true, messagingPermissionGranted: true };
+};
+
+export const verifyFacebookPageWebhookSubscription = async ({
+  pageId,
+  pageAccessToken,
+}) => {
+  const config = getMetaConfig();
+  const endpoint = getGraphUrl(`${pageId}/subscribed_apps`);
+  const requestContext = {
+    method: "GET",
+    endpoint,
+    graphVersion: config.graphVersion,
+    parameterNames: ["access_token", "fields"],
+  };
+  const subscribedApps = [];
+  let after;
+
+  for (let i = 0; i < 20; i += 1) {
+    const response = await getFromMeta(
+      endpoint,
+      {
+        params: {
+          access_token: pageAccessToken,
+          fields: "id,name,subscribed_fields",
+          limit: 100,
+          ...(after ? { after } : {}),
+        },
+        timeout: 15000,
+      },
+      "Page webhook subscription verification",
+      { requestContext }
+    );
+    subscribedApps.push(...(response.data?.data || []));
+    const next = response.data?.paging?.cursors?.after;
+    if (!response.data?.paging?.next || !next || next === after) break;
+    after = next;
+  }
+
+  const subscribedApp = subscribedApps.find(
+    (app) => String(app.id) === String(config.appId)
+  );
+
+  if (!subscribedApp) {
+    throw new FacebookPageSubscriptionError(
+      "The Meta app is not subscribed to the selected Facebook Page.",
+      {
+        phase: "Page webhook subscription verification",
+        endpoint,
+      }
+    );
+  }
+
+  const subscribedFields = new Set(subscribedApp.subscribed_fields || []);
+  const missingFields = FACEBOOK_WEBHOOK_SUBSCRIBED_FIELDS.filter(
+    (field) => !subscribedFields.has(field)
+  );
+
+  if (missingFields.length) {
+    throw new FacebookPageSubscriptionError(
+      "The selected Facebook Page is missing required Messenger webhook fields.",
+      {
+        phase: "Page webhook subscription verification",
+        endpoint,
+        missingFields,
+      }
+    );
+  }
+
+  return {
+    appId: String(subscribedApp.id),
+    appName: subscribedApp.name || "",
+    subscribedFields: FACEBOOK_WEBHOOK_SUBSCRIBED_FIELDS.filter((field) =>
+      subscribedFields.has(field)
+    ),
+  };
+};
+
+export const subscribeFacebookPageToWebhook = async ({
+  pageId,
+  pageAccessToken,
+}) => {
+  const config = getMetaConfig();
+  const endpoint = getGraphUrl(`${pageId}/subscribed_apps`);
+  const requestContext = {
+    method: "POST",
+    endpoint,
+    graphVersion: config.graphVersion,
+    parameterNames: ["access_token", "subscribed_fields"],
+  };
+  const response = await postToMeta(
+    endpoint,
+    {
+      params: {
+        access_token: pageAccessToken,
+        subscribed_fields: FACEBOOK_WEBHOOK_SUBSCRIBED_FIELDS.join(","),
+      },
+      timeout: 15000,
+    },
+    "Page webhook subscription",
+    { requestContext }
+  );
+
+  if (response.data?.success !== true) {
+    throw new FacebookPageSubscriptionError(
+      "Meta did not confirm the Facebook Page webhook subscription request.",
+      {
+        phase: "Page webhook subscription",
+        method: "POST",
+        endpoint,
+      }
+    );
+  }
+
+  return verifyFacebookPageWebhookSubscription({ pageId, pageAccessToken });
 };

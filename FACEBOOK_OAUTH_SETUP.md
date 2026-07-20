@@ -38,4 +38,7 @@ https://terrapeak-backend-production-2866.up.railway.app/api/facebook/webhook
 
 Use the exact `META_WEBHOOK_VERIFY_TOKEN` value as the Verify Token. The endpoint
 accepts and stores `messages`, `message_deliveries`, and `message_reads` events.
-Page webhook subscription through the Graph API is not implemented in this milestone.
+During connection verification, the backend subscribes the selected Page through
+`/{page-id}/subscribed_apps` and independently verifies that the configured app is
+subscribed to `messages`, `message_deliveries`, and `message_reads` before marking
+the channel connected.

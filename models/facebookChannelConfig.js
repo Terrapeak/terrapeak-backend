@@ -106,6 +106,12 @@ const FacebookChannelConfigSchema = new mongoose.Schema(
       default: false,
     },
 
+    webhookSubscriptionStatus: {
+      type: String,
+      enum: ["not_subscribed", "subscribed", "error"],
+      default: "not_subscribed",
+    },
+
     connectedAt: {
       type: Date,
       default: null,
