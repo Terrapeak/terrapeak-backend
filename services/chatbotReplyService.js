@@ -17,3 +17,19 @@ const getInstructionText = (settings) =>
     .join("\n\n")
     .trim();
 
+export const getChatbotSettingsForCompany = async (companyId) => {
+  if (!companyId) {
+    throw new Error("companyId is required to resolve chatbot settings.");
+  }
+
+  const settings = await ChatbotSettings.findOne({ companyId });
+
+  if (!settings) {
+    throw new Error("Chatbot settings were not found for this company.");
+  }
+
+  if (!settings.geminiKey || !settings.gemini_model) {
+    throw new Error("The company chatbot AI configuration is incomplete.");
+  }
+
+  return settings;
