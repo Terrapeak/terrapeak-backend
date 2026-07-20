@@ -13,6 +13,7 @@ import {
   selectFacebookPage,
   verifyFacebookConnection,
 } from "../controllers/facebookChannelController.js";
+import { disconnectFacebookChannel } from "../controllers/facebookChannelDisconnectController.js";
 
 const router = express.Router();
 
@@ -61,6 +62,13 @@ router.post(
   isAuthenticated,
   isVerifiedUser,
   verifyFacebookConnection
+);
+
+router.post(
+  "/channels/facebook/disconnect",
+  isAuthenticated,
+  isVerifiedUser,
+  disconnectFacebookChannel
 );
 
 export default router;
