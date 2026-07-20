@@ -21,3 +21,5 @@ const FacebookChannelConfigSchema = new mongoose.Schema(
     },
     pageId: {
       type: String,
+      default: "",
+      trim
