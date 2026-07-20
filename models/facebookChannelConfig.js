@@ -21,4 +21,9 @@ const FacebookChannelConfigSchema = new mongoose.Schema(
     appInstallationId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "CompanyAppInstallation",
-      default:
+      default: null,
+    },
+    connectionStatus: {
+      type: String,
+      enum: ["not_connected", "connecting", "connected", "error"],
+      default: "not_connected",
