@@ -1,9 +1,12 @@
 import crypto from "crypto";
 import FacebookChannelConfig from "../models/facebookChannelConfig.js";
+import { generateChatbotReply } from "./chatbotReplyService.js";
+import { sendFacebookTextMessage } from "./facebookMessageService.js";
 import {
   markChannelMessagesDelivered,
   markChannelMessagesRead,
   storeInboundChannelMessage,
+  storeOutboundChannelMessage,
   upsertChannelConversation,
 } from "./channelConversationService.js";
 
@@ -98,6 +101,7 @@ const processMessengerEvent = async ({ config, pageId, event }) => {
 
   if (eventType === "message") {
     const externalMessageId = event.message?.mid;
+    const inboundText = event.message?.text;
 
     if (!externalMessageId) return false;
 
@@ -108,14 +112,59 @@ const processMessengerEvent = async ({ config, pageId, event }) => {
       externalConversationId,
       externalUserId: senderId,
       externalMessageId,
-      message: event.message?.text || "",
+      message: inboundText || "",
       eventTimestamp,
       metadata: {
         attachmentTypes: (event.message?.attachments || [])
           .map((attachment) => attachment.type)
-          .filter(Boolean),
+        .filter(Boolean),
       },
     });
+
+    if (typeof inboundText === "string" && inboundText.trim()) {
+      let generatedReply;
+
+      try {
+        generatedReply = await generateChatbotReply({
+          companyId,
+          conversationId: conversation._id,
+          message: inboundText,
+        });
+      } catch {
+        console.error("Facebook AI reply generation failed.");
+      }
+
+      if (generatedReply) {
+        let sentMessage;
+
+        try {
+          sentMessage = await sendFacebookTextMessage({
+            companyId,
+            recipientId: senderId,
+            message: generatedReply,
+          });
+        } catch {
+          console.error("Facebook reply send failed.");
+        }
+
+        if (sentMessage) {
+          try {
+            await storeOutboundChannelMessage({
+              companyId,
+              conversation,
+              channel: CHANNEL,
+              externalConversationId,
+              externalUserId: sentMessage.recipientId,
+              externalMessageId: sentMessage.externalMessageId,
+              message: generatedReply,
+              eventTimestamp: new Date(),
+            });
+          } catch {
+            console.error("Facebook outbound message storage failed.");
+          }
+        }
+      }
+    }
   }
 
   if (eventType === "delivery") {

@@ -83,6 +83,46 @@ export const storeInboundChannelMessage = async ({
     }
   );
 
+export const storeOutboundChannelMessage = async ({
+  companyId,
+  conversation,
+  channel,
+  externalConversationId,
+  externalUserId,
+  externalMessageId,
+  message,
+  eventTimestamp,
+  metadata = {},
+}) =>
+  ChannelMessage.findOneAndUpdate(
+    {
+      companyId,
+      channel,
+      externalMessageId,
+    },
+    {
+      $setOnInsert: {
+        companyId,
+        conversationId: conversation._id,
+        channel,
+        externalConversationId,
+        externalUserId,
+        direction: "outbound",
+        senderType: "business",
+        message,
+        externalMessageId,
+        deliveryStatus: "sent",
+        eventTimestamp,
+        metadata,
+      },
+    },
+    {
+      upsert: true,
+      new: true,
+      runValidators: true,
+    }
+  );
+
 export const markChannelMessagesDelivered = ({
   companyId,
   channel,
