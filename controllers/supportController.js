@@ -2,6 +2,8 @@ import asyncHandler from "express-async-handler";
 import mongoose from "mongoose";
 import CompanyMembership from "../models/companyMembership.js";
 import SupportConversation from "../models/supportConversation.js";
+import SupportInternalNote from "../models/supportInternalNote.js";
+import SupportNotification from "../models/supportNotification.js";
 import SupportTask from "../models/supportTask.js";
 import User from "../models/user.js";
 import { analyzeSupportConversation } from "../services/supportAiService.js";
@@ -15,6 +17,7 @@ import { handleSupportUserCreation } from "../services/supportUserCreationServic
 import { handleSupportUserUpdate } from "../services/supportUserUpdateService.js";
 
 const PLATFORM_ROLES = ["platform-owner", "platform-admin", "support-admin", "billing-admin", "developer-admin", "sales-admin", "viewer"];
+const PERMANENT_DELETE_ROLES = new Set(["platform-owner", "platform-admin"]);
 const getActiveMembership = (userId) => CompanyMembership.findOne({ userId, isActive: true });
 
 const normalizePlatformAssignee = async (value) => {
@@ -30,7 +33,9 @@ const serializeConversation = (conversation) => attachConversationSla({
   subject: conversation.subject, category: conversation.category, priority: conversation.priority,
   status: conversation.status, assignedToUserId: conversation.assignedToUserId, messages: conversation.messages,
   aiAnalysis: conversation.aiAnalysis, pendingAction: conversation.pendingAction, lastMessageAt: conversation.lastMessageAt,
-  resolvedAt: conversation.resolvedAt, createdAt: conversation.createdAt, updatedAt: conversation.updatedAt,
+  resolvedAt: conversation.resolvedAt, customerHiddenAt: conversation.customerHiddenAt,
+  archivedAt: conversation.archivedAt, archivedByUserId: conversation.archivedByUserId,
+  createdAt: conversation.createdAt, updatedAt: conversation.updatedAt,
 });
 
 const markCustomerMessagesRead = (conversation) => {
@@ -94,7 +99,7 @@ const refreshAiAnalysis = async (conversation, { throwOnError = false } = {}) =>
 export const listMySupportConversations = asyncHandler(async (req, res) => {
   const membership = await getActiveMembership(req.userId);
   if (!membership) return res.status(404).json({ success: false, message: "No active company membership found." });
-  const conversations = await SupportConversation.find({ companyId: membership.companyId }).select("-aiAnalysis").sort({ lastMessageAt: -1 }).lean();
+  const conversations = await SupportConversation.find({ companyId: membership.companyId, customerHiddenAt: null }).select("-aiAnalysis").sort({ lastMessageAt: -1 }).lean();
   res.json({ success: true, conversations });
 });
 
@@ -117,7 +122,7 @@ export const replyToMySupportConversation = asyncHandler(async (req, res) => {
   const body = String(req.body.body || "").trim();
   if (!body) return res.status(400).json({ success: false, message: "Message is required." });
   const user = await User.findById(req.userId).select("name email");
-  const conversation = await SupportConversation.findOne({ _id: req.params.conversationId, companyId: membership.companyId });
+  const conversation = await SupportConversation.findOne({ _id: req.params.conversationId, companyId: membership.companyId, customerHiddenAt: null, archivedAt: null });
   if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
   conversation.messages.push({ senderType: "customer", senderUserId: req.userId, senderName: user?.name || user?.email || "Customer", body, readByCustomer: true, readByPlatform: false });
   conversation.status = "needs_reply"; conversation.lastMessageAt = new Date(); conversation.resolvedAt = null; await conversation.save();
@@ -126,9 +131,21 @@ export const replyToMySupportConversation = asyncHandler(async (req, res) => {
   res.json({ success: true, conversation: serializeConversation(conversation), automaticallyHandled: handled });
 });
 
+export const hideMySupportConversation = asyncHandler(async (req, res) => {
+  const membership = await getActiveMembership(req.userId);
+  if (!membership) return res.status(404).json({ success: false, message: "No active company membership found." });
+  const conversation = await SupportConversation.findOneAndUpdate(
+    { _id: req.params.conversationId, companyId: membership.companyId, customerHiddenAt: null },
+    { $set: { customerHiddenAt: new Date(), customerHiddenByUserId: req.userId } },
+    { new: true },
+  );
+  if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
+  res.json({ success: true });
+});
+
 export const listPlatformSupportConversations = asyncHandler(async (req, res) => {
-  const query = {};
-  if (req.query.status && req.query.status !== "all") query.status = req.query.status;
+  const query = req.query.status === "archived" ? { archivedAt: { $ne: null } } : { archivedAt: null };
+  if (req.query.status && !["all", "archived"].includes(req.query.status)) query.status = req.query.status;
   if (req.query.assignee === "unassigned") query.assignedToUserId = null;
   else if (req.query.assignee && req.query.assignee !== "all" && mongoose.Types.ObjectId.isValid(req.query.assignee)) query.assignedToUserId = req.query.assignee;
   const conversations = await SupportConversation.find(query).populate("companyId", "name displayName slug").populate("createdByUserId", "name email").populate("assignedToUserId", "name email platformRole").sort({ lastMessageAt: -1 }).lean();
@@ -143,12 +160,12 @@ export const getPlatformSupportConversation = asyncHandler(async (req, res) => {
 });
 
 export const markAllPlatformSupportConversationsRead = asyncHandler(async (req, res) => {
-  const result = await SupportConversation.updateMany({ messages: { $elemMatch: { senderType: "customer", readByPlatform: { $ne: true } } } }, { $set: { "messages.$[message].readByPlatform": true } }, { arrayFilters: [{ "message.senderType": "customer", "message.readByPlatform": { $ne: true } }] });
+  const result = await SupportConversation.updateMany({ archivedAt: null, messages: { $elemMatch: { senderType: "customer", readByPlatform: { $ne: true } } } }, { $set: { "messages.$[message].readByPlatform": true } }, { arrayFilters: [{ "message.senderType": "customer", "message.readByPlatform": { $ne: true } }] });
   res.json({ success: true, modifiedCount: result.modifiedCount || 0 });
 });
 
 export const analyzePlatformSupportConversation = asyncHandler(async (req, res) => {
-  const conversation = await SupportConversation.findById(req.params.conversationId);
+  const conversation = await SupportConversation.findOne({ _id: req.params.conversationId, archivedAt: null });
   if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
   try { await refreshAiAnalysis(conversation, { throwOnError: true }); res.json({ success: true, conversation: serializeConversation(conversation) }); }
   catch (error) { res.status(error?.status || 503).json({ success: false, code: error?.code || "SUPPORT_AI_ERROR", message: error?.message || "AI analysis is unavailable." }); }
@@ -157,7 +174,7 @@ export const analyzePlatformSupportConversation = asyncHandler(async (req, res) 
 export const replyToPlatformSupportConversation = asyncHandler(async (req, res) => {
   const body = String(req.body.body || "").trim();
   if (!body) return res.status(400).json({ success: false, message: "Message is required." });
-  const conversation = await SupportConversation.findById(req.params.conversationId);
+  const conversation = await SupportConversation.findOne({ _id: req.params.conversationId, archivedAt: null });
   if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
   markCustomerMessagesRead(conversation);
   conversation.messages.push({ senderType: "agent", senderUserId: req.userId, senderName: req.platformUser?.name || req.platformUser?.email || "Terrapeak Support", body, readByCustomer: false, readByPlatform: true });
@@ -179,8 +196,45 @@ export const updatePlatformSupportConversation = asyncHandler(async (req, res) =
   if (req.body.priority !== undefined) { if (!allowedPriorities.has(req.body.priority)) return res.status(400).json({ success: false, message: "Invalid support priority." }); updates.priority = req.body.priority; }
   if (req.body.category !== undefined) { if (!allowedCategories.has(req.body.category)) return res.status(400).json({ success: false, message: "Invalid support category." }); updates.category = req.body.category; }
   if (req.body.assignedToUserId !== undefined) { normalizedAssignee = await normalizePlatformAssignee(req.body.assignedToUserId); updates.assignedToUserId = normalizedAssignee; hasAssigneeUpdate = true; }
-  const conversation = await SupportConversation.findByIdAndUpdate(req.params.conversationId, updates, { new: true, runValidators: true }).populate("companyId", "name displayName slug").populate("createdByUserId", "name email").populate("assignedToUserId", "name email platformRole");
+  const conversation = await SupportConversation.findOneAndUpdate({ _id: req.params.conversationId, archivedAt: null }, updates, { new: true, runValidators: true }).populate("companyId", "name displayName slug").populate("createdByUserId", "name email").populate("assignedToUserId", "name email platformRole");
   if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
   if (hasAssigneeUpdate && normalizedAssignee) await SupportTask.updateMany({ conversationId: conversation._id, assignedToUserId: null, status: { $in: ["open", "in_progress"] } }, { $set: { assignedToUserId: normalizedAssignee } });
   res.json({ success: true, conversation: attachConversationSla(conversation.toObject()) });
+});
+
+export const archivePlatformSupportConversation = asyncHandler(async (req, res) => {
+  const conversation = await SupportConversation.findOneAndUpdate(
+    { _id: req.params.conversationId, archivedAt: null },
+    { $set: { archivedAt: new Date(), archivedByUserId: req.userId } },
+    { new: true },
+  );
+  if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found or already archived." });
+  res.json({ success: true, conversation: serializeConversation(conversation) });
+});
+
+export const restorePlatformSupportConversation = asyncHandler(async (req, res) => {
+  const conversation = await SupportConversation.findOneAndUpdate(
+    { _id: req.params.conversationId, archivedAt: { $ne: null } },
+    { $set: { archivedAt: null, archivedByUserId: null } },
+    { new: true },
+  );
+  if (!conversation) return res.status(404).json({ success: false, message: "Archived support conversation not found." });
+  res.json({ success: true, conversation: serializeConversation(conversation) });
+});
+
+export const permanentlyDeletePlatformSupportConversation = asyncHandler(async (req, res) => {
+  if (!PERMANENT_DELETE_ROLES.has(req.platformUser?.platformRole)) {
+    return res.status(403).json({ success: false, message: "Only platform owners and platform admins can permanently delete conversations." });
+  }
+  const conversation = await SupportConversation.findOne({ _id: req.params.conversationId, archivedAt: { $ne: null } }).select("_id");
+  if (!conversation) return res.status(404).json({ success: false, message: "Archive the conversation before deleting it permanently." });
+  const tasks = await SupportTask.find({ conversationId: conversation._id }).select("_id").lean();
+  const taskIds = tasks.map((task) => task._id);
+  await Promise.all([
+    SupportInternalNote.deleteMany({ conversationId: conversation._id }),
+    SupportNotification.deleteMany({ $or: [{ conversationId: conversation._id }, ...(taskIds.length ? [{ taskId: { $in: taskIds } }] : [])] }),
+    SupportTask.deleteMany({ conversationId: conversation._id }),
+    SupportConversation.deleteOne({ _id: conversation._id }),
+  ]);
+  res.json({ success: true });
 });
