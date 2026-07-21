@@ -16,21 +16,54 @@ const ACTIVITY_LIMIT = 50;
 
 const result = (body, completed = false) => ({ handled: true, body, completed });
 const createInternalPassword = () => crypto.randomBytes(24).toString("base64url");
+const normalizeRole = (value) => value?.toLowerCase() === "user" ? "staff" : value?.toLowerCase() || "";
 
 const parseDetails = (text) => {
   const email = text.match(EMAIL_PATTERN)?.[0]?.toLowerCase() || "";
   const phone = text.match(PHONE_PATTERN)?.[0]?.trim() || "";
-  const role = text.match(/\brole\s*(?:is|:)?\s*(owner|admin|manager|staff|viewer)\b/i)?.[1]?.toLowerCase() || "";
+  const parts = text.split(/[,;\n]/).map((part) => part.trim()).filter(Boolean);
+  const labelledRole = text.match(/\brole\s*(?:is|:)?\s*(owner|admin|manager|staff|viewer|user)\b/i)?.[1] || "";
+  const standaloneRole = parts.find((part) => /^(owner|admin|manager|staff|viewer|user)$/i.test(part)) || "";
+  const role = normalizeRole(labelledRole || standaloneRole);
   const labelledName = text.match(/\bname\s*(?:is|:)?\s*([^,;\n]+)/i)?.[1]?.trim() || "";
   const labelledCountry = text.match(/\bcountry\s*(?:is|:)?\s*([^,;\n]+)/i)?.[1]?.trim() || "";
-  const parts = text.split(/[,;\n]/).map((part) => part.trim()).filter(Boolean);
-  const firstPart = parts[0]?.replace(/^.*?\b(?:user|member|employee|colleague)\b\s*:?[\s-]*/i, "").trim() || "";
+  const firstPart = parts[0]?.replace(/^.*?\b(?:user|member|employee|colleague)\b\s*:?\s*/i, "").trim() || "";
   const name = labelledName || (firstPart && !EMAIL_PATTERN.test(firstPart) ? firstPart : "");
-  const country = labelledCountry || parts.find((part) => !EMAIL_PATTERN.test(part) && !PHONE_PATTERN.test(part) && !/\brole\b/i.test(part) && part !== parts[0]) || "";
+  const country = labelledCountry || parts.find((part, index) => index > 0 && !EMAIL_PATTERN.test(part) && !PHONE_PATTERN.test(part) && !/\brole\b/i.test(part) && !/^(owner|admin|manager|staff|viewer|user)$/i.test(part)) || "";
   return { name, email, phone, country, role };
 };
 
+const detailsFromPending = (pending) => ({
+  name: pending?.targetName || "",
+  email: pending?.targetEmail || "",
+  phone: pending?.targetPhone || "",
+  country: pending?.targetCountry || "",
+  role: pending?.targetRole || "",
+});
+
+const mergeDetails = (existing, incoming) => ({
+  name: incoming.name || existing.name,
+  email: incoming.email || existing.email,
+  phone: incoming.phone || existing.phone,
+  country: incoming.country || existing.country,
+  role: incoming.role || existing.role,
+});
+
 const missingFields = (details) => ["name", "email", "phone", "country", "role"].filter((field) => !details[field]);
+
+const savePending = async ({ conversation, requester, details }) => {
+  conversation.pendingAction = {
+    type: "add_user",
+    targetEmail: details.email,
+    targetName: details.name,
+    targetPhone: details.phone,
+    targetCountry: details.country,
+    targetRole: details.role,
+    requestedByUserId: requester._id,
+    expiresAt: new Date(Date.now() + ACTION_TTL_MS),
+  };
+  await conversation.save();
+};
 
 const appendActivity = async ({ companyId, requester, user, role }) => {
   await Company.updateOne(
@@ -63,7 +96,7 @@ const executeAddUser = async ({ conversation, requester }) => {
   }
   const company = await Company.findById(conversation.companyId);
   if (!company) return result("The company record could not be found. No user was created.");
-  const details = { name: pending.targetName, email: pending.targetEmail, phone: pending.targetPhone, country: pending.targetCountry, role: pending.targetRole };
+  const details = detailsFromPending(pending);
   const validationError = await validateBeforeCreate({ company, details });
   if (validationError) {
     conversation.pendingAction = null;
@@ -115,29 +148,45 @@ const executeAddUser = async ({ conversation, requester }) => {
 export const handleSupportUserCreation = async ({ conversation, requesterMembership, requester, body }) => {
   const text = String(body || "").trim();
   if (!text) return null;
-  if (conversation.pendingAction?.type === "add_user") {
+  const pendingAddUser = conversation.pendingAction?.type === "add_user";
+
+  if (pendingAddUser) {
+    if (String(conversation.pendingAction.requestedByUserId) !== String(requester._id)) return result("This pending action can only be continued, confirmed or cancelled by the person who requested it.");
     if (CANCEL_WORDS.test(text)) {
-      if (String(conversation.pendingAction.requestedByUserId) !== String(requester._id)) return result("This pending action can only be cancelled by the person who requested it.");
       conversation.pendingAction = null;
       await conversation.save();
       return result("The pending user creation has been cancelled. No user was created.");
     }
-    if (CONFIRM_WORDS.test(text)) return executeAddUser({ conversation, requester });
+    if (CONFIRM_WORDS.test(text)) {
+      const missing = missingFields(detailsFromPending(conversation.pendingAction));
+      if (missing.length) return result(`I still need the following details before confirmation: ${missing.join(", ")}.`);
+      return executeAddUser({ conversation, requester });
+    }
+
+    const details = mergeDetails(detailsFromPending(conversation.pendingAction), parseDetails(text));
+    await savePending({ conversation, requester, details });
+    const missing = missingFields(details);
+    if (missing.length) return result(`Please provide the following missing details: ${missing.join(", ")}. You can send only the missing information in your next message.`);
+    return result(`Please confirm that you want to add ${details.name} (${details.email}, ${details.phone}, ${details.country}) as ${details.role}. Reply with “confirm” within 15 minutes to proceed, or “cancel” to stop.`);
   }
+
   if (!ADD_USER_WORDS.test(text)) return null;
   if (!ADMIN_ROLES.has(requesterMembership.role)) return result("Only a company owner or administrator can add users.");
 
   const details = parseDetails(text);
+  await savePending({ conversation, requester, details });
   const missing = missingFields(details);
   if (missing.length) return result(`Please provide the following missing details: ${missing.join(", ")}. Example: Add user: Jane Smith, jane@example.com, +60123456789, Malaysia, role staff.`);
-  if (!ROLES.has(details.role)) return result("The user role must be owner, admin, manager, staff or viewer.");
+  if (!ROLES.has(details.role)) return result("The user role must be owner, admin, manager, staff or viewer. The word user is treated as staff.");
 
   const company = await Company.findById(conversation.companyId);
   if (!company) return result("The company record could not be found. No user was created.");
   const validationError = await validateBeforeCreate({ company, details });
-  if (validationError) return result(`${validationError} No user was created.`);
+  if (validationError) {
+    conversation.pendingAction = null;
+    await conversation.save();
+    return result(`${validationError} No user was created.`);
+  }
 
-  conversation.pendingAction = { type: "add_user", targetEmail: details.email, targetName: details.name, targetPhone: details.phone, targetCountry: details.country, targetRole: details.role, requestedByUserId: requester._id, expiresAt: new Date(Date.now() + ACTION_TTL_MS) };
-  await conversation.save();
   return result(`Please confirm that you want to add ${details.name} (${details.email}, ${details.phone}, ${details.country}) as ${details.role}. Reply with “confirm” within 15 minutes to proceed, or “cancel” to stop.`);
 };
