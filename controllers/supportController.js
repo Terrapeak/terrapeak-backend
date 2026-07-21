@@ -14,6 +14,7 @@ import { createAutomaticSupportReply } from "../services/supportSelfServiceServi
 import { handleSupportAccountAction } from "../services/supportAccountActionService.js";
 import { handleSupportCompanyUpdate } from "../services/supportCompanyUpdateService.js";
 import { handleSupportUserCreation } from "../services/supportUserCreationService.js";
+import { handleSupportUserRemoval } from "../services/supportUserRemovalService.js";
 import { handleSupportUserUpdate } from "../services/supportUserUpdateService.js";
 
 const PLATFORM_ROLES = ["platform-owner", "platform-admin", "support-admin", "billing-admin", "developer-admin", "sales-admin", "viewer"];
@@ -58,6 +59,7 @@ const runCustomerAutomation = async ({ conversation, requestBody, membership, us
   try {
     const handlers = [
       [handleSupportUserCreation, "users"],
+      [handleSupportUserRemoval, "users"],
       [handleSupportUserUpdate, "users"],
       [handleSupportCompanyUpdate, "general"],
       [handleSupportAccountAction, "users"],
