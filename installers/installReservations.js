@@ -1,6 +1,10 @@
 import provisionReservations from "../provisioners/reservationProvisioner.js";
 
-export default async function installReservations({ company, user }) {
+export default async function installReservations({
+  company,
+  user,
+  provisioningStore,
+}) {
   if (!company.reservationBusinessSlug) {
     company.reservationBusinessSlug = company.slug;
   }
@@ -13,6 +17,7 @@ export default async function installReservations({ company, user }) {
 
   const provisioningResult = await provisionReservations({
     company,
+    store: provisioningStore,
   });
 
   console.log("✓ Installed Reservations");

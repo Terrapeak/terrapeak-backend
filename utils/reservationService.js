@@ -8,6 +8,60 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+const isMissingValue = (value) =>
+  value === undefined || value === null || value === "";
+
+export const getMissingReservationFieldValues = (existing, defaults) =>
+  Object.fromEntries(
+    Object.entries(defaults).filter(
+      ([key, value]) => key !== "business_id" && isMissingValue(existing?.[key]) && !isMissingValue(value)
+    )
+  );
+
+const findByBusinessId = async (table, businessId) => {
+  const { data, error } = await supabase
+    .from(table)
+    .select("*")
+    .eq("business_id", businessId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Could not load ${table}`);
+  }
+
+  return data || null;
+};
+
+export async function findReservationBusinessBySlug(businessSlug) {
+  if (!businessSlug) return null;
+
+  const { data, error } = await supabase
+    .from("businesses")
+    .select("*")
+    .eq("business_slug", businessSlug)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error("Could not load reservation business");
+  }
+
+  return data || null;
+}
+
+export async function getReservationProvisioningRecords(businessId) {
+  if (!businessId) {
+    return { profile: null, settings: null, branding: null };
+  }
+
+  const [profile, settings, branding] = await Promise.all([
+    findByBusinessId("business_profile", businessId),
+    findByBusinessId("restaurant_settings", businessId),
+    findByBusinessId("restaurant_branding", businessId),
+  ]);
+
+  return { profile, settings, branding };
+}
+
 export async function getBusinessBySlug(businessSlug) {
   const { data, error } = await supabase
     .from("businesses")
@@ -279,13 +333,26 @@ export async function createOrGetReservationBusiness({
   businessSlug,
   businessType = "restaurant",
 }) {
-  const { data: existingBusiness } = await supabase
-    .from("businesses")
-    .select("*")
-    .eq("business_slug", businessSlug)
-    .maybeSingle();
+  const existingBusiness = await findReservationBusinessBySlug(businessSlug);
 
   if (existingBusiness) {
+    const missingValues = getMissingReservationFieldValues(existingBusiness, {
+      business_name: businessName,
+      business_type: businessType,
+    });
+
+    if (Object.keys(missingValues).length) {
+      const { data, error } = await supabase
+        .from("businesses")
+        .update(missingValues)
+        .eq("id", existingBusiness.id)
+        .select()
+        .single();
+
+      if (error) throw new Error("Could not repair reservation business");
+      return data;
+    }
+
     return existingBusiness;
   }
 
@@ -327,16 +394,18 @@ export async function createOrUpdateBusinessProfile({
     reference_prefix: referencePrefix,
   };
 
-  const { data: existingProfile } = await supabase
-    .from("business_profile")
-    .select("*")
-    .eq("business_id", businessId)
-    .maybeSingle();
+  const existingProfile = await findByBusinessId("business_profile", businessId);
 
   if (existingProfile) {
+    const missingValues = getMissingReservationFieldValues(
+      existingProfile,
+      profileData
+    );
+    if (!Object.keys(missingValues).length) return existingProfile;
+
     const { data, error } = await supabase
       .from("business_profile")
-      .update(profileData)
+      .update(missingValues)
       .eq("business_id", businessId)
       .select()
       .single();
@@ -372,16 +441,21 @@ export async function createOrUpdateRestaurantSettings({ businessId }) {
   default_duration_minutes: 90,
 };
 
-  const { data: existingSettings } = await supabase
-    .from("restaurant_settings")
-    .select("*")
-    .eq("business_id", businessId)
-    .maybeSingle();
+  const existingSettings = await findByBusinessId(
+    "restaurant_settings",
+    businessId
+  );
 
   if (existingSettings) {
+    const missingValues = getMissingReservationFieldValues(
+      existingSettings,
+      settingsData
+    );
+    if (!Object.keys(missingValues).length) return existingSettings;
+
     const { data, error } = await supabase
       .from("restaurant_settings")
-      .update(settingsData)
+      .update(missingValues)
       .eq("business_id", businessId)
       .select()
       .single();
@@ -421,16 +495,18 @@ export async function createOrUpdateRestaurantBranding({
     logo_url: "",
   };
 
-  const { data: existing } = await supabase
-    .from("restaurant_branding")
-    .select("*")
-    .eq("business_id", businessId)
-    .maybeSingle();
+  const existing = await findByBusinessId("restaurant_branding", businessId);
 
   if (existing) {
+    const missingValues = getMissingReservationFieldValues(
+      existing,
+      brandingData
+    );
+    if (!Object.keys(missingValues).length) return existing;
+
     const { data, error } = await supabase
       .from("restaurant_branding")
-      .update(brandingData)
+      .update(missingValues)
       .eq("business_id", businessId)
       .select()
       .single();
