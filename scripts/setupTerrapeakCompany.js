@@ -6,6 +6,7 @@ import CompanyMembership from "../models/companyMembership.js";
 import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import User from "../models/user.js";
 import ChatbotSettings from "../models/chatbotSettings.js";
+import { provisionCompany } from "../services/companyProvisioningService.js";
 
 dotenv.config();
 
@@ -41,10 +42,6 @@ async function findTerrapeakOwner() {
   return User.findOne({
     platformRole: { $in: PLATFORM_OWNER_ROLES },
   }).sort({ platformRole: 1, createdAt: 1 });
-}
-
-function mergeInstalledApps(existingApps = []) {
-  return Array.from(new Set([...existingApps, "ai-assistant"]));
 }
 
 async function linkSafeTerrapeakChatbot({ company, owner }) {
@@ -119,7 +116,7 @@ async function setupTerrapeakCompany() {
       {
         ...TERRAPEAK_COMPANY,
         ownerUserId: existingCompany?.ownerUserId || owner._id,
-        installedApps: mergeInstalledApps(existingCompany?.installedApps),
+        installedApps: existingCompany?.installedApps || [],
       },
       {
         upsert: true,
@@ -147,29 +144,19 @@ async function setupTerrapeakCompany() {
       }
     );
 
-    const installation = await CompanyAppInstallation.findOneAndUpdate(
-      {
-        companyId: company._id,
-        appSlug: "ai-assistant",
-      },
-      {
-        companyId: company._id,
-        appSlug: "ai-assistant",
-        enabled: true,
-        status: "active",
-        installedBy: owner._id,
-      },
-      {
-        upsert: true,
-        new: true,
-        runValidators: true,
-        setDefaultsOnInsert: true,
-      }
-    );
-
     const chatbotLink = await linkSafeTerrapeakChatbot({
       company,
       owner,
+    });
+
+    const provisioning = await provisionCompany({
+      companyId: company._id,
+      ownerUserId: owner._id,
+      mode: "platform-workspace",
+    });
+    const installation = await CompanyAppInstallation.findOne({
+      companyId: company._id,
+      appSlug: "ai-assistant",
     });
 
     console.log("Terrapeak company setup complete");
@@ -181,8 +168,9 @@ async function setupTerrapeakCompany() {
           ownerUserId: owner._id.toString(),
           ownerEmail: owner.email,
           membershipId: membership._id.toString(),
-          aiAssistantInstallationId: installation._id.toString(),
+          aiAssistantInstallationId: installation?._id?.toString() || null,
           chatbotLink,
+          provisioning,
         },
         null,
         2

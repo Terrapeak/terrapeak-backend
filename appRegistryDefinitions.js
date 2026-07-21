@@ -11,6 +11,10 @@ const APP_REGISTRY_DEFINITIONS = [
     launchUrl: "/chatbot/settings",
     isVisible: true,
     isComingSoon: false,
+    allowInstall: true,
+    minimumPlan: "starter",
+    dependencies: [],
+    defaultForCustomer: true,
     sortOrder: 1,
   },
   {
@@ -25,6 +29,10 @@ const APP_REGISTRY_DEFINITIONS = [
     launchUrl: "/reservations",
     isVisible: true,
     isComingSoon: false,
+    allowInstall: true,
+    minimumPlan: "starter",
+    dependencies: [],
+    defaultForCustomer: false,
     sortOrder: 2,
   },
   {
@@ -39,6 +47,7 @@ const APP_REGISTRY_DEFINITIONS = [
     launchUrl: "/crm",
     isVisible: true,
     isComingSoon: true,
+    defaultForCustomer: false,
     sortOrder: 3,
   },
   {
@@ -53,6 +62,7 @@ const APP_REGISTRY_DEFINITIONS = [
     launchUrl: "/analytics",
     isVisible: true,
     isComingSoon: true,
+    defaultForCustomer: false,
     sortOrder: 4,
   },
   {
@@ -68,8 +78,9 @@ const APP_REGISTRY_DEFINITIONS = [
     isVisible: true,
     isComingSoon: false,
     allowInstall: true,
-    minimumPlan: "enterprise",
+    minimumPlan: "starter",
     dependencies: ["ai-assistant"],
+    defaultForCustomer: true,
     icon: "Facebook",
     sortOrder: 5,
   },
@@ -85,6 +96,7 @@ const APP_REGISTRY_DEFINITIONS = [
     launchUrl: "/whatsapp",
     isVisible: true,
     isComingSoon: true,
+    defaultForCustomer: false,
     sortOrder: 5,
   },
   {
@@ -99,6 +111,7 @@ const APP_REGISTRY_DEFINITIONS = [
     launchUrl: "/voice-ai",
     isVisible: true,
     isComingSoon: true,
+    defaultForCustomer: false,
     sortOrder: 6,
   },
 ];

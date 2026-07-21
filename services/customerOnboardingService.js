@@ -2,9 +2,9 @@ import User from "../models/user.js";
 import Company from "../models/company.js";
 import CompanyMembership from "../models/companyMembership.js";
 import ChatbotSettings from "../models/chatbotSettings.js";
-import installApps from "../installers/installApps.js";
 import Contract from "../models/contract.js";
 import { createTrialContract } from "./contractService.js";
+import { provisionCompany } from "./companyProvisioningService.js";
 
 const DEFAULT_TRIAL_DAYS = 30;
 const DEFAULT_TRIAL_CREDITS = 1000;
@@ -48,7 +48,7 @@ function makeReferencePrefix(companyName = "") {
 export async function onboardCustomerEnvironment({
   owner,
   company: companyInput,
-  installedApps = [],
+  installedApps = null,
 }) {
   if (!owner?.email) {
     throw new Error("Owner email is required.");
@@ -144,7 +144,7 @@ export async function onboardCustomerEnvironment({
       reservationBusinessSlug:
         companyInput.reservationBusinessSlug ||
         companySlug,
-      installedApps,
+      installedApps: [],
       plan: companyInput.plan || "starter",
       maxUsers: companyInput.maxUsers || 1,
       ownerUserId: user._id,
@@ -180,21 +180,6 @@ export async function onboardCustomerEnvironment({
       companyChanged = true;
     }
 
-    const mergedInstalledApps = Array.from(
-      new Set([
-        ...(company.installedApps || []),
-        ...installedApps,
-      ])
-    );
-
-    if (
-      mergedInstalledApps.length !==
-      (company.installedApps || []).length
-    ) {
-      company.installedApps = mergedInstalledApps;
-      companyChanged = true;
-    }
-
     if (companyChanged) {
       await company.save();
     }
@@ -210,10 +195,15 @@ export async function onboardCustomerEnvironment({
         userId: user._id,
       },
       {
-        companyId: company._id,
-        userId: user._id,
-        role: "owner",
-        isActive: true,
+        $set: {
+          companyId: company._id,
+          userId: user._id,
+          role: "owner",
+          isActive: true,
+          status: "active",
+          removedAt: null,
+          removedByUserId: null,
+        },
       },
       {
         upsert: true,
@@ -242,24 +232,30 @@ if (!contract) {
    *
    * installApps remains the single module initialization entry point.
    */
-  const installResults = await installApps({
-    company,
-    user,
-    installedApps,
+  const provisioning = await provisionCompany({
+    companyId: company._id,
+    ownerUserId: user._id,
+    mode: "customer",
+    requestedAppSlugs: installedApps,
   });
+  const provisionedAppSlugs = Array.from(
+    new Set([
+      ...provisioning.installedApps,
+      ...provisioning.alreadyInstalledApps,
+    ])
+  );
+  company.installedApps = Array.from(
+    new Set([...(company.installedApps || []), ...provisionedAppSlugs])
+  );
 
   /*
    * 5. Validate AI Assistant linkage when installed.
    */
   let chatbotSettings = null;
 
-  if (installedApps.includes("ai-assistant")) {
+  if (provisionedAppSlugs.includes("ai-assistant")) {
     chatbotSettings =
-      installResults?.["ai-assistant"] ||
-      (await ChatbotSettings.findOne({
-        userId: user._id,
-        companyId: company._id,
-      }));
+      await ChatbotSettings.findOne({ companyId: company._id });
 
     if (!chatbotSettings) {
       throw new Error(
@@ -285,8 +281,11 @@ if (!contract) {
     company,
     contract,
     membership,
-    installedApps,
-    installResults,
+    installedApps: provisionedAppSlugs,
+    installResults: chatbotSettings
+      ? { "ai-assistant": chatbotSettings }
+      : {},
+    provisioning,
     chatbotSettings,
     validation: {
       userReady: Boolean(user?._id && user.isApproved),
@@ -296,7 +295,7 @@ if (!contract) {
       membershipReady: Boolean(
         membership?._id && membership.isActive
       ),
-      aiAssistantReady: installedApps.includes(
+      aiAssistantReady: provisionedAppSlugs.includes(
         "ai-assistant"
       )
         ? Boolean(
