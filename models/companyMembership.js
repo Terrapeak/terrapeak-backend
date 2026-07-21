@@ -24,11 +24,35 @@ const CompanyMembershipSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+
+    status: {
+      type: String,
+      enum: ["active", "inactive", "removed"],
+      default: "active",
+      index: true,
+    },
+
+    removedAt: {
+      type: Date,
+      default: null,
+    },
+
+    removedByUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
   },
   {
     timestamps: true,
   }
 );
+
+CompanyMembershipSchema.pre("save", function syncMembershipState(next) {
+  if (this.status === "active") this.isActive = true;
+  if (this.status === "inactive" || this.status === "removed") this.isActive = false;
+  next();
+});
 
 CompanyMembershipSchema.index(
   { companyId: 1, userId: 1 },
