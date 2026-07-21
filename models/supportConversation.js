@@ -23,10 +23,14 @@ const SupportAiAnalysisSchema = new mongoose.Schema({
 }, { _id: false });
 
 const SupportPendingActionSchema = new mongoose.Schema({
-  type: { type: String, enum: ["resend_invitation", "password_reset", "update_company_info"], required: true },
+  type: { type: String, enum: ["resend_invitation", "password_reset", "update_company_info", "add_user"], required: true },
   membershipId: { type: mongoose.Schema.Types.ObjectId, ref: "CompanyMembership", default: null },
   targetUserId: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   targetEmail: { type: String, default: "", lowercase: true, trim: true },
+  targetName: { type: String, default: "", trim: true },
+  targetPhone: { type: String, default: "", trim: true },
+  targetCountry: { type: String, default: "", trim: true },
+  targetRole: { type: String, enum: ["owner", "admin", "manager", "staff", "viewer", ""], default: "" },
   companyField: { type: String, enum: ["displayName", "address", "website", "email", "phone", "country", ""], default: "" },
   oldValue: { type: String, default: "" },
   newValue: { type: String, default: "" },
