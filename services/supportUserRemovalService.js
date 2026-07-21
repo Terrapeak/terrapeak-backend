@@ -4,7 +4,8 @@ import User from "../models/user.js";
 
 const CONFIRM = /^(confirm|confirmed|yes|yes please|proceed|go ahead|do it)$/i;
 const CANCEL = /^(cancel|no|stop|do not proceed|don't proceed)$/i;
-const REQUEST = /\b(deactivate|disable|remove|delete)\b[\s\S]{0,80}\b(user|member|employee|colleague|account)\b|\b(user|member|employee|colleague|account)\b[\s\S]{0,80}\b(deactivate|disable|remove|delete)\b/i;
+const ACTION_WORDS = /\b(deactivate|disable|remove|delete)\b/i;
+const USER_WORDS = /\b(user|member|employee|colleague|account)\b/i;
 const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
 const ADMIN_ROLES = new Set(["owner", "admin"]);
 const TTL = 15 * 60 * 1000;
@@ -12,6 +13,7 @@ const TTL = 15 * 60 * 1000;
 const reply = (body, completed = false) => ({ handled: true, body, completed });
 
 const detectAction = (text) => (/\b(remove|delete)\b/i.test(text) ? "remove_user" : "deactivate_user");
+const isRemovalRequest = (text) => ACTION_WORDS.test(text) && (EMAIL.test(text) || USER_WORDS.test(text));
 
 const findTarget = async (companyId, email) => {
   const user = await User.findOne({ email });
@@ -119,7 +121,7 @@ export const handleSupportUserRemoval = async ({ conversation, requesterMembersh
     if (CONFIRM.test(text)) return execute({ conversation, requester, requesterMembership });
   }
 
-  if (!REQUEST.test(text)) return null;
+  if (!isRemovalRequest(text)) return null;
   if (!ADMIN_ROLES.has(requesterMembership.role)) {
     return reply("Only a company owner or administrator can deactivate or remove users.");
   }
