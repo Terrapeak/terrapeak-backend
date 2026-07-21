@@ -9,14 +9,20 @@ const INSTALLERS = {
   facebook: installFacebook,
 };
 
+export const getInstallerSlugs = () => Object.keys(INSTALLERS);
+
+export const hasAppInstaller = (appSlug) => Boolean(INSTALLERS[appSlug]);
+
 export default async function installApps({
   company,
   user,
+  installedBy = user,
   installedApps = [],
 }) {
   const results = {};
+  let legacyAppsChanged = false;
 
-  for (const appSlug of installedApps) {
+  for (const appSlug of new Set(installedApps)) {
     const installer = INSTALLERS[appSlug];
 
     if (!installer) {
@@ -26,30 +32,63 @@ export default async function installApps({
 
     console.log(`Installing app: ${appSlug}`);
 
+    const pendingInstallation =
+      await CompanyAppInstallation.findOneAndUpdate(
+        {
+          companyId: company._id,
+          appSlug,
+        },
+        {
+          $setOnInsert: {
+            companyId: company._id,
+            appSlug,
+            enabled: false,
+            status: "pending",
+            installedBy: installedBy._id,
+          },
+        },
+        {
+          upsert: true,
+          new: true,
+          runValidators: true,
+          setDefaultsOnInsert: true,
+        }
+      );
+
     const result = await installer({
-  company,
-  user,
-});
+      company,
+      user,
+      appInstallation: pendingInstallation,
+    });
 
-results[appSlug] = result;
+    await CompanyAppInstallation.findOneAndUpdate(
+      {
+        companyId: company._id,
+        appSlug,
+      },
+      {
+        $set: {
+          enabled: true,
+          status: "active",
+          installedBy: installedBy._id,
+        },
+      },
+      {
+        new: true,
+        runValidators: true,
+      }
+    );
 
-await CompanyAppInstallation.findOneAndUpdate(
-  {
-    companyId: company._id,
-    appSlug,
-  },
-  {
-    companyId: company._id,
-    appSlug,
-    enabled: true,
-    status: "active",
-    installedBy: user._id,
-  },
-  {
-    upsert: true,
-    new: true,
+    results[appSlug] = result;
+
+    if (!(company.installedApps || []).includes(appSlug)) {
+      company.installedApps = [...(company.installedApps || []), appSlug];
+      legacyAppsChanged = true;
+    }
   }
-);
+
+  if (legacyAppsChanged) {
+    await company.save();
   }
 
   return results;

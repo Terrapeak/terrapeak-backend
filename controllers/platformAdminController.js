@@ -8,6 +8,7 @@ import App from "../models/app.js";
 import ChatbotSettings from "../models/chatbotSettings.js";
 import Session from "../models/sessionModel.js";
 import { canEnableCompanyApp } from "../services/companyAppAccessService.js";
+import installApps, { hasAppInstaller } from "../installers/installApps.js";
 
 const ACTIVITY_LIMIT = 50;
 
@@ -463,7 +464,7 @@ export const toggleCompanyApp = asyncHandler(async (req, res) => {
   const { companyId, appId } = req.params;
 
   const company = await Company.findById(companyId).select(
-  "_id slug plan billing"
+  "_id slug plan billing installedApps displayName reservationBusinessSlug referencePrefix ownerUserId"
 );
   if (!company) {
     return res.status(404).json({
@@ -513,7 +514,22 @@ if (isBeingEnabled) {
   }
 }
 
-if (!installation) {
+if (isBeingEnabled && hasAppInstaller(app.slug)) {
+    const wasPreviouslyInstalled = Boolean(installation);
+
+    await installApps({
+      company,
+      user: { _id: company.ownerUserId },
+      installedBy: req.platformUser,
+      installedApps: [app.slug],
+    });
+
+    installation = await CompanyAppInstallation.findOne({
+      companyId,
+      appSlug: app.slug,
+    });
+    eventType = wasPreviouslyInstalled ? "enabled" : "installed";
+  } else if (!installation) {
     installation = await CompanyAppInstallation.create({
       companyId,
       appSlug: app.slug,
@@ -526,6 +542,15 @@ if (!installation) {
     installation.status = installation.enabled ? "active" : "disabled";
     await installation.save();
     eventType = installation.enabled ? "enabled" : "disabled";
+  }
+
+  if (
+    isBeingEnabled &&
+    installation?.enabled &&
+    !(company.installedApps || []).includes(app.slug)
+  ) {
+    company.installedApps = [...(company.installedApps || []), app.slug];
+    await company.save();
   }
 
   await appendCompanyActivity({
