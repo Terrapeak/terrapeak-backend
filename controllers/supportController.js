@@ -12,65 +12,36 @@ import { createAutomaticSupportReply } from "../services/supportSelfServiceServi
 import { handleSupportAccountAction } from "../services/supportAccountActionService.js";
 import { handleSupportCompanyUpdate } from "../services/supportCompanyUpdateService.js";
 import { handleSupportUserCreation } from "../services/supportUserCreationService.js";
+import { handleSupportUserUpdate } from "../services/supportUserUpdateService.js";
 
 const PLATFORM_ROLES = ["platform-owner", "platform-admin", "support-admin", "billing-admin", "developer-admin", "sales-admin", "viewer"];
 const getActiveMembership = (userId) => CompanyMembership.findOne({ userId, isActive: true });
 
 const normalizePlatformAssignee = async (value) => {
   if (!value) return null;
-  if (!mongoose.Types.ObjectId.isValid(value)) {
-    const error = new Error("Invalid assignee.");
-    error.status = 400;
-    throw error;
-  }
+  if (!mongoose.Types.ObjectId.isValid(value)) { const error = new Error("Invalid assignee."); error.status = 400; throw error; }
   const user = await User.findOne({ _id: value, platformRole: { $in: PLATFORM_ROLES }, accountStatus: { $ne: "removed" } }).select("_id");
-  if (!user) {
-    const error = new Error("Selected assignee is not an active platform user.");
-    error.status = 400;
-    throw error;
-  }
+  if (!user) { const error = new Error("Selected assignee is not an active platform user."); error.status = 400; throw error; }
   return user._id;
 };
 
 const serializeConversation = (conversation) => attachConversationSla({
-  _id: conversation._id,
-  companyId: conversation.companyId,
-  createdByUserId: conversation.createdByUserId,
-  subject: conversation.subject,
-  category: conversation.category,
-  priority: conversation.priority,
-  status: conversation.status,
-  assignedToUserId: conversation.assignedToUserId,
-  messages: conversation.messages,
-  aiAnalysis: conversation.aiAnalysis,
-  pendingAction: conversation.pendingAction,
-  lastMessageAt: conversation.lastMessageAt,
-  resolvedAt: conversation.resolvedAt,
-  createdAt: conversation.createdAt,
-  updatedAt: conversation.updatedAt,
+  _id: conversation._id, companyId: conversation.companyId, createdByUserId: conversation.createdByUserId,
+  subject: conversation.subject, category: conversation.category, priority: conversation.priority,
+  status: conversation.status, assignedToUserId: conversation.assignedToUserId, messages: conversation.messages,
+  aiAnalysis: conversation.aiAnalysis, pendingAction: conversation.pendingAction, lastMessageAt: conversation.lastMessageAt,
+  resolvedAt: conversation.resolvedAt, createdAt: conversation.createdAt, updatedAt: conversation.updatedAt,
 });
 
 const markCustomerMessagesRead = (conversation) => {
   let changed = false;
-  conversation.messages.forEach((message) => {
-    if (message.senderType === "customer" && !message.readByPlatform) {
-      message.readByPlatform = true;
-      changed = true;
-    }
-  });
+  conversation.messages.forEach((message) => { if (message.senderType === "customer" && !message.readByPlatform) { message.readByPlatform = true; changed = true; } });
   return changed;
 };
 
 const appendAssistantReply = async (conversation, body, { category = null } = {}) => {
   markCustomerMessagesRead(conversation);
-  conversation.messages.push({
-    senderType: "agent",
-    senderUserId: null,
-    senderName: "Terrapeak Support Assistant",
-    body,
-    readByCustomer: false,
-    readByPlatform: true,
-  });
+  conversation.messages.push({ senderType: "agent", senderUserId: null, senderName: "Terrapeak Support Assistant", body, readByCustomer: false, readByPlatform: true });
   if (category) conversation.category = category;
   conversation.status = "waiting_customer";
   conversation.aiAnalysis = null;
@@ -80,52 +51,19 @@ const appendAssistantReply = async (conversation, body, { category = null } = {}
 
 const runCustomerAutomation = async ({ conversation, requestBody, membership, user }) => {
   try {
-    const userCreationResult = await handleSupportUserCreation({
-      conversation,
-      requesterMembership: membership,
-      requester: user,
-      body: requestBody,
-    });
-    if (userCreationResult?.handled) {
-      await appendAssistantReply(conversation, userCreationResult.body, { category: "users" });
-      return true;
+    const handlers = [
+      [handleSupportUserCreation, "users"],
+      [handleSupportUserUpdate, "users"],
+      [handleSupportCompanyUpdate, "general"],
+      [handleSupportAccountAction, "users"],
+    ];
+    for (const [handler, category] of handlers) {
+      const result = await handler({ conversation, requesterMembership: membership, requester: user, body: requestBody });
+      if (result?.handled) { await appendAssistantReply(conversation, result.body, { category }); return true; }
     }
-
-    const companyResult = await handleSupportCompanyUpdate({
-      conversation,
-      requesterMembership: membership,
-      requester: user,
-      body: requestBody,
-    });
-    if (companyResult?.handled) {
-      await appendAssistantReply(conversation, companyResult.body, { category: "general" });
-      return true;
-    }
-
-    const actionResult = await handleSupportAccountAction({
-      conversation,
-      requesterMembership: membership,
-      requester: user,
-      body: requestBody,
-    });
-    if (actionResult?.handled) {
-      await appendAssistantReply(conversation, actionResult.body, { category: "users" });
-      return true;
-    }
-
-    const automaticReply = await createAutomaticSupportReply({
-      companyId: conversation.companyId,
-      subject: conversation.subject,
-      body: requestBody,
-    });
+    const automaticReply = await createAutomaticSupportReply({ companyId: conversation.companyId, subject: conversation.subject, body: requestBody });
     if (!automaticReply) return false;
-    const category = automaticReply.intent === "account_billing_info"
-      ? "billing"
-      : automaticReply.intent === "user_info"
-        ? "users"
-        : automaticReply.intent === "app_info"
-          ? "apps"
-          : "general";
+    const category = automaticReply.intent === "account_billing_info" ? "billing" : automaticReply.intent === "user_info" ? "users" : automaticReply.intent === "app_info" ? "apps" : "general";
     await appendAssistantReply(conversation, automaticReply.body, { category });
     return true;
   } catch (error) {
@@ -167,16 +105,7 @@ export const createSupportConversation = asyncHandler(async (req, res) => {
   const subject = String(req.body.subject || "").trim();
   const body = String(req.body.body || "").trim();
   if (!subject || !body) return res.status(400).json({ success: false, message: "Subject and message are required." });
-  const conversation = await SupportConversation.create({
-    companyId: membership.companyId,
-    createdByUserId: req.userId,
-    subject,
-    category: req.body.category || "general",
-    priority: req.body.priority || "normal",
-    status: "new",
-    messages: [{ senderType: "customer", senderUserId: req.userId, senderName: user?.name || user?.email || "Customer", body, readByCustomer: true, readByPlatform: false }],
-    lastMessageAt: new Date(),
-  });
+  const conversation = await SupportConversation.create({ companyId: membership.companyId, createdByUserId: req.userId, subject, category: req.body.category || "general", priority: req.body.priority || "normal", status: "new", messages: [{ senderType: "customer", senderUserId: req.userId, senderName: user?.name || user?.email || "Customer", body, readByCustomer: true, readByPlatform: false }], lastMessageAt: new Date() });
   const handled = await runCustomerAutomation({ conversation, requestBody: body, membership, user });
   if (!handled) await refreshAiAnalysis(conversation);
   res.status(201).json({ success: true, conversation: serializeConversation(conversation), automaticallyHandled: handled });
@@ -191,10 +120,7 @@ export const replyToMySupportConversation = asyncHandler(async (req, res) => {
   const conversation = await SupportConversation.findOne({ _id: req.params.conversationId, companyId: membership.companyId });
   if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
   conversation.messages.push({ senderType: "customer", senderUserId: req.userId, senderName: user?.name || user?.email || "Customer", body, readByCustomer: true, readByPlatform: false });
-  conversation.status = "needs_reply";
-  conversation.lastMessageAt = new Date();
-  conversation.resolvedAt = null;
-  await conversation.save();
+  conversation.status = "needs_reply"; conversation.lastMessageAt = new Date(); conversation.resolvedAt = null; await conversation.save();
   const handled = await runCustomerAutomation({ conversation, requestBody: body, membership, user });
   if (!handled) await refreshAiAnalysis(conversation);
   res.json({ success: true, conversation: serializeConversation(conversation), automaticallyHandled: handled });
@@ -205,43 +131,27 @@ export const listPlatformSupportConversations = asyncHandler(async (req, res) =>
   if (req.query.status && req.query.status !== "all") query.status = req.query.status;
   if (req.query.assignee === "unassigned") query.assignedToUserId = null;
   else if (req.query.assignee && req.query.assignee !== "all" && mongoose.Types.ObjectId.isValid(req.query.assignee)) query.assignedToUserId = req.query.assignee;
-  const conversations = await SupportConversation.find(query)
-    .populate("companyId", "name displayName slug")
-    .populate("createdByUserId", "name email")
-    .populate("assignedToUserId", "name email platformRole")
-    .sort({ lastMessageAt: -1 })
-    .lean();
+  const conversations = await SupportConversation.find(query).populate("companyId", "name displayName slug").populate("createdByUserId", "name email").populate("assignedToUserId", "name email platformRole").sort({ lastMessageAt: -1 }).lean();
   res.json({ success: true, conversations: conversations.map((conversation) => attachConversationSla(conversation)) });
 });
 
 export const getPlatformSupportConversation = asyncHandler(async (req, res) => {
-  const conversation = await SupportConversation.findById(req.params.conversationId)
-    .populate("companyId", "name displayName slug")
-    .populate("createdByUserId", "name email")
-    .populate("assignedToUserId", "name email platformRole");
+  const conversation = await SupportConversation.findById(req.params.conversationId).populate("companyId", "name displayName slug").populate("createdByUserId", "name email").populate("assignedToUserId", "name email platformRole");
   if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
   if (markCustomerMessagesRead(conversation)) await conversation.save();
   res.json({ success: true, conversation: attachConversationSla(conversation.toObject()) });
 });
 
 export const markAllPlatformSupportConversationsRead = asyncHandler(async (req, res) => {
-  const result = await SupportConversation.updateMany(
-    { messages: { $elemMatch: { senderType: "customer", readByPlatform: { $ne: true } } } },
-    { $set: { "messages.$[message].readByPlatform": true } },
-    { arrayFilters: [{ "message.senderType": "customer", "message.readByPlatform": { $ne: true } }] }
-  );
+  const result = await SupportConversation.updateMany({ messages: { $elemMatch: { senderType: "customer", readByPlatform: { $ne: true } } } }, { $set: { "messages.$[message].readByPlatform": true } }, { arrayFilters: [{ "message.senderType": "customer", "message.readByPlatform": { $ne: true } }] });
   res.json({ success: true, modifiedCount: result.modifiedCount || 0 });
 });
 
 export const analyzePlatformSupportConversation = asyncHandler(async (req, res) => {
   const conversation = await SupportConversation.findById(req.params.conversationId);
   if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
-  try {
-    await refreshAiAnalysis(conversation, { throwOnError: true });
-    res.json({ success: true, conversation: serializeConversation(conversation) });
-  } catch (error) {
-    res.status(error?.status || 503).json({ success: false, code: error?.code || "SUPPORT_AI_ERROR", message: error?.message || "AI analysis is unavailable." });
-  }
+  try { await refreshAiAnalysis(conversation, { throwOnError: true }); res.json({ success: true, conversation: serializeConversation(conversation) }); }
+  catch (error) { res.status(error?.status || 503).json({ success: false, code: error?.code || "SUPPORT_AI_ERROR", message: error?.message || "AI analysis is unavailable." }); }
 });
 
 export const replyToPlatformSupportConversation = asyncHandler(async (req, res) => {
@@ -256,9 +166,7 @@ export const replyToPlatformSupportConversation = asyncHandler(async (req, res) 
   conversation.assignedToUserId = conversation.assignedToUserId || req.userId;
   conversation.lastMessageAt = new Date();
   await conversation.save();
-  if (newlyAssigned && conversation.assignedToUserId) {
-    await SupportTask.updateMany({ conversationId: conversation._id, assignedToUserId: null, status: { $in: ["open", "in_progress"] } }, { $set: { assignedToUserId: conversation.assignedToUserId } });
-  }
+  if (newlyAssigned && conversation.assignedToUserId) await SupportTask.updateMany({ conversationId: conversation._id, assignedToUserId: null, status: { $in: ["open", "in_progress"] } }, { $set: { assignedToUserId: conversation.assignedToUserId } });
   res.json({ success: true, conversation: serializeConversation(conversation) });
 });
 
@@ -266,34 +174,13 @@ export const updatePlatformSupportConversation = asyncHandler(async (req, res) =
   const allowedStatuses = new Set(["new", "needs_reply", "waiting_customer", "resolved"]);
   const allowedPriorities = new Set(["low", "normal", "high", "urgent"]);
   const allowedCategories = new Set(["api_key", "technical", "billing", "users", "apps", "general"]);
-  const updates = {};
-  let normalizedAssignee;
-  let hasAssigneeUpdate = false;
-  if (req.body.status !== undefined) {
-    if (!allowedStatuses.has(req.body.status)) return res.status(400).json({ success: false, message: "Invalid support status." });
-    updates.status = req.body.status;
-    updates.resolvedAt = req.body.status === "resolved" ? new Date() : null;
-  }
-  if (req.body.priority !== undefined) {
-    if (!allowedPriorities.has(req.body.priority)) return res.status(400).json({ success: false, message: "Invalid support priority." });
-    updates.priority = req.body.priority;
-  }
-  if (req.body.category !== undefined) {
-    if (!allowedCategories.has(req.body.category)) return res.status(400).json({ success: false, message: "Invalid support category." });
-    updates.category = req.body.category;
-  }
-  if (req.body.assignedToUserId !== undefined) {
-    normalizedAssignee = await normalizePlatformAssignee(req.body.assignedToUserId);
-    updates.assignedToUserId = normalizedAssignee;
-    hasAssigneeUpdate = true;
-  }
-  const conversation = await SupportConversation.findByIdAndUpdate(req.params.conversationId, updates, { new: true, runValidators: true })
-    .populate("companyId", "name displayName slug")
-    .populate("createdByUserId", "name email")
-    .populate("assignedToUserId", "name email platformRole");
+  const updates = {}; let normalizedAssignee; let hasAssigneeUpdate = false;
+  if (req.body.status !== undefined) { if (!allowedStatuses.has(req.body.status)) return res.status(400).json({ success: false, message: "Invalid support status." }); updates.status = req.body.status; updates.resolvedAt = req.body.status === "resolved" ? new Date() : null; }
+  if (req.body.priority !== undefined) { if (!allowedPriorities.has(req.body.priority)) return res.status(400).json({ success: false, message: "Invalid support priority." }); updates.priority = req.body.priority; }
+  if (req.body.category !== undefined) { if (!allowedCategories.has(req.body.category)) return res.status(400).json({ success: false, message: "Invalid support category." }); updates.category = req.body.category; }
+  if (req.body.assignedToUserId !== undefined) { normalizedAssignee = await normalizePlatformAssignee(req.body.assignedToUserId); updates.assignedToUserId = normalizedAssignee; hasAssigneeUpdate = true; }
+  const conversation = await SupportConversation.findByIdAndUpdate(req.params.conversationId, updates, { new: true, runValidators: true }).populate("companyId", "name displayName slug").populate("createdByUserId", "name email").populate("assignedToUserId", "name email platformRole");
   if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
-  if (hasAssigneeUpdate && normalizedAssignee) {
-    await SupportTask.updateMany({ conversationId: conversation._id, assignedToUserId: null, status: { $in: ["open", "in_progress"] } }, { $set: { assignedToUserId: normalizedAssignee } });
-  }
+  if (hasAssigneeUpdate && normalizedAssignee) await SupportTask.updateMany({ conversationId: conversation._id, assignedToUserId: null, status: { $in: ["open", "in_progress"] } }, { $set: { assignedToUserId: normalizedAssignee } });
   res.json({ success: true, conversation: attachConversationSla(conversation.toObject()) });
 });
