@@ -12,6 +12,7 @@ import { findRelevantSupportKnowledge } from "../services/supportKnowledgeServic
 import { attachConversationSla } from "../services/supportSlaService.js";
 import { createAutomaticSupportReply } from "../services/supportSelfServiceService.js";
 import { handleSupportAccountAction } from "../services/supportAccountActionService.js";
+import { handleSupportClarification } from "../services/supportClarificationService.js";
 import { handleSupportCompanyUpdate } from "../services/supportCompanyUpdateService.js";
 import { handleSupportUserCreation } from "../services/supportUserCreationService.js";
 import { handleSupportUserRemoval } from "../services/supportUserRemovalService.js";
@@ -58,6 +59,7 @@ const appendAssistantReply = async (conversation, body, { category = null } = {}
 const runCustomerAutomation = async ({ conversation, requestBody, membership, user }) => {
   try {
     const handlers = [
+      [handleSupportClarification, "users"],
       [handleSupportUserCreation, "users"],
       [handleSupportUserRemoval, "users"],
       [handleSupportUserUpdate, "users"],
@@ -108,7 +110,7 @@ export const listMySupportConversations = asyncHandler(async (req, res) => {
 export const createSupportConversation = asyncHandler(async (req, res) => {
   const membership = await getActiveMembership(req.userId);
   if (!membership) return res.status(404).json({ success: false, message: "No active company membership found." });
-  const user = await User.findById(req.userId).select("name email");
+  const user = await User.findById(req.userId).select("name email phone");
   const subject = String(req.body.subject || "").trim();
   const body = String(req.body.body || "").trim();
   if (!subject || !body) return res.status(400).json({ success: false, message: "Subject and message are required." });
@@ -123,7 +125,7 @@ export const replyToMySupportConversation = asyncHandler(async (req, res) => {
   if (!membership) return res.status(404).json({ success: false, message: "No active company membership found." });
   const body = String(req.body.body || "").trim();
   if (!body) return res.status(400).json({ success: false, message: "Message is required." });
-  const user = await User.findById(req.userId).select("name email");
+  const user = await User.findById(req.userId).select("name email phone");
   const conversation = await SupportConversation.findOne({ _id: req.params.conversationId, companyId: membership.companyId, customerHiddenAt: null, archivedAt: null });
   if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
   conversation.messages.push({ senderType: "customer", senderUserId: req.userId, senderName: user?.name || user?.email || "Customer", body, readByCustomer: true, readByPlatform: false });
