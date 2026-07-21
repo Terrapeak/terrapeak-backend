@@ -23,7 +23,7 @@ const SupportAiAnalysisSchema = new mongoose.Schema({
 }, { _id: false });
 
 const SupportPendingActionSchema = new mongoose.Schema({
-  type: { type: String, enum: ["resend_invitation", "password_reset", "update_company_info", "add_user", "update_user"], required: true },
+  type: { type: String, enum: ["resend_invitation", "password_reset", "update_company_info", "add_user", "update_user", "deactivate_user", "remove_user"], required: true },
   membershipId: { type: mongoose.Schema.Types.ObjectId, ref: "CompanyMembership", default: null },
   targetUserId: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   targetEmail: { type: String, default: "", lowercase: true, trim: true },
