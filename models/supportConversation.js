@@ -52,8 +52,13 @@ const SupportConversationSchema = new mongoose.Schema({
   pendingAction: { type: SupportPendingActionSchema, default: null },
   lastMessageAt: { type: Date, default: Date.now, index: true },
   resolvedAt: { type: Date, default: null },
+  customerHiddenAt: { type: Date, default: null, index: true },
+  customerHiddenByUserId: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+  archivedAt: { type: Date, default: null, index: true },
+  archivedByUserId: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
 }, { timestamps: true });
 
 SupportConversationSchema.index({ companyId: 1, lastMessageAt: -1 });
+SupportConversationSchema.index({ archivedAt: 1, lastMessageAt: -1 });
 
 export default mongoose.model("SupportConversation", SupportConversationSchema);
