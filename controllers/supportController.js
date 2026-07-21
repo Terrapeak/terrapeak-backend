@@ -11,6 +11,7 @@ import { attachConversationSla } from "../services/supportSlaService.js";
 import { createAutomaticSupportReply } from "../services/supportSelfServiceService.js";
 import { handleSupportAccountAction } from "../services/supportAccountActionService.js";
 import { handleSupportCompanyUpdate } from "../services/supportCompanyUpdateService.js";
+import { handleSupportUserCreation } from "../services/supportUserCreationService.js";
 
 const PLATFORM_ROLES = ["platform-owner", "platform-admin", "support-admin", "billing-admin", "developer-admin", "sales-admin", "viewer"];
 const getActiveMembership = (userId) => CompanyMembership.findOne({ userId, isActive: true });
@@ -79,6 +80,17 @@ const appendAssistantReply = async (conversation, body, { category = null } = {}
 
 const runCustomerAutomation = async ({ conversation, requestBody, membership, user }) => {
   try {
+    const userCreationResult = await handleSupportUserCreation({
+      conversation,
+      requesterMembership: membership,
+      requester: user,
+      body: requestBody,
+    });
+    if (userCreationResult?.handled) {
+      await appendAssistantReply(conversation, userCreationResult.body, { category: "users" });
+      return true;
+    }
+
     const companyResult = await handleSupportCompanyUpdate({
       conversation,
       requesterMembership: membership,
