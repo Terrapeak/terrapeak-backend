@@ -4,7 +4,7 @@ import User from "../models/user.js";
 
 const CONFIRM = /^(confirm|confirmed|yes|yes please|proceed|go ahead|do it)$/i;
 const CANCEL = /^(cancel|no|stop|do not proceed|don't proceed)$/i;
-const UPDATE_USER = /\b(change|update|edit|set|reactivate)\b[\s\S]{0,60}\b(user|member|employee|colleague|role|phone|country|name|membership)\b|\b(user|member|employee|colleague)\b[\s\S]{0,60}\b(change|update|edit|set|reactivate)\b/i;
+const UPDATE_USER = /\b(change|update|edit|set|reactivate)\b[\s\S]{0,60}\b(user|member|employee|colleague|role|phone|number|country|name|membership)\b|\b(user|member|employee|colleague|role|phone|number|country|name|membership)\b[\s\S]{0,60}\b(change|update|edit|set|reactivate)\b/i;
 const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
 const PHONE = /\+?\d[\d\s().-]{5,30}\d/;
 const ROLES = new Set(["owner", "admin", "manager", "staff", "viewer"]);
@@ -14,18 +14,20 @@ const LABELS = { name: "name", phone: "phone number", country: "country", role: 
 const reply = (body, completed = false) => ({ handled: true, body, completed });
 const show = (value) => String(value || "not configured");
 
-const parseChange = (text) => {
-  const email = text.match(EMAIL)?.[0]?.toLowerCase() || "";
-  if (/\breactivate\b/i.test(text)) return { email, field: "membership", value: "active" };
+const parseChange = (text, requester) => {
+  const explicitEmail = text.match(EMAIL)?.[0]?.toLowerCase() || "";
+  const isSelfRequest = /\b(my|me|myself)\b/i.test(text);
+  const email = explicitEmail || (isSelfRequest ? String(requester?.email || "").toLowerCase() : "");
+  if (/\breactivate\b/i.test(text)) return { email, field: "membership", value: "active", isSelfRequest };
   const role = text.match(/\b(?:to|as|role\s*(?:to|is|:)?)\s*(owner|admin|manager|staff|viewer|user)\b/i)?.[1];
-  if (/\brole\b/i.test(text) && role) return { email, field: "role", value: role.toLowerCase() === "user" ? "staff" : role.toLowerCase() };
+  if (/\brole\b/i.test(text) && role) return { email, field: "role", value: role.toLowerCase() === "user" ? "staff" : role.toLowerCase(), isSelfRequest };
   const phone = text.match(PHONE)?.[0]?.trim();
-  if (/\b(phone|telephone|contact number)\b/i.test(text) && phone) return { email, field: "phone", value: phone };
+  if (/\b(phone|telephone|contact number|number)\b/i.test(text) && phone) return { email, field: "phone", value: phone, isSelfRequest };
   const country = text.match(/\bcountry\s*(?:to|as|is|:)?\s*([^,;\n]+)$/i)?.[1]?.trim();
-  if (/\bcountry\b/i.test(text) && country) return { email, field: "country", value: country.replace(/[.]+$/, "") };
+  if (/\bcountry\b/i.test(text) && country) return { email, field: "country", value: country.replace(/[.]+$/, ""), isSelfRequest };
   const name = text.match(/\bname\s*(?:to|as|is|:)?\s*([^,;\n]+)$/i)?.[1]?.trim();
-  if (/\bname\b/i.test(text) && name) return { email, field: "name", value: name.replace(/[.]+$/, "") };
-  return { email, field: "", value: "" };
+  if (/\bname\b/i.test(text) && name) return { email, field: "name", value: name.replace(/[.]+$/, ""), isSelfRequest };
+  return { email, field: "", value: "", isSelfRequest };
 };
 
 const findTarget = async (companyId, email) => {
@@ -43,10 +45,11 @@ const appendActivity = async ({ companyId, requester, target, field, oldValue, n
 };
 
 const validate = async ({ conversation, requester, requesterMembership, targetUser, membership, field, value }) => {
-  if (!ADMIN_ROLES.has(requesterMembership.role)) return "Only a company owner or administrator can update users.";
   if (!targetUser || !membership) return "No company user was found with that email address.";
+  const isSelf = String(targetUser._id) === String(requester._id);
+  if (!isSelf && !ADMIN_ROLES.has(requesterMembership.role)) return "Only a company owner or administrator can update another user.";
   if (field === "role") {
-    if (String(targetUser._id) === String(requester._id)) return "You cannot change your own company role through support automation.";
+    if (isSelf) return "You cannot change your own company role through support automation.";
     if (!ROLES.has(value)) return "The role must be owner, admin, manager, staff or viewer.";
     if (membership.role === "owner" && value !== "owner") {
       const ownerCount = await CompanyMembership.countDocuments({ companyId: conversation.companyId, role: "owner", isActive: true });
@@ -58,7 +61,11 @@ const validate = async ({ conversation, requester, requesterMembership, targetUs
     const conflict = await User.findOne({ phone: value, _id: { $ne: targetUser._id } }).select("_id");
     if (conflict) return "This phone number is already in use.";
   }
-  if (field === "membership" && membership.isActive) return "This user is already active in the company.";
+  if (field === "membership") {
+    if (isSelf) return "You cannot reactivate your own company membership through support automation.";
+    if (!ADMIN_ROLES.has(requesterMembership.role)) return "Only a company owner or administrator can reactivate another user.";
+    if (membership.isActive) return "This user is already active in the company.";
+  }
   return null;
 };
 
@@ -101,9 +108,8 @@ export const handleSupportUserUpdate = async ({ conversation, requesterMembershi
     if (CONFIRM.test(text)) return execute({ conversation, requester, requesterMembership });
   }
   if (!UPDATE_USER.test(text)) return null;
-  if (!ADMIN_ROLES.has(requesterMembership.role)) return reply("Only a company owner or administrator can update users.");
-  const { email, field, value } = parseChange(text);
-  if (!email) return reply("Please provide the email address of the company user you want to update.");
+  const { email, field, value } = parseChange(text, requester);
+  if (!email) return reply("Please provide the email address of the company user you want to update, or say ‘my’ for your own details.");
   if (!field || !value) return reply("Please specify one change: name, phone number, country, company role, or reactivate membership.");
   const { user, membership } = await findTarget(conversation.companyId, email);
   const error = await validate({ conversation, requester, requesterMembership, targetUser: user, membership, field, value });
