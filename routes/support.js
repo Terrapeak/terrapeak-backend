@@ -1,7 +1,21 @@
 import express from "express";
 import isAuthenticated from "../middleware/isAuthenticated.js";
 import isPlatformAdmin from "../middleware/isPlatformAdmin.js";
-import { listMySupportConversations, createSupportConversation, replyToMySupportConversation, listPlatformSupportConversations, getPlatformSupportConversation, markAllPlatformSupportConversationsRead, analyzePlatformSupportConversation, replyToPlatformSupportConversation, updatePlatformSupportConversation } from "../controllers/supportController.js";
+import {
+  listMySupportConversations,
+  createSupportConversation,
+  replyToMySupportConversation,
+  hideMySupportConversation,
+  listPlatformSupportConversations,
+  getPlatformSupportConversation,
+  markAllPlatformSupportConversationsRead,
+  analyzePlatformSupportConversation,
+  replyToPlatformSupportConversation,
+  updatePlatformSupportConversation,
+  archivePlatformSupportConversation,
+  restorePlatformSupportConversation,
+  permanentlyDeletePlatformSupportConversation,
+} from "../controllers/supportController.js";
 import { listSupportKnowledgeArticles, createSupportKnowledgeArticle, updateSupportKnowledgeArticle, deleteSupportKnowledgeArticle } from "../controllers/supportKnowledgeController.js";
 import { listSupportAssignees, listPlatformTasks, listConversationTasks, createConversationTask, createTaskFromAiSuggestion, updateConversationTask } from "../controllers/supportTaskController.js";
 import { listConversationInternalNotes, createConversationInternalNote } from "../controllers/supportInternalNoteController.js";
@@ -13,12 +27,16 @@ const router = express.Router();
 router.get("/conversations", isAuthenticated, listMySupportConversations);
 router.post("/conversations", isAuthenticated, createSupportConversation);
 router.post("/conversations/:conversationId/messages", isAuthenticated, replyToMySupportConversation);
+router.delete("/conversations/:conversationId", isAuthenticated, hideMySupportConversation);
 router.get("/platform/conversations", isAuthenticated, isPlatformAdmin, listPlatformSupportConversations);
 router.patch("/platform/conversations/read-all", isAuthenticated, isPlatformAdmin, markAllPlatformSupportConversationsRead);
 router.get("/platform/conversations/:conversationId", isAuthenticated, isPlatformAdmin, getPlatformSupportConversation);
 router.post("/platform/conversations/:conversationId/analyze", isAuthenticated, isPlatformAdmin, analyzePlatformSupportConversation);
 router.post("/platform/conversations/:conversationId/messages", isAuthenticated, isPlatformAdmin, replyToPlatformSupportConversation);
 router.patch("/platform/conversations/:conversationId", isAuthenticated, isPlatformAdmin, updatePlatformSupportConversation);
+router.post("/platform/conversations/:conversationId/archive", isAuthenticated, isPlatformAdmin, archivePlatformSupportConversation);
+router.post("/platform/conversations/:conversationId/restore", isAuthenticated, isPlatformAdmin, restorePlatformSupportConversation);
+router.delete("/platform/conversations/:conversationId", isAuthenticated, isPlatformAdmin, permanentlyDeletePlatformSupportConversation);
 router.get("/platform/conversations/:conversationId/internal-notes", isAuthenticated, isPlatformAdmin, listConversationInternalNotes);
 router.post("/platform/conversations/:conversationId/internal-notes", isAuthenticated, isPlatformAdmin, createConversationInternalNote);
 router.get("/platform/notifications", isAuthenticated, isPlatformAdmin, listMySupportNotifications);
