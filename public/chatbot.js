@@ -1,134 +1,183 @@
-// (function () {
-//   const script = document.currentScript;
-//   const apiKey = script.getAttribute("data-api-key");
-
-//   if (!apiKey) {
-//     return console.error("Chatbot: API key not found in data-api-key attribute.");
-//   }
-
-//   // Fetch chatbot settings from backend
-//   fetch("http://localhost:5000/api/chatbot/settings?apiKey=" + apiKey)
-//     .then((res) => res.json())
-//     .then((data) => {
-//       if (!data.success || !data.data) throw new Error("Invalid API key");
-
-//       const settings = data.data;
-
-//       // Create and apply dynamic iframe
-//       const iframe = document.createElement("iframe");
-//       iframe.src = "http://localhost:5000/chatbot/widget?apiKey=" + apiKey;
-//       iframe.style.position = "fixed";
-
-//       const position = settings.position || "bottom-right";
-//       const [vertical, horizontal] = position.split("-");
-
-//       iframe.style[vertical] = "20px";
-//       iframe.style[horizontal] = "20px";
-//       iframe.style.width = settings.width ? settings.width + "px" : "400px";
-//       iframe.style.height = settings.height ? settings.height + "px" : "500px";
-//       iframe.style.border = "none";
-//       iframe.style.borderRadius = settings.borderRadius + "px";
-//       iframe.style.boxShadow = settings.boxShadow
-//         ? "0 10px 20px rgba(0,0,0,0.2)"
-//         : "none";
-//       iframe.style.zIndex = "9999";
-
-//       document.body.appendChild(iframe);
-//     })
-//     .catch((err) => {
-//       console.error("Chatbot error:", err.message);
-//     });
-// })();
-
 (function () {
-  console.log("script");
   const script = document.currentScript;
-  console.log(script, "hlo");
-  const apiKey = script.getAttribute("data-api-key");
+  const apiKey = script?.getAttribute("data-api-key");
   const origin = window.location.origin;
 
   if (!apiKey) {
-    return console.error(
-      "Chatbot: API key not found in data-api-key attribute."
-    );
+    console.error("Chatbot: API key not found in data-api-key attribute.");
+    return;
   }
-  // Helper to apply CSS styles
-  const css = (el, styles) => Object.assign(el.style, styles);
 
-  // --- Create Chat Button ---
+  const style = document.createElement("style");
+  style.textContent = `
+    #terrapeak-chat-launcher {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 9999;
+      height: 56px;
+      min-width: 56px;
+      padding: 0 20px 0 17px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 999px;
+      background: #1D3E5E;
+      color: #FFFFFF;
+      box-shadow: 0 10px 28px rgba(18, 43, 65, 0.24);
+      cursor: pointer;
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 15px;
+      font-weight: 600;
+      line-height: 1;
+      letter-spacing: -0.01em;
+      transition: transform 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    #terrapeak-chat-launcher:hover {
+      transform: translateY(-2px);
+      background: #244B70;
+      box-shadow: 0 14px 34px rgba(18, 43, 65, 0.3);
+    }
+
+    #terrapeak-chat-launcher:active {
+      transform: translateY(0);
+    }
+
+    #terrapeak-chat-launcher:focus-visible,
+    #terrapeak-chat-close:focus-visible {
+      outline: 3px solid rgba(47, 93, 80, 0.32);
+      outline-offset: 3px;
+    }
+
+    #terrapeak-chat-launcher svg {
+      width: 22px;
+      height: 22px;
+      flex: 0 0 auto;
+    }
+
+    #terrapeak-chat-frame {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      z-index: 9998;
+      display: none;
+      background: rgba(12, 28, 43, 0.16);
+    }
+
+    #terrapeak-chat-close {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 10000;
+      width: 44px;
+      height: 44px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid rgba(29, 62, 94, 0.12);
+      border-radius: 50%;
+      background: #FFFFFF;
+      color: #1D3E5E;
+      box-shadow: 0 8px 24px rgba(18, 43, 65, 0.18);
+      cursor: pointer;
+      transition: transform 180ms ease, box-shadow 180ms ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    #terrapeak-chat-close:hover {
+      transform: rotate(4deg) scale(1.04);
+      box-shadow: 0 10px 28px rgba(18, 43, 65, 0.24);
+    }
+
+    #terrapeak-chat-close svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    @media (max-width: 640px) {
+      #terrapeak-chat-launcher {
+        right: 18px;
+        bottom: 18px;
+        width: 56px;
+        min-width: 56px;
+        padding: 0;
+      }
+
+      #terrapeak-chat-launcher span {
+        display: none;
+      }
+
+      #terrapeak-chat-close {
+        top: 14px;
+        right: 14px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      #terrapeak-chat-launcher,
+      #terrapeak-chat-close {
+        transition: none;
+      }
+    }
+  `;
+  document.head.appendChild(style);
+
   const chatButton = document.createElement("button");
-  chatButton.textContent = "💬";
-  chatButton.setAttribute("aria-label", "Open Chat");
-  css(chatButton, {
-    position: "fixed",
-    bottom: "20px",
-    right: "20px",
-    zIndex: "9999",
-    width: "50px",
-    height: "50px",
-    background: "linear-gradient(135deg, #3b82f6, #1e40af)",
-    color: "white",
-    border: "none",
-    borderRadius: "50%",
-    cursor: "pointer",
-    fontSize: "24px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.15)",
-    transition: "transform 0.2s ease",
-  });
+  chatButton.id = "terrapeak-chat-launcher";
+  chatButton.type = "button";
+  chatButton.setAttribute("aria-label", "Chat with Terra");
+  chatButton.setAttribute("aria-expanded", "false");
+  chatButton.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M7.5 18.25 4 20l.9-3.6A7.75 7.75 0 1 1 7.5 18.25Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M8 11.75h8M8 8.75h5.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    </svg>
+    <span>Chat with Terra</span>
+  `;
 
-  // --- Create Iframe ---
   const iframe = document.createElement("iframe");
-  // The API key and base URL are now directly embedded in the downloaded script
- iframe.src = `https://terrapeak-gemini-assistant.vercel.app/embed?apiKey=${encodeURIComponent(apiKey)}&parentDomain=${encodeURIComponent(origin)}`;
-  // iframe.src = `http://localhost:5173/embed?apiKey=${apiKey}&parentDomain=${origin}`;
+  iframe.id = "terrapeak-chat-frame";
+  iframe.title = "TerraPeak chat assistant";
+  iframe.src = `https://terrapeak-gemini-assistant.vercel.app/embed?apiKey=${encodeURIComponent(apiKey)}&parentDomain=${encodeURIComponent(origin)}`;
+  iframe.setAttribute("allow", "microphone");
 
-  css(iframe, {
-    position: "fixed",
-    top: "0",
-    left: "0",
-    width: "100%",
-    height: "100%",
-    border: "none",
-    zIndex: "9998",
-    display: "none",
-    backgroundColor: "rgba(0, 0, 0, 0.1)",
-  });
-
-  // --- Create Close Button ---
   const closeButton = document.createElement("button");
-  closeButton.textContent = "✖";
-  closeButton.setAttribute("aria-label", "Close Chat");
-  css(closeButton, {
-    position: "fixed",
-    top: "20px",
-    right: "20px",
-    zIndex: "10000",
-    width: "40px",
-    height: "40px",
-    background: "#fff",
-    color: "#333",
-    border: "1px solid #ccc",
-    borderRadius: "50%",
-    cursor: "pointer",
-    fontSize: "20px",
-    display: "none",
-    alignItems: "center",
-    justifyContent: "center",
-    boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
-  });
+  closeButton.id = "terrapeak-chat-close";
+  closeButton.type = "button";
+  closeButton.setAttribute("aria-label", "Close chat");
+  closeButton.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+  `;
 
-  // --- Event Handlers ---
   const toggleChat = (isOpen) => {
     iframe.style.display = isOpen ? "block" : "none";
     closeButton.style.display = isOpen ? "flex" : "none";
-    chatButton.style.display = isOpen ? "none" : "flex";
+    chatButton.style.display = isOpen ? "none" : "inline-flex";
+    chatButton.setAttribute("aria-expanded", String(isOpen));
+
+    if (isOpen) {
+      closeButton.focus();
+    } else {
+      chatButton.focus();
+    }
   };
 
-  chatButton.onclick = () => toggleChat(true);
-  closeButton.onclick = () => toggleChat(false);
+  chatButton.addEventListener("click", () => toggleChat(true));
+  closeButton.addEventListener("click", () => toggleChat(false));
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && iframe.style.display === "block") {
+      toggleChat(false);
+    }
+  });
 
   document.body.append(chatButton, iframe, closeButton);
 })();
