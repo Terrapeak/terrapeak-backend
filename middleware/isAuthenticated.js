@@ -10,6 +10,7 @@ const isAuthenticated = async (req, res, next) => {
 
   if (!token) {
     return res.status(401).json({
+      code: "TOKEN_MISSING",
       message: "User not authenticated",
       success: false,
     });
@@ -20,6 +21,7 @@ const isAuthenticated = async (req, res, next) => {
 
     if (decoded.authScope && decoded.authScope !== "dashboard") {
       return res.status(401).json({
+        code: "AUTH_SCOPE_INVALID",
         message: "Invalid authentication scope",
         success: false,
       });
@@ -29,11 +31,11 @@ const isAuthenticated = async (req, res, next) => {
     req.authTokenSource = bearerToken ? "bearer" : "cookie";
     next();
   } catch (error) {
-    const message =
-      error?.name === "TokenExpiredError" ? "JWT expired" : "Invalid token";
+    const expired = error?.name === "TokenExpiredError";
 
     return res.status(401).json({
-      message,
+      code: expired ? "TOKEN_EXPIRED" : "TOKEN_INVALID",
+      message: expired ? "JWT expired" : "Invalid token",
       success: false,
     });
   }
