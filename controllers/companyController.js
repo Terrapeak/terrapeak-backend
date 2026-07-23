@@ -63,6 +63,7 @@ export const getMyCompanies = asyncHandler(async (req, res) => {
     .filter((membership) => membership.companyId)
     .map((membership) => ({
       companyId: membership.companyId._id,
+      organizationId: membership.companyId.organizationId || null,
       name: membership.companyId.name,
       displayName: membership.companyId.displayName,
       slug: membership.companyId.slug,
