@@ -6,7 +6,9 @@
   "scripts": {
     "test": "node --test",
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "membership:audit": "node scripts/auditAndBackfillCompanyMemberships.js",
+    "membership:backfill": "node scripts/auditAndBackfillCompanyMemberships.js --apply"
   },
   "author": "",
   "license": "ISC",
