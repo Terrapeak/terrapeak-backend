@@ -1,5 +1,6 @@
 import express from "express";
 import isAuthenticated from "../middleware/isAuthenticated.js";
+import isPlatformAuthenticated from "../middleware/isPlatformAuthenticated.js";
 import isPlatformAdmin from "../middleware/isPlatformAdmin.js";
 import {
   listMySupportConversations,
@@ -24,37 +25,42 @@ import { listSupportSavedReplies, createSupportSavedReply, updateSupportSavedRep
 import { getSupportReport } from "../controllers/supportReportController.js";
 
 const router = express.Router();
+
 router.get("/conversations", isAuthenticated, listMySupportConversations);
 router.post("/conversations", isAuthenticated, createSupportConversation);
 router.post("/conversations/:conversationId/messages", isAuthenticated, replyToMySupportConversation);
 router.delete("/conversations/:conversationId", isAuthenticated, hideMySupportConversation);
-router.get("/platform/conversations", isAuthenticated, isPlatformAdmin, listPlatformSupportConversations);
-router.patch("/platform/conversations/read-all", isAuthenticated, isPlatformAdmin, markAllPlatformSupportConversationsRead);
-router.get("/platform/conversations/:conversationId", isAuthenticated, isPlatformAdmin, getPlatformSupportConversation);
-router.post("/platform/conversations/:conversationId/analyze", isAuthenticated, isPlatformAdmin, analyzePlatformSupportConversation);
-router.post("/platform/conversations/:conversationId/messages", isAuthenticated, isPlatformAdmin, replyToPlatformSupportConversation);
-router.patch("/platform/conversations/:conversationId", isAuthenticated, isPlatformAdmin, updatePlatformSupportConversation);
-router.post("/platform/conversations/:conversationId/archive", isAuthenticated, isPlatformAdmin, archivePlatformSupportConversation);
-router.post("/platform/conversations/:conversationId/restore", isAuthenticated, isPlatformAdmin, restorePlatformSupportConversation);
-router.delete("/platform/conversations/:conversationId", isAuthenticated, isPlatformAdmin, permanentlyDeletePlatformSupportConversation);
-router.get("/platform/conversations/:conversationId/internal-notes", isAuthenticated, isPlatformAdmin, listConversationInternalNotes);
-router.post("/platform/conversations/:conversationId/internal-notes", isAuthenticated, isPlatformAdmin, createConversationInternalNote);
-router.get("/platform/notifications", isAuthenticated, isPlatformAdmin, listMySupportNotifications);
-router.patch("/platform/notifications/read-all", isAuthenticated, isPlatformAdmin, markAllSupportNotificationsRead);
-router.patch("/platform/notifications/:notificationId/read", isAuthenticated, isPlatformAdmin, markSupportNotificationRead);
-router.get("/platform/reports", isAuthenticated, isPlatformAdmin, getSupportReport);
-router.get("/platform/assignees", isAuthenticated, isPlatformAdmin, listSupportAssignees);
-router.get("/platform/tasks", isAuthenticated, isPlatformAdmin, listPlatformTasks);
-router.get("/platform/conversations/:conversationId/tasks", isAuthenticated, isPlatformAdmin, listConversationTasks);
-router.post("/platform/conversations/:conversationId/tasks", isAuthenticated, isPlatformAdmin, createConversationTask);
-router.post("/platform/conversations/:conversationId/tasks/from-ai", isAuthenticated, isPlatformAdmin, createTaskFromAiSuggestion);
-router.patch("/platform/conversations/:conversationId/tasks/:taskId", isAuthenticated, isPlatformAdmin, updateConversationTask);
-router.get("/platform/knowledge", isAuthenticated, isPlatformAdmin, listSupportKnowledgeArticles);
-router.post("/platform/knowledge", isAuthenticated, isPlatformAdmin, createSupportKnowledgeArticle);
-router.patch("/platform/knowledge/:articleId", isAuthenticated, isPlatformAdmin, updateSupportKnowledgeArticle);
-router.delete("/platform/knowledge/:articleId", isAuthenticated, isPlatformAdmin, deleteSupportKnowledgeArticle);
-router.get("/platform/saved-replies", isAuthenticated, isPlatformAdmin, listSupportSavedReplies);
-router.post("/platform/saved-replies", isAuthenticated, isPlatformAdmin, createSupportSavedReply);
-router.patch("/platform/saved-replies/:replyId", isAuthenticated, isPlatformAdmin, updateSupportSavedReply);
-router.delete("/platform/saved-replies/:replyId", isAuthenticated, isPlatformAdmin, deleteSupportSavedReply);
+
+const platformAuth = [isPlatformAuthenticated, isPlatformAdmin];
+
+router.get("/platform/conversations", ...platformAuth, listPlatformSupportConversations);
+router.patch("/platform/conversations/read-all", ...platformAuth, markAllPlatformSupportConversationsRead);
+router.get("/platform/conversations/:conversationId", ...platformAuth, getPlatformSupportConversation);
+router.post("/platform/conversations/:conversationId/analyze", ...platformAuth, analyzePlatformSupportConversation);
+router.post("/platform/conversations/:conversationId/messages", ...platformAuth, replyToPlatformSupportConversation);
+router.patch("/platform/conversations/:conversationId", ...platformAuth, updatePlatformSupportConversation);
+router.post("/platform/conversations/:conversationId/archive", ...platformAuth, archivePlatformSupportConversation);
+router.post("/platform/conversations/:conversationId/restore", ...platformAuth, restorePlatformSupportConversation);
+router.delete("/platform/conversations/:conversationId", ...platformAuth, permanentlyDeletePlatformSupportConversation);
+router.get("/platform/conversations/:conversationId/internal-notes", ...platformAuth, listConversationInternalNotes);
+router.post("/platform/conversations/:conversationId/internal-notes", ...platformAuth, createConversationInternalNote);
+router.get("/platform/notifications", ...platformAuth, listMySupportNotifications);
+router.patch("/platform/notifications/read-all", ...platformAuth, markAllSupportNotificationsRead);
+router.patch("/platform/notifications/:notificationId/read", ...platformAuth, markSupportNotificationRead);
+router.get("/platform/reports", ...platformAuth, getSupportReport);
+router.get("/platform/assignees", ...platformAuth, listSupportAssignees);
+router.get("/platform/tasks", ...platformAuth, listPlatformTasks);
+router.get("/platform/conversations/:conversationId/tasks", ...platformAuth, listConversationTasks);
+router.post("/platform/conversations/:conversationId/tasks", ...platformAuth, createConversationTask);
+router.post("/platform/conversations/:conversationId/tasks/from-ai", ...platformAuth, createTaskFromAiSuggestion);
+router.patch("/platform/conversations/:conversationId/tasks/:taskId", ...platformAuth, updateConversationTask);
+router.get("/platform/knowledge", ...platformAuth, listSupportKnowledgeArticles);
+router.post("/platform/knowledge", ...platformAuth, createSupportKnowledgeArticle);
+router.patch("/platform/knowledge/:articleId", ...platformAuth, updateSupportKnowledgeArticle);
+router.delete("/platform/knowledge/:articleId", ...platformAuth, deleteSupportKnowledgeArticle);
+router.get("/platform/saved-replies", ...platformAuth, listSupportSavedReplies);
+router.post("/platform/saved-replies", ...platformAuth, createSupportSavedReply);
+router.patch("/platform/saved-replies/:replyId", ...platformAuth, updateSupportSavedReply);
+router.delete("/platform/saved-replies/:replyId", ...platformAuth, deleteSupportSavedReply);
+
 export default router;
