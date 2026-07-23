@@ -5,11 +5,6 @@ import CompanyMembership from "../models/companyMembership.js";
 const PLATFORM_ADMIN_ROLES = [
   "platform-owner",
   "platform-admin",
-  "support-admin",
-  "billing-admin",
-  "developer-admin",
-  "sales-admin",
-  "viewer",
 ];
 
 const isPlatformAdmin = async (req, res, next) => {
@@ -19,6 +14,7 @@ const isPlatformAdmin = async (req, res, next) => {
     if (!user || !PLATFORM_ADMIN_ROLES.includes(user.platformRole)) {
       return res.status(403).json({
         success: false,
+        code: "PLATFORM_ACCESS_DENIED",
         message: "Platform admin access required.",
       });
     }
@@ -35,7 +31,8 @@ const isPlatformAdmin = async (req, res, next) => {
 
       return res.status(500).json({
         success: false,
-        message: "Platform configuration error. Please contact Terrapeak.",
+        code: "PLATFORM_CONFIGURATION_INVALID",
+        message: "Platform configuration error. Please contact TerraPeak.",
       });
     }
 
@@ -48,7 +45,8 @@ const isPlatformAdmin = async (req, res, next) => {
     if (!platformMembership) {
       return res.status(403).json({
         success: false,
-        message: "Terrapeak platform access required.",
+        code: "PLATFORM_MEMBERSHIP_REQUIRED",
+        message: "TerraPeak platform access required.",
       });
     }
 
@@ -62,6 +60,7 @@ const isPlatformAdmin = async (req, res, next) => {
 
     return res.status(500).json({
       success: false,
+      code: "PLATFORM_AUTHORIZATION_FAILED",
       message: "Platform admin check failed.",
     });
   }
