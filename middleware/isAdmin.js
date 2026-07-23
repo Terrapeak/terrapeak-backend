@@ -1,52 +1,45 @@
-import jwt from "jsonwebtoken";
 import User from "../models/user.js";
+import {
+  sendAuthError,
+  verifyRequestToken,
+} from "../utils/authToken.js";
 
 const isAdmin = async (req, res, next) => {
-  const authorizationHeader = req.get("authorization");
-  const bearerToken = authorizationHeader?.startsWith("Bearer ")
-    ? authorizationHeader.slice(7).trim()
-    : null;
-
-  const token = bearerToken || req.cookies?.token;
-
-  if (!token) {
-    return res.status(401).json({
-      message: "User not authenticated",
-      success: false,
-    });
-  }
-
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    if (decoded.authScope && decoded.authScope !== "dashboard") {
-      return res.status(401).json({
-        message: "Invalid authentication scope",
-        success: false,
+    if (!req.userId) {
+      const { decoded, source, error } = verifyRequestToken({
+        req,
+        cookieName: "token",
+        expectedScope: "dashboard",
       });
+
+      if (error) {
+        return sendAuthError(res, error);
+      }
+
+      req.userId = decoded._id;
+      req.authTokenSource = source;
     }
 
-    const user = await User.findById(decoded._id).select(
-      "_id isAdmin isApproved"
+    const user = await User.findById(req.userId).select(
+      "_id isAdmin isApproved",
     );
 
     if (!user || !user.isApproved || user.isAdmin !== true) {
       return res.status(403).json({
-        message: "User is not an admin",
         success: false,
+        code: "ADMIN_ACCESS_REQUIRED",
+        message: "Dashboard administrator access is required.",
       });
     }
 
-    req.userId = decoded._id;
-    req.authTokenSource = bearerToken ? "bearer" : "cookie";
-    next();
+    return next();
   } catch (error) {
-    const message =
-      error?.name === "TokenExpiredError" ? "JWT expired" : "Invalid token";
-
-    return res.status(401).json({
-      message,
+    console.error("Dashboard admin check failed:", error);
+    return res.status(500).json({
       success: false,
+      code: "ADMIN_CHECK_FAILED",
+      message: "Dashboard administrator check failed.",
     });
   }
 };
