@@ -11,6 +11,8 @@
     "membership:backfill": "node scripts/auditAndBackfillCompanyMemberships.js --apply",
     "organization:index-audit": "node scripts/auditOrganizationIndexes.js",
     "organization:hardening-audit": "node scripts/auditOrganizationHardening.js",
+    "test-data:reset-audit": "node scripts/resetTestCustomerData.js",
+    "test-data:reset-apply": "node scripts/resetTestCustomerData.js --apply",
     "test:organization:integration": "node --test integration-tests/organizationHardening.integration.mjs"
   },
   "author": "",
