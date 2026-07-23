@@ -18,10 +18,11 @@ export const COMPANY_MEMBERSHIP_ROLES = Object.freeze([
 ]);
 
 export const ORGANIZATION_ROLES = Object.freeze([
-  "organization-owner",
-  "organization-admin",
-  "organization-member",
-  "organization-viewer",
+  "owner",
+  "admin",
+  "manager",
+  "member",
+  "viewer",
 ]);
 
 const platformRoleSet = new Set(PLATFORM_ROLES);

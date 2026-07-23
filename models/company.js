@@ -133,6 +133,13 @@ const CompanySchema = new mongoose.Schema(
       required: true,
     },
 
+    organizationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Organization",
+      default: null,
+      index: true,
+    },
+
     isActive: {
       type: Boolean,
       default: true,
