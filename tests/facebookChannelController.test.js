@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import axios from "axios";
-import CompanyMembership from "../models/companyMembership.js";
 import FacebookChannelConfig from "../models/facebookChannelConfig.js";
 import { verifyFacebookConnection } from "../controllers/facebookChannelController.js";
 import { encryptSecret } from "../utils/secretEncryption.js";
@@ -46,12 +45,6 @@ const createResponse = () => ({
 });
 
 const mockCompanyAndConfig = (t, config) => {
-  t.mock.method(CompanyMembership, "findOne", async () => ({
-    companyId: "company-1",
-    userId: "user-1",
-    role: "owner",
-    isActive: true,
-  }));
   t.mock.method(FacebookChannelConfig, "findOne", () => ({
     select: async () => config,
   }));
@@ -84,7 +77,13 @@ const invokeVerification = async (config) => {
   await verifyFacebookConnection(
     {
       userId: "user-1",
-      body: { companyId: "company-1" },
+      companyMembership: {
+        companyId: "company-1",
+        userId: "user-1",
+        role: "owner",
+        isActive: true,
+      },
+      body: {},
     },
     response,
     (error) => {
