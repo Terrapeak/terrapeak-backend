@@ -8,7 +8,10 @@
     "start": "node index.js",
     "dev": "nodemon index.js",
     "membership:audit": "node scripts/auditAndBackfillCompanyMemberships.js",
-    "membership:backfill": "node scripts/auditAndBackfillCompanyMemberships.js --apply"
+    "membership:backfill": "node scripts/auditAndBackfillCompanyMemberships.js --apply",
+    "organization:index-audit": "node scripts/auditOrganizationIndexes.js",
+    "organization:hardening-audit": "node scripts/auditOrganizationHardening.js",
+    "test:organization:integration": "node --test integration-tests/organizationHardening.integration.mjs"
   },
   "author": "",
   "license": "ISC",
@@ -41,5 +44,8 @@
     "pdf-parse": "^2.4.5",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^11.2.0"
   }
 }
