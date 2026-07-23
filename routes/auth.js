@@ -12,6 +12,13 @@ import {
   completePasswordReset,
 } from "../controllers/accountLifecycleController.js";
 import { exchangeGoogleCode } from "../controllers/appointmentController.js";
+import {
+  getDashboardSession,
+  getPlatformSession,
+} from "../controllers/sessionController.js";
+import isVerifiedUser from "../middleware/isVerifiedUser.js";
+import isPlatformAuthenticated from "../middleware/isPlatformAuthenticated.js";
+import isPlatformAdmin from "../middleware/isPlatformAdmin.js";
 
 const router = express.Router();
 
@@ -24,5 +31,12 @@ router.post("/login", login);
 router.post("/logout", logout);
 router.post("/platform-login", platformLogin);
 router.post("/platform-logout", platformLogout);
+router.get("/session", isVerifiedUser, getDashboardSession);
+router.get(
+  "/platform-session",
+  isPlatformAuthenticated,
+  isPlatformAdmin,
+  getPlatformSession,
+);
 
 export default router;
