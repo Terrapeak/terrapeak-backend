@@ -8,6 +8,8 @@ import User from "../models/user.js";
 dotenv.config();
 
 const PLATFORM_OWNER_EMAIL = "timharmsen@gmail.com";
+const CUSTOMER_OWNER_EMAIL = "connect@terrapeakgroup.com";
+const CUSTOMER_COMPANY_SLUG = "terrapeak";
 const PLATFORM_COMPANY_NAME = "Terrapeak Platform";
 const PLATFORM_COMPANY_SLUG = "terrapeak-platform";
 const REQUIRED_CONFIRMATION = "REPAIR_PLATFORM_WORKSPACE";
@@ -37,17 +39,25 @@ const run = async () => {
   await mongoose.connect(process.env.MONGO_URI);
 
   try {
-    const owner = await User.findOne({
+    const platformOwner = await User.findOne({
       email: PLATFORM_OWNER_EMAIL,
       platformRole: "platform-owner",
     });
-
+    const customerOwner = await User.findOne({
+      email: CUSTOMER_OWNER_EMAIL,
+      platformRole: "none",
+    });
+    const customerCompany = await Company.findOne({
+      slug: CUSTOMER_COMPANY_SLUG,
+    });
     const platformCompanies = await Company.find({
       isPlatformWorkspace: true,
     }).sort({ createdAt: 1 });
-
-    const memberships = owner
-      ? await CompanyMembership.find({ userId: owner._id }).sort({ createdAt: 1 })
+    const platformCompanyBySlug = await Company.findOne({
+      slug: PLATFORM_COMPANY_SLUG,
+    });
+    const memberships = platformOwner
+      ? await CompanyMembership.find({ userId: platformOwner._id }).sort({ createdAt: 1 })
       : [];
 
     if (AUDIT_MODE) {
@@ -56,15 +66,29 @@ const run = async () => {
           {
             success: true,
             mode: "audit",
-            platformOwner: owner
+            platformOwner: platformOwner
               ? {
-                  id: String(owner._id),
-                  name: owner.name,
-                  email: owner.email,
-                  platformRole: owner.platformRole,
+                  id: String(platformOwner._id),
+                  name: platformOwner.name,
+                  email: platformOwner.email,
+                  platformRole: platformOwner.platformRole,
                 }
               : null,
+            customerOwner: customerOwner
+              ? {
+                  id: String(customerOwner._id),
+                  name: customerOwner.name,
+                  email: customerOwner.email,
+                  platformRole: customerOwner.platformRole,
+                }
+              : null,
+            customerCompany: customerCompany
+              ? serializeCompany(customerCompany)
+              : null,
             platformCompanies: platformCompanies.map(serializeCompany),
+            platformCompanyBySlug: platformCompanyBySlug
+              ? serializeCompany(platformCompanyBySlug)
+              : null,
             ownerMemberships: memberships.map(serializeMembership),
           },
           null,
@@ -83,39 +107,53 @@ const run = async () => {
       );
     }
 
-    if (!owner) {
+    if (!platformOwner) {
       throw new Error(
         `${PLATFORM_OWNER_EMAIL} is not the current platform owner. No data was changed.`
       );
     }
-
-    let platformCompany = null;
-
-    if (platformCompanies.length > 1) {
+    if (!customerOwner) {
       throw new Error(
-        `Found ${platformCompanies.length} platform workspaces. No data was changed.`
+        `${CUSTOMER_OWNER_EMAIL} is not a separated customer account. No data was changed.`
+      );
+    }
+    if (!customerCompany) {
+      throw new Error(
+        `Customer company ${CUSTOMER_COMPANY_SLUG} was not found. No data was changed.`
+      );
+    }
+    if (String(customerCompany.ownerUserId) !== String(customerOwner._id)) {
+      throw new Error(
+        `Customer company ${CUSTOMER_COMPANY_SLUG} is not owned by ${CUSTOMER_OWNER_EMAIL}. No data was changed.`
       );
     }
 
-    if (platformCompanies.length === 1) {
-      platformCompany = platformCompanies[0];
-      platformCompany.ownerUserId = owner._id;
-      platformCompany.isActive = true;
-      await platformCompany.save();
-    } else {
-      const slugConflict = await Company.findOne({ slug: PLATFORM_COMPANY_SLUG });
-      if (slugConflict) {
-        throw new Error(
-          `Company slug ${PLATFORM_COMPANY_SLUG} already exists but is not marked as the platform workspace. No data was changed.`
-        );
-      }
+    const unexpectedPlatformCompanies = platformCompanies.filter(
+      (company) =>
+        String(company._id) !== String(customerCompany._id) &&
+        company.slug !== PLATFORM_COMPANY_SLUG
+    );
+    if (unexpectedPlatformCompanies.length > 0) {
+      throw new Error(
+        `Found unexpected platform workspaces: ${unexpectedPlatformCompanies
+          .map((company) => company.slug)
+          .join(", ")}. No data was changed.`
+      );
+    }
 
+    customerCompany.isPlatformWorkspace = false;
+    customerCompany.ownerUserId = customerOwner._id;
+    customerCompany.isActive = true;
+    await customerCompany.save();
+
+    let platformCompany = platformCompanyBySlug;
+    if (!platformCompany) {
       platformCompany = await Company.create({
         name: PLATFORM_COMPANY_NAME,
         displayName: PLATFORM_COMPANY_NAME,
         slug: PLATFORM_COMPANY_SLUG,
         country: "MY",
-        ownerUserId: owner._id,
+        ownerUserId: platformOwner._id,
         isActive: true,
         isPlatformWorkspace: true,
         installedApps: [],
@@ -126,17 +164,24 @@ const run = async () => {
         },
         maxUsers: 10,
       });
+    } else {
+      platformCompany.name = PLATFORM_COMPANY_NAME;
+      platformCompany.displayName = PLATFORM_COMPANY_NAME;
+      platformCompany.ownerUserId = platformOwner._id;
+      platformCompany.isActive = true;
+      platformCompany.isPlatformWorkspace = true;
+      await platformCompany.save();
     }
 
     let membership = await CompanyMembership.findOne({
       companyId: platformCompany._id,
-      userId: owner._id,
+      userId: platformOwner._id,
     });
 
     if (!membership) {
       membership = await CompanyMembership.create({
         companyId: platformCompany._id,
-        userId: owner._id,
+        userId: platformOwner._id,
         role: "owner",
         status: "active",
       });
@@ -148,16 +193,31 @@ const run = async () => {
       await membership.save();
     }
 
+    const finalPlatformCompanies = await Company.find({
+      isPlatformWorkspace: true,
+      isActive: true,
+    }).sort({ createdAt: 1 });
+
+    if (
+      finalPlatformCompanies.length !== 1 ||
+      String(finalPlatformCompanies[0]._id) !== String(platformCompany._id)
+    ) {
+      throw new Error(
+        "Platform workspace repair did not produce exactly one active platform workspace."
+      );
+    }
+
     console.log(
       JSON.stringify(
         {
           success: true,
-          message: "Platform workspace repaired.",
+          message: "Customer and platform workspaces separated.",
+          customerCompany: serializeCompany(customerCompany),
           platformOwner: {
-            id: String(owner._id),
-            name: owner.name,
-            email: owner.email,
-            platformRole: owner.platformRole,
+            id: String(platformOwner._id),
+            name: platformOwner.name,
+            email: platformOwner.email,
+            platformRole: platformOwner.platformRole,
           },
           platformCompany: serializeCompany(platformCompany),
           membership: serializeMembership(membership),
