@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import bcrypt from "bcrypt";
+import { PLATFORM_ROLES } from "../utils/roleSeparation.js";
 
 const userSchema = new mongoose.Schema(
   {
@@ -18,16 +19,7 @@ const userSchema = new mongoose.Schema(
     },
     platformRole: {
       type: String,
-      enum: [
-        "none",
-        "platform-owner",
-        "platform-admin",
-        "support-admin",
-        "billing-admin",
-        "developer-admin",
-        "sales-admin",
-        "viewer",
-      ],
+      enum: PLATFORM_ROLES,
       default: "none",
     },
     isApproved: { type: Boolean, default: false },

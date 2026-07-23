@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { COMPANY_MEMBERSHIP_ROLES } from "../utils/roleSeparation.js";
 
 const CompanyMembershipSchema = new mongoose.Schema(
   {
@@ -16,7 +17,7 @@ const CompanyMembershipSchema = new mongoose.Schema(
 
     role: {
       type: String,
-      enum: ["owner", "admin", "manager", "staff", "viewer"],
+      enum: COMPANY_MEMBERSHIP_ROLES,
       default: "staff",
     },
 
