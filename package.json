@@ -13,6 +13,7 @@
     "organization:hardening-audit": "node scripts/auditOrganizationHardening.js",
     "test-data:reset-audit": "node scripts/resetTestCustomerData.js",
     "test-data:reset-apply": "node scripts/resetTestCustomerData.js --apply",
+    "platform-owner:repair": "node scripts/repairPlatformOwner.js",
     "test:organization:integration": "node --test integration-tests/organizationHardening.integration.mjs"
   },
   "author": "",
