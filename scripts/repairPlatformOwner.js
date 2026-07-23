@@ -7,6 +7,7 @@ dotenv.config();
 
 const TARGET_EMAIL = "timharmsen@gmail.com";
 const TARGET_NAME = "Tim Harmsen";
+const CUSTOMER_EMAIL = "connect@terrapeakgroup.com";
 const CONFIRMATION = process.env.REPAIR_PLATFORM_OWNER_CONFIRMATION;
 const REQUIRED_CONFIRMATION = "REPLACE_DUMMY_PLATFORM_OWNER";
 const NEW_PASSWORD = process.env.PLATFORM_OWNER_PASSWORD;
@@ -72,6 +73,16 @@ const run = async () => {
       );
     }
 
+    const customerUser = await User.findOne({
+      email: CUSTOMER_EMAIL,
+    });
+
+    if (!customerUser) {
+      throw new Error(
+        `${CUSTOMER_EMAIL} was not found. No data was changed.`
+      );
+    }
+
     const existingTarget = await User.findOne({
       email: TARGET_EMAIL.toLowerCase(),
     });
@@ -85,6 +96,13 @@ const run = async () => {
       );
     }
 
+    customerUser.platformRole = "none";
+    customerUser.isAdmin = false;
+    customerUser.role = "user";
+    customerUser.isApproved = true;
+    customerUser.accountStatus = "active";
+    await customerUser.save();
+
     currentOwner.name = TARGET_NAME;
     currentOwner.email = TARGET_EMAIL.toLowerCase();
     currentOwner.password = NEW_PASSWORD;
@@ -96,16 +114,18 @@ const run = async () => {
     currentOwner.companyName = undefined;
     await currentOwner.save();
 
+    const remainingOwners = await User.find({
+      platformRole: "platform-owner",
+    }).sort({ email: 1 });
+
     console.log(
       JSON.stringify(
         {
           success: true,
-          message: "Platform owner repaired.",
-          replacedSourceEmail: SOURCE_EMAIL,
-          userId: String(currentOwner._id),
-          email: currentOwner.email,
-          name: currentOwner.name,
-          platformRole: currentOwner.platformRole,
+          message: "Platform owner repaired and customer account separated.",
+          customerAccount: serializeUser(customerUser),
+          platformOwner: serializeUser(currentOwner),
+          remainingPlatformOwners: remainingOwners.map(serializeUser),
         },
         null,
         2
