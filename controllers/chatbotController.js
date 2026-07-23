@@ -26,8 +26,6 @@ import {
 const ALLOWED_FIELDS = [
   "allowedDomains",
   "brandName",
-  "companyId",
-  "reservationBusinessSlug",
   "botName",
   "welcomeMessage",
   "language",
@@ -88,6 +86,7 @@ const SAFE_SYSTEM_TOKEN_LIMIT = 500000; // Recommended safe limit for system ins
 
 export const saveChatbotSettings = asyncHandler(async (req, res) => {
   const userId = req.userId;
+  const companyId = req.company._id;
 
   //for debugging
 console.log("SAVE SETTINGS USER:", req.userId);
@@ -119,13 +118,25 @@ console.log("SAVE BODY brandName:", req.body.brandName);
     });
   }
 
-  updateData.userId = userId; // prevent override
+  let updated = await ChatbotSettings.findOne({ companyId });
 
-  const updated = await ChatbotSettings.findOneAndUpdate(
-    { userId },
-    updateData,
-    { upsert: true, new: true, runValidators: true }
-  );
+  if (!updated) {
+    updated = await ChatbotSettings.findOne({
+      userId,
+      companyId: null,
+    });
+  }
+
+  if (!updated) {
+    updated = new ChatbotSettings({
+      userId,
+      companyId,
+    });
+  }
+
+  Object.assign(updated, updateData);
+  updated.companyId = companyId;
+  await updated.save();
 
   res.json({
     message: "Chatbot settings saved successfully",
@@ -135,10 +146,9 @@ console.log("SAVE BODY brandName:", req.body.brandName);
 });
 
 export const getChatbotSettings = asyncHandler(async (req, res) => {
-  const userId = req.userId;
-
-  // TODO (Platform): lookup by companyId instead of userId
-  const settings = await ChatbotSettings.findOne({ userId });
+  const settings = await ChatbotSettings.findOne({
+    companyId: req.company._id,
+  });
 
   if (!settings) {
     return res
@@ -310,7 +320,10 @@ export const askGemini = asyncHandler(async (req, res) => {
   /* ===============================
      SESSION HANDLING
   ================================ */
-  let session = await Session.findOne({ sessionId });
+  let session = await Session.findOne({
+    sessionId,
+    chatbotId: settings._id,
+  });
 
   if (!session) {
     session = new Session({
@@ -2021,13 +2034,11 @@ Use the above file contexts (File Context 1 and File Context 2) as supporting in
 });
 
 export const getChatbotSettingsByKey = asyncHandler(async (req, res) => {
-  const { apiKey } = req.query;
+  const settings = req.chatbot;
 
-  console.log("apiKey received:", apiKey);
+  console.log("apiKey received:", req.headers["x-api-key"]);
   console.log("origin received:", req.headers["x-origin"]);
   console.log("parent domain received:", req.headers["x-parent-domain"]);
-
-  const settings = await ChatbotSettings.findOne({ apiKey });
 
   //for debugging
 //console.log("GET BY KEY apiKey:", apiKey);
@@ -2054,9 +2065,10 @@ export const getChatbotSettingsByKey = asyncHandler(async (req, res) => {
 });
 
 export const getApiKey = asyncHandler(async (req, res) => {
-  const userId = req.userId;
-
-  const settings = await ChatbotSettings.findOne({ userId }, { apiKey: 1 });
+  const settings = await ChatbotSettings.findOne(
+    { companyId: req.company._id },
+    { apiKey: 1 }
+  );
 
   if (!settings) {
     return res
@@ -2068,9 +2080,16 @@ export const getApiKey = asyncHandler(async (req, res) => {
 });
 
 export const saveWebsiteInfo = asyncHandler(async (req, res) => {
-  const userId = req.userId;
+  const bot = await ChatbotSettings.findOne({
+    companyId: req.company._id,
+  }).select("apiKey");
 
-  let bot = await ChatbotSettings.findOne({ userId }).select("apiKey");
+  if (!bot) {
+    return res
+      .status(404)
+      .json({ success: false, message: "Chatbot settings not found." });
+  }
+
   const apiKey = bot.apiKey;
   const { info } = req.body;
 
@@ -2095,9 +2114,16 @@ export const saveWebsiteInfo = asyncHandler(async (req, res) => {
 
 // Save or update a chatbot action
 export const saveBotAction = asyncHandler(async (req, res) => {
-  const userId = req.userId;
+  const bot = await ChatbotSettings.findOne({
+    companyId: req.company._id,
+  }).select("apiKey");
 
-  let bot = await ChatbotSettings.findOne({ userId }).select("apiKey");
+  if (!bot) {
+    return res
+      .status(404)
+      .json({ success: false, message: "Chatbot settings not found." });
+  }
+
   const apiKey = bot.apiKey;
   const { intent, description, keywords, method, endpoint, params } = req.body;
 
@@ -2195,15 +2221,26 @@ export const getUsersChatlog = asyncHandler(async (req, res, next) => {
     const limitNumber = parseInt(limit);
 
     const skip = (pageNumber - 1) * limitNumber;
+    const companyChatbots = await ChatbotSettings.find({
+      companyId: req.company._id,
+    })
+      .select("_id")
+      .lean();
+    const chatbotIds = companyChatbots.map((chatbot) => chatbot._id);
+    const sessionFilter = {
+      userId,
+      chatbotId: { $in: chatbotIds },
+      isPreview: false,
+    };
 
     //  Run both queries in parallel
     const [sessions, totalCount] = await Promise.all([
-      Session.find({ userId, isPreview: false })
+      Session.find(sessionFilter)
         .sort({ createdAt: -1 }) // latest first
         .skip(skip)
         .limit(limitNumber),
 
-      Session.countDocuments({ userId, isPreview: false }),
+      Session.countDocuments(sessionFilter),
     ]);
 
     return res.status(200).json({

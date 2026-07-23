@@ -1,40 +1,18 @@
 import { getAppManifest } from "../appManifests/index.js";
 import asyncHandler from "express-async-handler";
-import Company from "../models/company.js";
 import App from "../models/app.js";
 import CompanyMembership from "../models/companyMembership.js";
 import CompanyAppInstallation from "../models/companyAppInstallation.js";
 
 export const getMyCompanyApps = asyncHandler(async (req, res) => {
-  const userId = req.userId;
-
-  const membership = await CompanyMembership.findOne({
-    userId,
-    isActive: true,
-  });
-
-  if (!membership) {
-    return res.status(404).json({
-      success: false,
-      message: "No active company membership found.",
-    });
-  }
-
-  const company = await Company.findById(membership.companyId);
-
-if (!company) {
-  return res.status(404).json({
-    success: false,
-    message: "Company not found.",
-  });
-}
+  const company = req.company;
 
   const apps = await App.find({
     isVisible: true,
   }).sort({ sortOrder: 1 });
 
   const installations = await CompanyAppInstallation.find({
-    companyId: membership.companyId,
+    companyId: company._id,
   });
 
   const installedMap = new Map(
@@ -68,7 +46,7 @@ if (!company) {
 
   res.json({
     success: true,
-    companyId: membership.companyId,
+    companyId: company._id,
     apps: result,
   });
 });

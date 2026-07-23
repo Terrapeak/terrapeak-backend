@@ -1,6 +1,5 @@
 import asyncHandler from "express-async-handler";
 import mongoose from "mongoose";
-import CompanyMembership from "../models/companyMembership.js";
 import SupportConversation from "../models/supportConversation.js";
 import SupportInternalNote from "../models/supportInternalNote.js";
 import SupportNotification from "../models/supportNotification.js";
@@ -20,7 +19,6 @@ import { handleSupportUserUpdate } from "../services/supportUserUpdateService.js
 
 const PLATFORM_ROLES = ["platform-owner", "platform-admin", "support-admin", "billing-admin", "developer-admin", "sales-admin", "viewer"];
 const PERMANENT_DELETE_ROLES = new Set(["platform-owner", "platform-admin"]);
-const getActiveMembership = (userId) => CompanyMembership.findOne({ userId, isActive: true });
 
 const normalizePlatformAssignee = async (value) => {
   if (!value) return null;
@@ -101,15 +99,13 @@ const refreshAiAnalysis = async (conversation, { throwOnError = false } = {}) =>
 };
 
 export const listMySupportConversations = asyncHandler(async (req, res) => {
-  const membership = await getActiveMembership(req.userId);
-  if (!membership) return res.status(404).json({ success: false, message: "No active company membership found." });
+  const membership = req.companyMembership;
   const conversations = await SupportConversation.find({ companyId: membership.companyId, customerHiddenAt: null }).select("-aiAnalysis").sort({ lastMessageAt: -1 }).lean();
   res.json({ success: true, conversations });
 });
 
 export const createSupportConversation = asyncHandler(async (req, res) => {
-  const membership = await getActiveMembership(req.userId);
-  if (!membership) return res.status(404).json({ success: false, message: "No active company membership found." });
+  const membership = req.companyMembership;
   const user = await User.findById(req.userId).select("name email phone");
   const subject = String(req.body.subject || "").trim();
   const body = String(req.body.body || "").trim();
@@ -121,8 +117,7 @@ export const createSupportConversation = asyncHandler(async (req, res) => {
 });
 
 export const replyToMySupportConversation = asyncHandler(async (req, res) => {
-  const membership = await getActiveMembership(req.userId);
-  if (!membership) return res.status(404).json({ success: false, message: "No active company membership found." });
+  const membership = req.companyMembership;
   const body = String(req.body.body || "").trim();
   if (!body) return res.status(400).json({ success: false, message: "Message is required." });
   const user = await User.findById(req.userId).select("name email phone");
@@ -136,8 +131,7 @@ export const replyToMySupportConversation = asyncHandler(async (req, res) => {
 });
 
 export const hideMySupportConversation = asyncHandler(async (req, res) => {
-  const membership = await getActiveMembership(req.userId);
-  if (!membership) return res.status(404).json({ success: false, message: "No active company membership found." });
+  const membership = req.companyMembership;
   const conversation = await SupportConversation.findOneAndUpdate(
     { _id: req.params.conversationId, companyId: membership.companyId, customerHiddenAt: null },
     { $set: { customerHiddenAt: new Date(), customerHiddenByUserId: req.userId } },

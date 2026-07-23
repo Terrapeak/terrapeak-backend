@@ -1,6 +1,7 @@
 import express from "express";
 import isAuthenticated from "../middleware/isAuthenticated.js";
 import isVerifiedUser from "../middleware/isVerifiedUser.js";
+import resolveCompanyContext from "../middleware/resolveCompanyContext.js";
 
 import {
   getMyCompanyApps,
@@ -19,8 +20,8 @@ const router = express.Router();
 
 router.get(
   "/apps",
-  isAuthenticated,
   isVerifiedUser,
+  resolveCompanyContext,
   getMyCompanyApps
 );
 
@@ -33,15 +34,15 @@ router.get(
 
 router.get(
   "/channels/facebook",
-  isAuthenticated,
   isVerifiedUser,
+  resolveCompanyContext,
   getFacebookChannel
 );
 
 router.get(
   "/channels/facebook/connect",
-  isAuthenticated,
   isVerifiedUser,
+  resolveCompanyContext,
   connectFacebookChannel
 );
 
@@ -52,22 +53,22 @@ router.get(
 
 router.post(
   "/channels/facebook/select-page",
-  isAuthenticated,
   isVerifiedUser,
+  resolveCompanyContext,
   selectFacebookPage
 );
 
 router.post(
   "/channels/facebook/verify-connection",
-  isAuthenticated,
   isVerifiedUser,
+  resolveCompanyContext,
   verifyFacebookConnection
 );
 
 router.post(
   "/channels/facebook/disconnect",
-  isAuthenticated,
   isVerifiedUser,
+  resolveCompanyContext,
   disconnectFacebookChannel
 );
 

@@ -1,26 +1,10 @@
 import asyncHandler from "express-async-handler";
-import CompanyMembership from "../models/companyMembership.js";
 import FacebookChannelConfig from "../models/facebookChannelConfig.js";
 
 export const disconnectFacebookChannel = asyncHandler(async (req, res) => {
-  const companyId =
-    typeof req.body?.companyId === "string" ? req.body.companyId.trim() : "";
+  const membership = req.companyMembership;
 
-  if (!companyId) {
-    return res.status(400).json({
-      success: false,
-      message: "A company is required to disconnect Facebook.",
-    });
-  }
-
-  const membership = await CompanyMembership.findOne({
-    userId: req.userId,
-    companyId,
-    isActive: true,
-    role: "owner",
-  });
-
-  if (!membership) {
+  if (membership.role !== "owner") {
     return res.status(403).json({
       success: false,
       message: "Only the company owner can disconnect Facebook.",

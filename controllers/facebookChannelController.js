@@ -47,14 +47,6 @@ const redirectToFacebookPage = (res, status, message) => {
   }
 };
 
-const getOwnerMembership = ({ userId, companyId }) =>
-  CompanyMembership.findOne({
-    userId,
-    companyId,
-    isActive: true,
-    role: "owner",
-  });
-
 const getChannelState = ({ installation, config }) => {
   if (
     !installation ||
@@ -76,17 +68,7 @@ const getChannelState = ({ installation, config }) => {
 };
 
 export const getFacebookChannel = asyncHandler(async (req, res) => {
-  const membership = await CompanyMembership.findOne({
-    userId: req.userId,
-    isActive: true,
-  });
-
-  if (!membership) {
-    return res.status(404).json({
-      success: false,
-      message: "No active company membership found.",
-    });
-  }
+  const membership = req.companyMembership;
 
   const [installation, config] = await Promise.all([
     CompanyAppInstallation.findOne({
@@ -145,17 +127,7 @@ export const getFacebookChannel = asyncHandler(async (req, res) => {
 });
 
 export const connectFacebookChannel = asyncHandler(async (req, res) => {
-  const membership = await CompanyMembership.findOne({
-    userId: req.userId,
-    isActive: true,
-  });
-
-  if (!membership) {
-    return res.status(404).json({
-      success: false,
-      message: "No active company membership found.",
-    });
-  }
+  const membership = req.companyMembership;
 
   const installation = await CompanyAppInstallation.findOne({
     companyId: membership.companyId,
@@ -333,24 +305,17 @@ export const handleFacebookOAuthCallback = async (req, res) => {
 export const selectFacebookPage = asyncHandler(async (req, res) => {
   const pageId =
     typeof req.body?.pageId === "string" ? req.body.pageId.trim() : "";
-  const companyId =
-    typeof req.body?.companyId === "string"
-      ? req.body.companyId.trim()
-      : "";
 
-  if (!pageId || !companyId) {
+  if (!pageId) {
     return res.status(400).json({
       success: false,
-      message: "A company and Facebook Page must be selected.",
+      message: "A Facebook Page must be selected.",
     });
   }
 
-  const membership = await getOwnerMembership({
-    userId: req.userId,
-    companyId,
-  });
+  const membership = req.companyMembership;
 
-  if (!membership) {
+  if (membership.role !== "owner") {
     return res.status(403).json({
       success: false,
       message: "Only the company owner can select a Facebook Page.",
@@ -409,24 +374,9 @@ export const selectFacebookPage = asyncHandler(async (req, res) => {
 });
 
 export const verifyFacebookConnection = asyncHandler(async (req, res) => {
-  const companyId =
-    typeof req.body?.companyId === "string"
-      ? req.body.companyId.trim()
-      : "";
+  const membership = req.companyMembership;
 
-  if (!companyId) {
-    return res.status(400).json({
-      success: false,
-      message: "A company is required to verify the Facebook connection.",
-    });
-  }
-
-  const membership = await getOwnerMembership({
-    userId: req.userId,
-    companyId,
-  });
-
-  if (!membership) {
+  if (membership.role !== "owner") {
     return res.status(403).json({
       success: false,
       message: "Only the company owner can verify a Facebook connection.",
