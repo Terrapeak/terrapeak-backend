@@ -36,8 +36,12 @@ const createUpdateAction = async ({ conversation, requester, scope, phone }) => 
     return reply(`Thanks, ${firstName(requester)}. Your current company phone number is ${company.phone || "not configured"}. Please confirm that you want to change it to ${phone}. Reply with “confirm” within 15 minutes, or “cancel” to stop.`);
   }
 
-  const membership = await CompanyMembership.findOne({ companyId: conversation.companyId, userId: requester._id });
-  if (!membership || membership.status === "removed") return reply(`I found your Terrapeak account, ${firstName(requester)}, but it is not currently connected to this company. Please ask a company owner or administrator to restore your access.`);
+  const membership = await CompanyMembership.findOne({
+    companyId: conversation.companyId,
+    userId: requester._id,
+    status: "active",
+  });
+  if (!membership) return reply(`I found your Terrapeak account, ${firstName(requester)}, but it is not currently connected to this company. Please ask a company owner or administrator to restore your access.`);
   const conflict = await User.findOne({ phone, _id: { $ne: requester._id } }).select("_id");
   if (conflict) return reply("That phone number is already in use by another account. Please provide a different number.");
   conversation.pendingAction = {

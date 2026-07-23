@@ -204,7 +204,7 @@ export const handleFacebookOAuthCallback = async (req, res) => {
     const membership = await CompanyMembership.findOne({
       companyId: statePayload.companyId,
       userId: statePayload.userId,
-      isActive: true,
+      status: "active",
     });
 
     if (!membership) {

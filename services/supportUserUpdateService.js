@@ -14,7 +14,7 @@ const LABELS = { name: "name", phone: "phone number", country: "country", role: 
 const reply = (body, completed = false) => ({ handled: true, body, completed });
 const show = (value) => String(value || "not configured");
 const firstName = (user) => String(user?.name || user?.email || "").trim().split(/\s+/)[0] || "there";
-const membershipState = (membership) => membership?.status === "removed" ? "removed" : membership?.isActive ? "active" : "inactive";
+const membershipState = (membership) => membership?.status || "inactive";
 
 const parseChange = (text, requester) => {
   const explicitEmail = text.match(EMAIL)?.[0]?.toLowerCase() || "";
@@ -52,7 +52,11 @@ const validate = async ({ conversation, requester, requesterMembership, targetUs
     if (isSelf) return "You cannot change your own company role through support automation.";
     if (!ROLES.has(value)) return "The role must be owner, admin, manager, staff or viewer.";
     if (membership.role === "owner" && value !== "owner") {
-      const ownerCount = await CompanyMembership.countDocuments({ companyId: conversation.companyId, role: "owner", isActive: true });
+      const ownerCount = await CompanyMembership.countDocuments({
+        companyId: conversation.companyId,
+        role: "owner",
+        status: "active",
+      });
       if (ownerCount <= 1) return "The last active company owner cannot be downgraded.";
     }
   }
@@ -87,7 +91,6 @@ const execute = async ({ conversation, requester, requesterMembership }) => {
   if (pending.userField === "role") membership.role = pending.newValue;
   else if (pending.userField === "membership") {
     membership.status = "active";
-    membership.isActive = true;
     membership.removedAt = null;
     membership.removedByUserId = null;
   } else user[pending.userField] = pending.newValue;

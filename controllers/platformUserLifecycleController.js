@@ -69,7 +69,7 @@ export const invitePlatformCompanyUser = asyncHandler(async (req, res) => {
 
   const activeMemberships = await CompanyMembership.countDocuments({
     companyId: company._id,
-    isActive: true,
+    status: "active",
   });
 
   if (activeMemberships >= company.maxUsers) {
@@ -112,7 +112,7 @@ export const invitePlatformCompanyUser = asyncHandler(async (req, res) => {
       userId: user._id,
     });
 
-    if (membership?.isActive) {
+    if (membership?.status === "active") {
       return res.status(409).json({
         success: false,
         message: "This user already belongs to the company.",
@@ -128,14 +128,14 @@ export const invitePlatformCompanyUser = asyncHandler(async (req, res) => {
 
   if (membership) {
     membership.role = role;
-    membership.isActive = true;
+    membership.status = "active";
     await membership.save();
   } else {
     membership = await CompanyMembership.create({
       companyId: company._id,
       userId: user._id,
       role,
-      isActive: true,
+      status: "active",
     });
   }
 
@@ -146,7 +146,7 @@ export const invitePlatformCompanyUser = asyncHandler(async (req, res) => {
       await CompanyMembership.deleteOne({ _id: membership._id });
       await User.deleteOne({ _id: user._id });
     } else {
-      membership.isActive = false;
+      membership.status = "inactive";
       await membership.save();
     }
     throw error;
@@ -172,7 +172,7 @@ export const resendPlatformCompanyInvitation = asyncHandler(async (req, res) => 
   const membership = await CompanyMembership.findOne({
     _id: membershipId,
     companyId,
-    isActive: true,
+    status: "active",
   });
 
   if (!membership) {
@@ -204,7 +204,7 @@ export const sendPlatformUserPasswordReset = asyncHandler(async (req, res) => {
   const membership = await CompanyMembership.findOne({
     _id: membershipId,
     companyId,
-    isActive: true,
+    status: "active",
   });
 
   if (!membership) {

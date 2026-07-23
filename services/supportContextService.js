@@ -42,7 +42,7 @@ export const buildSupportCompanyContext = async (companyId) => {
     Company.findById(companyId).lean(),
     App.find({ isVisible: true }).sort({ sortOrder: 1 }).lean(),
     CompanyAppInstallation.find({ companyId }).lean(),
-    CompanyMembership.countDocuments({ companyId, isActive: true }),
+    CompanyMembership.countDocuments({ companyId, status: "active" }),
   ]);
 
   if (!company) return null;

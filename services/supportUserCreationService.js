@@ -73,12 +73,15 @@ const appendActivity = async ({ companyId, requester, user, role }) => {
 };
 
 const validateBeforeCreate = async ({ company, details }) => {
-  const activeCount = await CompanyMembership.countDocuments({ companyId: company._id, isActive: true });
+  const activeCount = await CompanyMembership.countDocuments({
+    companyId: company._id,
+    status: "active",
+  });
   if (activeCount >= company.maxUsers) return `This company has reached its maximum of ${company.maxUsers} active users.`;
   const existingUser = await User.findOne({ email: details.email });
   if (existingUser) {
     const membership = await CompanyMembership.findOne({ companyId: company._id, userId: existingUser._id });
-    if (membership?.isActive) return "This user already belongs to the company.";
+    if (membership?.status === "active") return "This user already belongs to the company.";
     if (existingUser.phone !== details.phone) return "An account with this email already exists with different phone details. A Terrapeak administrator must review it.";
   }
   const phoneConflict = await User.findOne({ phone: details.phone, email: { $ne: details.email } }).select("_id");
@@ -120,10 +123,15 @@ const executeAddUser = async ({ conversation, requester }) => {
   membership = await CompanyMembership.findOne({ companyId: company._id, userId: user._id });
   if (membership) {
     membership.role = details.role;
-    membership.isActive = true;
+    membership.status = "active";
     await membership.save();
   } else {
-    membership = await CompanyMembership.create({ companyId: company._id, userId: user._id, role: details.role, isActive: true });
+    membership = await CompanyMembership.create({
+      companyId: company._id,
+      userId: user._id,
+      role: details.role,
+      status: "active",
+    });
   }
 
   try {
@@ -133,7 +141,7 @@ const executeAddUser = async ({ conversation, requester }) => {
       await CompanyMembership.deleteOne({ _id: membership._id });
       await User.deleteOne({ _id: user._id });
     } else {
-      membership.isActive = false;
+      membership.status = "inactive";
       await membership.save();
     }
     throw error;

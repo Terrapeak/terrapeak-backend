@@ -42,7 +42,7 @@ const isPlatformAdmin = async (req, res, next) => {
     const platformMembership = await CompanyMembership.findOne({
       companyId: platformCompanies[0]._id,
       userId: user._id,
-      isActive: true,
+      status: "active",
     }).select("_id");
 
     if (!platformMembership) {

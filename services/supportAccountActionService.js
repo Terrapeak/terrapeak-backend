@@ -22,7 +22,7 @@ const appendActivity = async ({ companyId, title, requester, targetUser, metadat
 };
 
 const findTargetMembership = async ({ companyId, email }) => {
-  const memberships = await CompanyMembership.find({ companyId, isActive: true })
+  const memberships = await CompanyMembership.find({ companyId, status: "active" })
     .populate("userId", "name email accountStatus invitationStatus")
     .lean();
   return memberships.find((item) => item.userId?.email?.toLowerCase() === email.toLowerCase()) || null;
@@ -38,7 +38,7 @@ const executePendingAction = async ({ conversation, requester }) => {
     return assistantResult("That confirmation request has expired. Please submit the request again.");
   }
 
-  const membership = await CompanyMembership.findOne({ _id: pending.membershipId, companyId: conversation.companyId, userId: pending.targetUserId, isActive: true });
+  const membership = await CompanyMembership.findOne({ _id: pending.membershipId, companyId: conversation.companyId, userId: pending.targetUserId, status: "active" });
   const [company, targetUser] = await Promise.all([Company.findById(conversation.companyId), User.findById(pending.targetUserId)]);
   if (!membership || !company || !targetUser) {
     conversation.pendingAction = null;

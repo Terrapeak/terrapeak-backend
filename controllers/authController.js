@@ -459,7 +459,7 @@ const platformCompany = platformCompanies[0];
     const platformMembership = await CompanyMembership.findOne({
       companyId: platformCompany._id,
       userId: user._id,
-      isActive: true,
+      status: "active",
     }).select("_id");
 
 

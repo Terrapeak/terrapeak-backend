@@ -121,7 +121,7 @@ export const getPlatformDashboardSummary = asyncHandler(async (req, res) => {
   ] = await Promise.all([
     Company.countDocuments(),
     User.countDocuments(),
-    CompanyMembership.countDocuments({ isActive: true }),
+    CompanyMembership.countDocuments({ status: "active" }),
     CompanyAppInstallation.countDocuments({ enabled: true }),
     Company.countDocuments({ isActive: true }),
     CompanyAppInstallation.countDocuments({

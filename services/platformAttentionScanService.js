@@ -106,11 +106,11 @@ const scanCompany = async (company) => {
       .lean(),
     CompanyMembership.countDocuments({
       companyId: company._id,
-      isActive: true,
+      status: "active",
     }),
     CompanyMembership.findOne({
       companyId: company._id,
-      isActive: true,
+      status: "active",
       role: "owner",
     })
       .populate("userId", "name email phone")

@@ -285,7 +285,7 @@ export const getPlatformDashboardSummary = asyncHandler(async (req, res) => {
   ] = await Promise.all([
     Company.countDocuments(),
     User.countDocuments(),
-    CompanyMembership.countDocuments({ isActive: true }),
+    CompanyMembership.countDocuments({ status: "active" }),
     CompanyAppInstallation.countDocuments({ enabled: true }),
 
     Company.countDocuments({ isActive: true }),
@@ -367,7 +367,7 @@ export const searchPlatformCompanies = asyncHandler(async (req, res) => {
   if (matchingUsers.length) {
     const memberships = await CompanyMembership.find({
       userId: { $in: matchingUsers.map((user) => user._id) },
-      isActive: true,
+      status: "active",
     })
       .populate({
         path: "companyId",
@@ -406,7 +406,7 @@ export const getPlatformCompanyDetail = asyncHandler(async (req, res) => {
 
   const memberships = await CompanyMembership.find({
     companyId: company._id,
-    isActive: true,
+    status: "active",
   }).populate("userId", "name email phone role isAdmin platformRole");
 
   const installations = await CompanyAppInstallation.find({

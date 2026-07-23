@@ -59,7 +59,7 @@ const appendAdminActivity = async ({ companyId, title, actor, metadata = {} }) =
 };
 
 const findReplacementOwner = async (companyId, excludedMembershipId = null) => {
-  const query = { companyId, isActive: true, role: "owner" };
+  const query = { companyId, status: "active", role: "owner" };
   if (excludedMembershipId) query._id = { $ne: excludedMembershipId };
   return CompanyMembership.findOne(query).select("userId");
 };
@@ -117,7 +117,7 @@ export const updatePlatformCompany = asyncHandler(async (req, res) => {
 
     const activeMemberships = await CompanyMembership.countDocuments({
       companyId: company._id,
-      isActive: true,
+      status: "active",
     });
 
     if (maxUsers < activeMemberships) {
@@ -165,7 +165,7 @@ export const addPlatformCompanyUser = asyncHandler(async (req, res) => {
 
   const activeMemberships = await CompanyMembership.countDocuments({
     companyId: company._id,
-    isActive: true,
+    status: "active",
   });
 
   if (activeMemberships >= company.maxUsers) {
@@ -209,7 +209,7 @@ export const addPlatformCompanyUser = asyncHandler(async (req, res) => {
       userId: user._id,
     });
 
-    if (existingMembership?.isActive) {
+    if (existingMembership?.status === "active") {
       return res.status(409).json({ success: false, message: "This user already belongs to the company." });
     }
 
@@ -222,7 +222,7 @@ export const addPlatformCompanyUser = asyncHandler(async (req, res) => {
 
     if (existingMembership) {
       existingMembership.role = role;
-      existingMembership.isActive = true;
+      existingMembership.status = "active";
       await existingMembership.save();
 
       await appendAdminActivity({
@@ -240,7 +240,7 @@ export const addPlatformCompanyUser = asyncHandler(async (req, res) => {
     companyId: company._id,
     userId: user._id,
     role,
-    isActive: true,
+    status: "active",
   });
 
   await appendAdminActivity({
@@ -270,7 +270,8 @@ export const updatePlatformCompanyUser = asyncHandler(async (req, res) => {
   }
 
   const nextRole = req.body.role ?? membership.role;
-  const nextActive = req.body.isActive ?? membership.isActive;
+  const nextActive =
+    req.body.isActive ?? membership.status === "active";
 
   if (!MEMBERSHIP_ROLES.has(nextRole)) {
     return res.status(400).json({ success: false, message: "Invalid company role." });
@@ -283,9 +284,12 @@ export const updatePlatformCompanyUser = asyncHandler(async (req, res) => {
     nextActive,
   });
 
-  if (!membership.isActive && nextActive) {
+  if (membership.status !== "active" && nextActive) {
     const company = await Company.findById(companyId).select("maxUsers");
-    const activeMemberships = await CompanyMembership.countDocuments({ companyId, isActive: true });
+    const activeMemberships = await CompanyMembership.countDocuments({
+      companyId,
+      status: "active",
+    });
     if (activeMemberships >= company.maxUsers) {
       return res.status(409).json({
         success: false,
@@ -315,7 +319,7 @@ export const updatePlatformCompanyUser = asyncHandler(async (req, res) => {
   }
 
   membership.role = nextRole;
-  membership.isActive = Boolean(nextActive);
+  membership.status = nextActive ? "active" : "inactive";
   await membership.save();
 
   if (replacementOwner) {
@@ -352,7 +356,7 @@ export const removePlatformCompanyUser = asyncHandler(async (req, res) => {
     nextActive: false,
   });
 
-  membership.isActive = false;
+  membership.status = "inactive";
   await membership.save();
 
   if (replacementOwner) {

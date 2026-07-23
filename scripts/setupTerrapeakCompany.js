@@ -135,7 +135,7 @@ async function setupTerrapeakCompany() {
         companyId: company._id,
         userId: owner._id,
         role: "owner",
-        isActive: true,
+        status: "active",
       },
       {
         upsert: true,

@@ -199,7 +199,6 @@ export async function onboardCustomerEnvironment({
           companyId: company._id,
           userId: user._id,
           role: "owner",
-          isActive: true,
           status: "active",
           removedAt: null,
           removedByUserId: null,
@@ -293,7 +292,7 @@ if (!contract) {
         company?._id && company.isActive
       ),
       membershipReady: Boolean(
-        membership?._id && membership.isActive
+        membership?._id && membership.status === "active"
       ),
       aiAssistantReady: provisionedAppSlugs.includes(
         "ai-assistant"

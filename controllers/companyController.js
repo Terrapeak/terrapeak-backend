@@ -56,7 +56,7 @@ export const getMyCompanies = asyncHandler(async (req, res) => {
 
   const memberships = await CompanyMembership.find({
     userId,
-    isActive: true,
+    status: "active",
   }).populate("companyId");
 
   const companies = memberships

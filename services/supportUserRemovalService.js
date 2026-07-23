@@ -12,7 +12,7 @@ const TTL = 15 * 60 * 1000;
 const reply = (body, completed = false) => ({ handled: true, body, completed });
 const detectAction = (text) => (/\b(remove|delete)\b/i.test(text) ? "remove_user" : "deactivate_user");
 const isRemovalRequest = (text) => ACTION_WORDS.test(text) && (EMAIL.test(text) || USER_WORDS.test(text));
-const membershipState = (membership) => membership?.status === "removed" ? "removed" : membership?.isActive ? "active" : "inactive";
+const membershipState = (membership) => membership?.status || "inactive";
 
 const findTarget = async (companyId, email) => {
   const user = await User.findOne({ email });
@@ -28,7 +28,11 @@ const validate = async ({ conversation, requester, requesterMembership, user, me
   if (user.platformRole && user.platformRole !== "none") return "Platform-level accounts cannot be deactivated or removed through customer support automation.";
   const state = membershipState(membership);
   if (membership.role === "owner" && state === "active") {
-    const ownerCount = await CompanyMembership.countDocuments({ companyId: conversation.companyId, role: "owner", isActive: true });
+    const ownerCount = await CompanyMembership.countDocuments({
+      companyId: conversation.companyId,
+      role: "owner",
+      status: "active",
+    });
     if (ownerCount <= 1) return "The last active company owner cannot be deactivated or removed.";
   }
   if (action === "deactivate_user" && state === "inactive") return "This user is already deactivated. You can reactivate the user instead.";
@@ -59,12 +63,10 @@ const execute = async ({ conversation, requester, requesterMembership }) => {
   }
   if (pending.type === "remove_user") {
     membership.status = "removed";
-    membership.isActive = false;
     membership.removedAt = new Date();
     membership.removedByUserId = requester._id;
   } else {
     membership.status = "inactive";
-    membership.isActive = false;
     membership.removedAt = null;
     membership.removedByUserId = null;
   }

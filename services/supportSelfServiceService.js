@@ -28,7 +28,7 @@ const usersReply = async (company) => {
     .populate("userId", "name email accountStatus invitationStatus invitationSentAt invitationExpiresAt")
     .sort({ createdAt: 1 })
     .lean();
-  const active = memberships.filter((item) => item.isActive).length;
+  const active = memberships.filter((item) => item.status === "active").length;
   const rows = memberships.map((item) => {
     const user = item.userId || {};
     return `- ${user.name || user.email || "Unknown user"} (${user.email || "no email"}): role ${item.role}, account ${label(user.accountStatus)}, invitation ${label(user.invitationStatus)}`;

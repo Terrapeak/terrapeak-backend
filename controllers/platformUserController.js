@@ -28,7 +28,7 @@ export const listPlatformUsers = asyncHandler(async (req, res) => {
       path: "companyId",
       select: "name displayName slug isActive",
     })
-    .sort({ isActive: -1, updatedAt: -1 })
+    .sort({ status: 1, updatedAt: -1 })
     .lean();
 
   const membershipsByUser = memberships.reduce((map, membership) => {
@@ -41,7 +41,7 @@ export const listPlatformUsers = asyncHandler(async (req, res) => {
   const platformUsers = users.map((user) => {
     const userMemberships = membershipsByUser.get(String(user._id)) || [];
     const activeMembership = userMemberships.find(
-      (membership) => membership.isActive && membership.companyId
+      (membership) => membership.status === "active" && membership.companyId
     );
     const primaryMembership = activeMembership || userMemberships[0];
     const company = primaryMembership?.companyId || null;

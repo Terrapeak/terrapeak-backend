@@ -19,8 +19,7 @@ const attachCompanyContext = async (req, res, next) => {
 
   const membershipFilter = {
     userId: req.userId,
-    isActive: true,
-    status: { $ne: "removed" },
+    status: "active",
     ...(requestedCompanyId ? { companyId: requestedCompanyId } : {}),
   };
 

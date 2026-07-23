@@ -85,8 +85,8 @@ test("resolveCompanyContext attaches the only active customer membership", async
   const membership = createMembership();
   mockMemberships(t, [membership], (filter) => {
     assert.equal(filter.userId, USER_ID);
-    assert.equal(filter.isActive, true);
-    assert.deepEqual(filter.status, { $ne: "removed" });
+    assert.equal(filter.status, "active");
+    assert.equal(filter.isActive, undefined);
     assert.equal(filter.companyId, undefined);
   });
 
