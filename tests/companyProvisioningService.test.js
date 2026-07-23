@@ -328,7 +328,6 @@ test("customer onboarding delegates provisioning and fully restores owner member
     companyId: COMPANY_ID,
     userId: OWNER_ID,
     role: "owner",
-    isActive: true,
     status: "active",
     removedAt: null,
     removedByUserId: null,
