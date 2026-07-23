@@ -14,6 +14,8 @@
     "test-data:reset-audit": "node scripts/resetTestCustomerData.js",
     "test-data:reset-apply": "node scripts/resetTestCustomerData.js --apply",
     "platform-owner:repair": "node scripts/repairPlatformOwner.js",
+    "platform-workspace:audit": "node scripts/repairPlatformWorkspace.js --audit",
+    "platform-workspace:repair": "node scripts/repairPlatformWorkspace.js",
     "test:organization:integration": "node --test integration-tests/organizationHardening.integration.mjs"
   },
   "author": "",
@@ -27,7 +29,7 @@
     "bcryptjs": "^3.0.2",
     "cloudinary": "^2.7.0",
     "cookie-parser": "^1.4.7",
-    "cors": "^2.8.5",
+    "cors": "^5.1.0",
     "crypto": "^1.0.1",
     "dotenv": "^17.4.2",
     "express": "^5.1.0",
