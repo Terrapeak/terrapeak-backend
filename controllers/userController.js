@@ -3,6 +3,15 @@ import App from "../models/app.js";
 import sendEmail from "../utils/sendEmail.js";
 import onboardCustomerEnvironment from "../services/customerOnboardingService.js";
 
+const EDITABLE_USER_FIELDS = [
+  "name",
+  "email",
+  "phone",
+  "country",
+  "companyName",
+  "isApproved",
+];
+
 // Admin: Get all users
 // Admin: Get all users with pagination + filters
 export const getAllUsers = async (req, res) => {
@@ -288,7 +297,33 @@ export const rejectUser = async (req, res) => {
 export const updateUser = async (req, res) => {
   try {
     const userId = req.params.id;
-    const updateFields = req.body;
+    const updateFields = {};
+
+    EDITABLE_USER_FIELDS.forEach((field) => {
+      if (req.body?.[field] !== undefined) {
+        updateFields[field] = req.body[field];
+      }
+    });
+
+    if (updateFields.email !== undefined) {
+      updateFields.email = String(updateFields.email).trim().toLowerCase();
+    }
+
+    if (updateFields.phone !== undefined) {
+      updateFields.phone = String(updateFields.phone).trim();
+    }
+
+    for (const field of ["name", "country", "companyName"]) {
+      if (updateFields[field] !== undefined) {
+        updateFields[field] = String(updateFields[field]).trim();
+      }
+    }
+
+    if (!Object.keys(updateFields).length) {
+      return res.status(400).json({
+        message: "No editable user fields were provided",
+      });
+    }
 
     const updatedUser = await User.findByIdAndUpdate(userId, updateFields, {
       new: true,
