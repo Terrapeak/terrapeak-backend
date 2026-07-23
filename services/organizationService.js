@@ -1,3 +1,5 @@
+import mongoose from "mongoose";
+
 import Company from "../models/company.js";
 import CompanyMembership from "../models/companyMembership.js";
 import Organization from "../models/organization.js";
@@ -165,9 +167,72 @@ const getOrganizationOrThrow = async (organizationId) => {
   return organization;
 };
 
+export const databaseSupportsTransactions = (
+  connection = mongoose.connection
+) => {
+  const topologyType =
+    connection?.getClient?.()?.topology?.description?.type;
+  return ["ReplicaSetWithPrimary", "Sharded"].includes(topologyType);
+};
+
+const buildOrganizationPayload = ({ actor, input }) => ({
+    name: input.name,
+    slug: input.slug,
+    status: input.status || "active",
+    metadata: input.metadata || {},
+    createdByUserId: actor._id,
+});
+
+const buildInitialOwnerMembershipPayload = ({
+  actor,
+  organization,
+  initialOwner,
+}) => ({
+  organizationId: organization._id,
+  userId: initialOwner._id,
+  role: "owner",
+  status: "active",
+  invitedByUserId: actor._id,
+});
+
+const createOrganizationDocuments = async ({
+  actor,
+  input,
+  initialOwner,
+  session,
+}) => {
+  const organizationPayload = buildOrganizationPayload({ actor, input });
+  const organization = session
+    ? (await Organization.create([organizationPayload], { session }))[0]
+    : await Organization.create(organizationPayload);
+
+  let initialOwnerMembership = null;
+  if (initialOwner) {
+    const membershipPayload = buildInitialOwnerMembershipPayload({
+      actor,
+      organization,
+      initialOwner,
+    });
+    initialOwnerMembership = session
+      ? (
+          await OrganizationMembership.create([membershipPayload], {
+            session,
+          })
+        )[0]
+      : await OrganizationMembership.create(membershipPayload);
+  }
+
+  return {
+    organization,
+    initialOwnerMembership,
+    platformManaged: !initialOwnerMembership,
+  };
+};
+
 export const createOrganization = async ({
   actor,
   input,
+  transactionSupported = databaseSupportsTransactions(),
 }) => {
   assertPlatformOrganizationAdmin(actor);
   assertPlainMetadata(input.metadata);
@@ -180,28 +245,42 @@ export const createOrganization = async ({
     assertOrganizationRole("owner", initialOwner.platformRole || "none");
   }
 
+  if (initialOwner && transactionSupported) {
+    const session = await mongoose.startSession();
+    let result;
+
+    try {
+      await session.withTransaction(async () => {
+        result = await createOrganizationDocuments({
+          actor,
+          input,
+          initialOwner,
+          session,
+        });
+      });
+      return result;
+    } catch (error) {
+      throw mapPersistenceError(error);
+    } finally {
+      await session.endSession();
+    }
+  }
+
   let organization = null;
-
   try {
-    organization = await Organization.create({
-      name: input.name,
-      slug: input.slug,
-      status: input.status || "active",
-      metadata: input.metadata || {},
-      createdByUserId: actor._id,
-    });
-
+    organization = await Organization.create(
+      buildOrganizationPayload({ actor, input })
+    );
     let initialOwnerMembership = null;
     if (initialOwner) {
-      initialOwnerMembership = await OrganizationMembership.create({
-        organizationId: organization._id,
-        userId: initialOwner._id,
-        role: "owner",
-        status: "active",
-        invitedByUserId: actor._id,
-      });
+      initialOwnerMembership = await OrganizationMembership.create(
+        buildInitialOwnerMembershipPayload({
+          actor,
+          organization,
+          initialOwner,
+        })
+      );
     }
-
     return {
       organization,
       initialOwnerMembership,
