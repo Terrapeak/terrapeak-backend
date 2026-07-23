@@ -7,6 +7,7 @@ import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import User from "../models/user.js";
 import ChatbotSettings from "../models/chatbotSettings.js";
 import { provisionCompany } from "../services/companyProvisioningService.js";
+import { applyPlatformAccessMutation } from "../utils/platformAccessGuard.js";
 
 dotenv.config();
 
@@ -101,11 +102,16 @@ async function setupTerrapeakCompany() {
     }
 
     if (owner.platformRole !== "platform-owner") {
-  owner.platformRole = "platform-owner";
-  owner.isAdmin = true;
-  owner.role = "admin";
-  await owner.save();
-}
+      await applyPlatformAccessMutation({
+        user: owner,
+        updates: {
+          platformRole: "platform-owner",
+          isAdmin: true,
+          role: "admin",
+        },
+      });
+      await owner.save();
+    }
 
     const existingCompany = await Company.findOne({
       slug: TERRAPEAK_COMPANY.slug,

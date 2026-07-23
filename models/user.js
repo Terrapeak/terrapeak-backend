@@ -1,6 +1,11 @@
 import mongoose from "mongoose";
 import bcrypt from "bcrypt";
 import { PLATFORM_ROLES } from "../utils/roleSeparation.js";
+import {
+  assertPlatformAccessAssignmentAllowed,
+  extractPlatformAccessUpdate,
+  grantsPlatformAccess,
+} from "../utils/platformAccessGuard.js";
 
 const userSchema = new mongoose.Schema(
   {
@@ -51,6 +56,149 @@ userSchema.pre("save", async function (next) {
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
   next();
+});
+
+userSchema.pre("validate", async function guardPlatformAccess() {
+  const accessChanged =
+    this.isNew ||
+    this.isModified("platformRole") ||
+    this.isModified("isAdmin");
+
+  if (
+    !accessChanged ||
+    !grantsPlatformAccess({
+      platformRole: this.platformRole || "none",
+      isAdmin: this.isAdmin === true,
+    })
+  ) {
+    return;
+  }
+
+  await assertPlatformAccessAssignmentAllowed({
+    userId: this._id,
+    platformRole: this.platformRole || "none",
+    isAdmin: this.isAdmin === true,
+  });
+});
+
+const guardPlatformAccessQuery = async function guardQuery() {
+  const intent = extractPlatformAccessUpdate(this.getUpdate());
+  const grantsAccess =
+    (intent.touchesPlatformRole &&
+      intent.platformRole !== "none") ||
+    (intent.touchesIsAdmin && intent.isAdmin === true);
+
+  if (!grantsAccess) return;
+
+  const users = await this.model
+    .find(this.getQuery())
+    .select("_id")
+    .lean();
+  const candidateIds = users.map((user) => user._id);
+  const queryId = this.getQuery()?._id;
+  const upsertId =
+    queryId && typeof queryId === "object" && queryId.$eq
+      ? queryId.$eq
+      : queryId;
+  if (
+    this.getOptions().upsert &&
+    upsertId &&
+    !candidateIds.some((id) => id.toString() === upsertId.toString())
+  ) {
+    candidateIds.push(upsertId);
+  }
+
+  await assertPlatformAccessAssignmentAllowed({
+    userIds: candidateIds,
+    platformRole:
+      intent.touchesPlatformRole ? intent.platformRole : "none",
+    isAdmin: intent.touchesIsAdmin ? intent.isAdmin : false,
+  });
+};
+
+userSchema.pre("updateOne", guardPlatformAccessQuery);
+userSchema.pre("updateMany", guardPlatformAccessQuery);
+userSchema.pre("findOneAndUpdate", guardPlatformAccessQuery);
+userSchema.pre("replaceOne", guardPlatformAccessQuery);
+userSchema.pre("findOneAndReplace", guardPlatformAccessQuery);
+
+userSchema.pre("insertMany", function guardInsertedUsers(next, docs) {
+  Promise.resolve()
+    .then(async () => {
+      for (const user of docs) {
+        if (
+          grantsPlatformAccess({
+            platformRole: user.platformRole || "none",
+            isAdmin: user.isAdmin === true,
+          })
+        ) {
+          await assertPlatformAccessAssignmentAllowed({
+            userId: user._id,
+            platformRole: user.platformRole || "none",
+            isAdmin: user.isAdmin === true,
+          });
+        }
+      }
+    })
+    .then(() => next(), next);
+});
+
+userSchema.pre("bulkWrite", function guardBulkAccess(next, operations) {
+  Promise.resolve()
+    .then(async () => {
+      for (const operation of operations) {
+        if (operation.insertOne?.document) {
+          const user = operation.insertOne.document;
+          await assertPlatformAccessAssignmentAllowed({
+            userId: user._id,
+            platformRole: user.platformRole || "none",
+            isAdmin: user.isAdmin === true,
+          });
+          continue;
+        }
+
+        const mutation =
+          operation.updateOne ||
+          operation.updateMany ||
+          operation.replaceOne;
+        if (!mutation) continue;
+
+        const intent = extractPlatformAccessUpdate(
+          mutation.update || mutation.replacement
+        );
+        const grantsAccess =
+          (intent.touchesPlatformRole &&
+            intent.platformRole !== "none") ||
+          (intent.touchesIsAdmin && intent.isAdmin === true);
+        if (!grantsAccess) continue;
+
+        const users = await this.find(mutation.filter)
+          .select("_id")
+          .lean();
+        const candidateIds = users.map((user) => user._id);
+        const filterId = mutation.filter?._id;
+        const upsertId =
+          filterId && typeof filterId === "object" && filterId.$eq
+            ? filterId.$eq
+            : filterId;
+        if (
+          mutation.upsert &&
+          upsertId &&
+          !candidateIds.some(
+            (id) => id.toString() === upsertId.toString()
+          )
+        ) {
+          candidateIds.push(upsertId);
+        }
+        await assertPlatformAccessAssignmentAllowed({
+          userIds: candidateIds,
+          platformRole:
+            intent.touchesPlatformRole ? intent.platformRole : "none",
+          isAdmin: intent.touchesIsAdmin ? intent.isAdmin : false,
+        });
+      }
+    })
+    .then(() => next(), next);
 });
 
 userSchema.methods.matchPassword = async function (enteredPassword) {
