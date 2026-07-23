@@ -1,4 +1,5 @@
 import asyncHandler from "express-async-handler";
+import OrganizationMembership from "../models/organizationMembership.js";
 
 import {
   OrganizationServiceError,
@@ -147,9 +148,15 @@ export const getPlatformOrganization = organizationHandler(
       actor: req.platformUser,
       organizationId: req.params.organizationId,
     });
+    const activeOwner = await OrganizationMembership.findOne({
+      organizationId: organization._id,
+      role: "owner",
+      status: "active",
+    }).populate("userId", "_id name email");
     res.json({
       success: true,
       organization: organizationResponse(organization),
+      activeOwner: activeOwner ? membershipResponse(activeOwner) : null,
     });
   }
 );
