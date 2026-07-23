@@ -1,23 +1,49 @@
-
 import jwt from "jsonwebtoken";
 
 const isAdmin = async (req, res, next) => {
-  const token = req.cookies.token;
+  const authorizationHeader = req.get("authorization");
+  const bearerToken = authorizationHeader?.startsWith("Bearer ")
+    ? authorizationHeader.slice(7).trim()
+    : null;
+
+  const token = bearerToken || req.cookies?.token;
+
   if (!token) {
-    return res.status(401).json({ message: "User not authenticated", success: false });
+    return res.status(401).json({
+      message: "User not authenticated",
+      success: false,
+    });
   }
 
-  const decoded = await jwt.verify(token, process.env.JWT_SECRET);
-  if (!decoded) {
-    return res.status(401).json({ message: "Invalid token", success: false });
-  }
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-  if (!decoded.isAdmin) {
-    return res.status(403).json({ message: "User is not an admin", success: false });
-  }
+    if (decoded.authScope && decoded.authScope !== "dashboard") {
+      return res.status(401).json({
+        message: "Invalid authentication scope",
+        success: false,
+      });
+    }
 
-  req.userId = decoded._id;
-  next();
+    if (!decoded.isAdmin) {
+      return res.status(403).json({
+        message: "User is not an admin",
+        success: false,
+      });
+    }
+
+    req.userId = decoded._id;
+    req.authTokenSource = bearerToken ? "bearer" : "cookie";
+    next();
+  } catch (error) {
+    const message =
+      error?.name === "TokenExpiredError" ? "JWT expired" : "Invalid token";
+
+    return res.status(401).json({
+      message,
+      success: false,
+    });
+  }
 };
 
 export default isAdmin;
