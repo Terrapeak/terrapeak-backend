@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import User from "../models/user.js";
 
 const isAdmin = async (req, res, next) => {
   const authorizationHeader = req.get("authorization");
@@ -25,7 +26,11 @@ const isAdmin = async (req, res, next) => {
       });
     }
 
-    if (!decoded.isAdmin) {
+    const user = await User.findById(decoded._id).select(
+      "_id isAdmin isApproved"
+    );
+
+    if (!user || !user.isApproved || user.isAdmin !== true) {
       return res.status(403).json({
         message: "User is not an admin",
         success: false,
