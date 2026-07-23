@@ -11,6 +11,7 @@
     "membership:backfill": "node scripts/auditAndBackfillCompanyMemberships.js --apply",
     "organization:index-audit": "node scripts/auditOrganizationIndexes.js",
     "organization:hardening-audit": "node scripts/auditOrganizationHardening.js",
+    "platform:integrity-audit": "node scripts/auditPlatformIntegrity.js",
     "test-data:reset-audit": "node scripts/resetTestCustomerData.js",
     "test-data:reset-apply": "node scripts/resetTestCustomerData.js --apply",
     "platform-owner:repair": "node scripts/repairPlatformOwner.js",
