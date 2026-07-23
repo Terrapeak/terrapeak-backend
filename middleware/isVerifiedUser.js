@@ -3,7 +3,13 @@ import User from "../models/user.js";
 
 const isVerifiedUser = async (req, res, next) => {
   try {
-    const token = req.cookies.token;
+    const authorizationHeader = req.get("authorization");
+    const bearerToken = authorizationHeader?.startsWith("Bearer ")
+      ? authorizationHeader.slice(7).trim()
+      : null;
+
+    const token = bearerToken || req.cookies?.token;
+
     if (!token) {
       return res
         .status(401)
@@ -11,8 +17,11 @@ const isVerifiedUser = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    if (!decoded) {
-      return res.status(401).json({ message: "Invalid token", success: false });
+
+    if (decoded.authScope && decoded.authScope !== "dashboard") {
+      return res
+        .status(401)
+        .json({ message: "Invalid authentication scope", success: false });
     }
 
     const user = await User.findById(decoded._id);
@@ -30,10 +39,23 @@ const isVerifiedUser = async (req, res, next) => {
 
     req.userId = user._id;
     req.user = user;
+    req.authTokenSource = bearerToken ? "bearer" : "cookie";
     next();
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Internal server error", success: false });
+  } catch (error) {
+    const status =
+      error?.name === "TokenExpiredError" || error?.name === "JsonWebTokenError"
+        ? 401
+        : 500;
+
+    const message =
+      error?.name === "TokenExpiredError"
+        ? "JWT expired"
+        : error?.name === "JsonWebTokenError"
+        ? "Invalid token"
+        : "Internal server error";
+
+    console.error(error);
+    return res.status(status).json({ message, success: false });
   }
 };
 
