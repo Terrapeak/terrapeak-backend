@@ -11,6 +11,7 @@ const isPlatformAuthenticated = async (req, res, next) => {
 
     if (!token) {
       return res.status(401).json({
+        code: "TOKEN_MISSING",
         success: false,
         message: "Platform user not authenticated.",
       });
@@ -20,6 +21,7 @@ const isPlatformAuthenticated = async (req, res, next) => {
 
     if (!decoded || decoded.authScope !== "platform") {
       return res.status(401).json({
+        code: "AUTH_SCOPE_INVALID",
         success: false,
         message: "Invalid platform session.",
       });
@@ -31,14 +33,14 @@ const isPlatformAuthenticated = async (req, res, next) => {
 
     return next();
   } catch (error) {
-    const message =
-      error?.name === "TokenExpiredError"
-        ? "JWT expired"
-        : "Invalid or expired platform session.";
+    const expired = error?.name === "TokenExpiredError";
 
     return res.status(401).json({
+      code: expired ? "TOKEN_EXPIRED" : "TOKEN_INVALID",
       success: false,
-      message,
+      message: expired
+        ? "JWT expired"
+        : "Invalid or expired platform session.",
     });
   }
 };
