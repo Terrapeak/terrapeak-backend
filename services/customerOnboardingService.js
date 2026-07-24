@@ -1,6 +1,8 @@
 import User from "../models/user.js";
 import Company from "../models/company.js";
 import CompanyMembership from "../models/companyMembership.js";
+import Organization from "../models/organization.js";
+import OrganizationMembership from "../models/organizationMembership.js";
 import ChatbotSettings from "../models/chatbotSettings.js";
 import Contract from "../models/contract.js";
 import { createTrialContract } from "./contractService.js";
@@ -11,11 +13,8 @@ const DEFAULT_TRIAL_CREDITS = 1000;
 
 function createTrialBilling() {
   const now = new Date();
-
   const trialEndDate = new Date(now);
-  trialEndDate.setDate(
-    trialEndDate.getDate() + DEFAULT_TRIAL_DAYS
-  );
+  trialEndDate.setDate(trialEndDate.getDate() + DEFAULT_TRIAL_DAYS);
 
   return {
     status: "trial",
@@ -58,41 +57,35 @@ export async function onboardCustomerEnvironment({
     throw new Error("Company name is required.");
   }
 
-  const companySlug =
-    companyInput.slug || slugify(companyInput.name);
-
+  const companySlug = companyInput.slug || slugify(companyInput.name);
+  const organizationSlug =
+    companyInput.organizationSlug || `${companySlug}-organization`;
   const referencePrefix =
-    companyInput.referencePrefix ||
-    makeReferencePrefix(companyInput.name);
+    companyInput.referencePrefix || makeReferencePrefix(companyInput.name);
 
   if (!companySlug) {
     throw new Error("A valid company slug could not be generated.");
   }
 
-  if (!referencePrefix) {
-    throw new Error(
-      "A valid company reference prefix could not be generated."
-    );
+  if (!organizationSlug) {
+    throw new Error("A valid organization slug could not be generated.");
   }
 
-  /*
-   * 1. Find or create the customer owner.
-   */
+  if (!referencePrefix) {
+    throw new Error("A valid company reference prefix could not be generated.");
+  }
+
   let user = await User.findOne({
     email: owner.email.toLowerCase().trim(),
   });
 
   if (!user) {
     if (!owner.password) {
-      throw new Error(
-        "A password is required when creating a new owner user."
-      );
+      throw new Error("A password is required when creating a new owner user.");
     }
 
     if (!owner.phone) {
-      throw new Error(
-        "A phone number is required when creating a new owner user."
-      );
+      throw new Error("A phone number is required when creating a new owner user.");
     }
 
     user = new User({
@@ -106,14 +99,26 @@ export async function onboardCustomerEnvironment({
       role: "user",
       platformRole: "none",
       isApproved: true,
+      accountStatus: "active",
     });
 
     await user.save();
   } else {
+    if (user.platformRole && user.platformRole !== "none") {
+      throw new Error(
+        "A Platform user cannot be assigned as a customer organization owner."
+      );
+    }
+
     let userChanged = false;
 
     if (!user.isApproved) {
       user.isApproved = true;
+      userChanged = true;
+    }
+
+    if (user.accountStatus !== "active") {
+      user.accountStatus = "active";
       userChanged = true;
     }
 
@@ -127,30 +132,74 @@ export async function onboardCustomerEnvironment({
     }
   }
 
-  /*
-   * 2. Find or create the Company.
-   */
-  let company = await Company.findOne({
-    slug: companySlug,
+  let organization = await Organization.findOne({ slug: organizationSlug });
+
+  if (!organization) {
+    organization = new Organization({
+      name: companyInput.organizationName || companyInput.name,
+      slug: organizationSlug,
+      status: "active",
+      createdByUserId: user._id,
+      metadata: {
+        source: "customer-onboarding",
+      },
+    });
+    await organization.save();
+  } else {
+    let organizationChanged = false;
+
+    if (organization.status !== "active") {
+      organization.status = "active";
+      organizationChanged = true;
+    }
+
+    if (!organization.createdByUserId) {
+      organization.createdByUserId = user._id;
+      organizationChanged = true;
+    }
+
+    if (organizationChanged) {
+      await organization.save();
+    }
+  }
+
+  let organizationMembership = await OrganizationMembership.findOne({
+    organizationId: organization._id,
+    userId: user._id,
   });
+
+  if (!organizationMembership) {
+    organizationMembership = new OrganizationMembership({
+      organizationId: organization._id,
+      userId: user._id,
+      role: "owner",
+      status: "active",
+    });
+  } else {
+    organizationMembership.role = "owner";
+    organizationMembership.status = "active";
+  }
+  await organizationMembership.save();
+
+  let company = await Company.findOne({ slug: companySlug });
 
   if (!company) {
     company = new Company({
       name: companyInput.name,
-      displayName:
-        companyInput.displayName || companyInput.name,
+      displayName: companyInput.displayName || companyInput.name,
       slug: companySlug,
       referencePrefix,
       reservationBusinessSlug:
-        companyInput.reservationBusinessSlug ||
-        companySlug,
+        companyInput.reservationBusinessSlug || companySlug,
       installedApps: [],
       plan: companyInput.plan || "starter",
       maxUsers: companyInput.maxUsers || 1,
       ownerUserId: user._id,
+      organizationId: organization._id,
       isActive: true,
+      isPlatformWorkspace: false,
       billing: createTrialBilling(),
-      });
+    });
 
     await company.save();
   } else {
@@ -161,22 +210,35 @@ export async function onboardCustomerEnvironment({
       companyChanged = true;
     }
 
+    if (!company.organizationId) {
+      company.organizationId = organization._id;
+      companyChanged = true;
+    } else if (
+      String(company.organizationId) !== String(organization._id)
+    ) {
+      throw new Error(
+        "The existing company already belongs to a different organization."
+      );
+    }
+
+    if (company.isPlatformWorkspace) {
+      throw new Error(
+        "A Platform workspace cannot be used for customer onboarding."
+      );
+    }
+
     if (!company.isActive) {
       company.isActive = true;
       companyChanged = true;
     }
 
-    if (
-      !company.billing ||
-      company.billing.status === "not_configured"
-    ) {
+    if (!company.billing || company.billing.status === "not_configured") {
       company.billing = createTrialBilling();
       companyChanged = true;
     }
 
     if (!company.displayName) {
-      company.displayName =
-        companyInput.displayName || companyInput.name;
+      company.displayName = companyInput.displayName || companyInput.name;
       companyChanged = true;
     }
 
@@ -185,52 +247,37 @@ export async function onboardCustomerEnvironment({
     }
   }
 
-  /*
-   * 3. Ensure the owner membership exists.
-   */
-  const membership =
-    await CompanyMembership.findOneAndUpdate(
-      {
+  const membership = await CompanyMembership.findOneAndUpdate(
+    {
+      companyId: company._id,
+      userId: user._id,
+    },
+    {
+      $set: {
         companyId: company._id,
         userId: user._id,
+        role: "owner",
+        status: "active",
+        removedAt: null,
+        removedByUserId: null,
       },
-      {
-        $set: {
-          companyId: company._id,
-          userId: user._id,
-          role: "owner",
-          status: "active",
-          removedAt: null,
-          removedByUserId: null,
-        },
-      },
-      {
-        upsert: true,
-        new: true,
-        runValidators: true,
-      }
-    );
+    },
+    {
+      upsert: true,
+      new: true,
+      runValidators: true,
+    }
+  );
 
-    /*
- * 3.5 Create the customer's first contract.
- * Every customer starts with exactly one Trial Contract.
- */
-let contract = await Contract.findOne({
-  companyId: company._id,
-});
+  let contract = await Contract.findOne({ companyId: company._id });
 
-if (!contract) {
-  contract = await createTrialContract({
-    company,
-    createdBy: user,
-  });
-}
+  if (!contract) {
+    contract = await createTrialContract({
+      company,
+      createdBy: user,
+    });
+  }
 
-  /*
-   * 4. Install and initialize apps using the coat-rack installer.
-   *
-   * installApps remains the single module initialization entry point.
-   */
   const provisioning = await provisionCompany({
     companyId: company._id,
     ownerUserId: user._id,
@@ -246,15 +293,12 @@ if (!contract) {
   company.installedApps = Array.from(
     new Set([...(company.installedApps || []), ...provisionedAppSlugs])
   );
+  await company.save();
 
-  /*
-   * 5. Validate AI Assistant linkage when installed.
-   */
   let chatbotSettings = null;
 
   if (provisionedAppSlugs.includes("ai-assistant")) {
-    chatbotSettings =
-      await ChatbotSettings.findOne({ companyId: company._id });
+    chatbotSettings = await ChatbotSettings.findOne({ companyId: company._id });
 
     if (!chatbotSettings) {
       throw new Error(
@@ -264,43 +308,52 @@ if (!contract) {
 
     if (
       !chatbotSettings.companyId ||
-      chatbotSettings.companyId.toString() !==
-        company._id.toString()
+      chatbotSettings.companyId.toString() !== company._id.toString()
     ) {
       chatbotSettings.companyId = company._id;
       await chatbotSettings.save();
     }
   }
 
-  /*
-   * 6. Return one consistent onboarding result.
-   */
   return {
     user,
+    organization,
+    organizationMembership,
     company,
     contract,
     membership,
     installedApps: provisionedAppSlugs,
-    installResults: chatbotSettings
-      ? { "ai-assistant": chatbotSettings }
-      : {},
+    installResults: chatbotSettings ? { "ai-assistant": chatbotSettings } : {},
     provisioning,
     chatbotSettings,
     validation: {
-      userReady: Boolean(user?._id && user.isApproved),
+      userReady: Boolean(
+        user?._id &&
+          user.isApproved &&
+          user.accountStatus === "active" &&
+          user.platformRole === "none"
+      ),
+      organizationReady: Boolean(
+        organization?._id && organization.status === "active"
+      ),
+      organizationMembershipReady: Boolean(
+        organizationMembership?._id &&
+          organizationMembership.role === "owner" &&
+          organizationMembership.status === "active"
+      ),
       companyReady: Boolean(
-        company?._id && company.isActive
+        company?._id &&
+          company.isActive &&
+          !company.isPlatformWorkspace &&
+          String(company.organizationId) === String(organization._id)
       ),
       membershipReady: Boolean(
         membership?._id && membership.status === "active"
       ),
-      aiAssistantReady: provisionedAppSlugs.includes(
-        "ai-assistant"
-      )
+      aiAssistantReady: provisionedAppSlugs.includes("ai-assistant")
         ? Boolean(
             chatbotSettings?._id &&
-              chatbotSettings.companyId?.toString() ===
-                company._id.toString()
+              chatbotSettings.companyId?.toString() === company._id.toString()
           )
         : null,
     },
