@@ -17,7 +17,8 @@
     "platform-owner:repair": "node scripts/repairPlatformOwner.js",
     "platform-workspace:audit": "node scripts/repairPlatformWorkspace.js --audit",
     "platform-workspace:repair": "node scripts/repairPlatformWorkspace.js",
-    "test:organization:integration": "node --test integration-tests/organizationHardening.integration.mjs"
+    "test:organization:integration": "node --test integration-tests/organizationHardening.integration.mjs",
+    "test:onboarding:integration": "node --test integration-tests/customerOnboarding.integration.mjs"
   },
   "author": "",
   "license": "ISC",
