@@ -143,7 +143,10 @@ const scanCompany = async (company) => {
 };
 
 export const runPlatformAttentionScan = async () => {
-  const companies = await Company.find({ isActive: true })
+  const companies = await Company.find({
+    isActive: true,
+    isPlatformWorkspace: { $ne: true },
+  })
     .select(
       "name displayName slug isActive billing country address website email phone"
     )
