@@ -322,6 +322,7 @@ const applyResetPlan = async (plan) => {
     await mongoose.connection.db.collection(name).deleteMany(filter);
   }
 
+
   await deleteByIds(
     CompanyMembership.collection,
     plan.delete.companyMemberships
@@ -332,7 +333,32 @@ const applyResetPlan = async (plan) => {
   );
   await deleteByIds(User.collection, plan.delete.users);
   await deleteByIds(Company.collection, plan.delete.companies);
-  await deleteByIds(Organization.collection, plan.delete.organizations);
+  await deleteByIds(Organization.collection, plan.delete.organizations)
+
+if (plan.delete.companyMemberships.length > 0) {
+  await CompanyMembership.deleteMany({
+    _id: { $in: objectIds(plan.delete.companyMemberships) },
+  });
+}
+
+if (plan.delete.organizationMemberships.length > 0) {
+  await OrganizationMembership.deleteMany({
+    _id: { $in: objectIds(plan.delete.organizationMemberships) },
+  });
+}
+
+await User.deleteMany({
+  _id: { $in: objectIds(plan.delete.users) },
+});
+
+await Company.deleteMany({
+  _id: { $in: objectIds(plan.delete.companies) },
+});
+
+await Organization.deleteMany({
+  _id: { $in: objectIds(plan.delete.organizations) },
+});
+
 
   console.log(
     JSON.stringify(
