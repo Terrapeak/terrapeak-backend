@@ -13,10 +13,13 @@ import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import CompanyMembership from "../models/companyMembership.js";
 import Contract from "../models/contract.js";
 import FacebookChannelConfig from "../models/facebookChannelConfig.js";
+import Organization from "../models/organization.js";
+import OrganizationMembership from "../models/organizationMembership.js";
 import User from "../models/user.js";
 
 const COMPANY_ID = "507f1f77bcf86cd799439011";
 const OWNER_ID = "507f191e810c19729de860ea";
+const ORGANIZATION_ID = "507f1f77bcf86cd799439012";
 
 const createCompany = (overrides = {}) => ({
   _id: COMPANY_ID,
@@ -24,6 +27,7 @@ const createCompany = (overrides = {}) => ({
   displayName: "Customer Company",
   slug: "customer-company",
   ownerUserId: OWNER_ID,
+  organizationId: ORGANIZATION_ID,
   reservationBusinessSlug: "customer-company",
   referencePrefix: "CC",
   plan: "starter",
@@ -280,6 +284,27 @@ test("customer onboarding delegates provisioning and fully restores owner member
     phone: "+60123456789",
     companyName: "Customer Company",
     isApproved: true,
+    accountStatus: "active",
+    platformRole: "none",
+  };
+  const organization = {
+    _id: ORGANIZATION_ID,
+    name: "Customer Company",
+    slug: "customer-company-organization",
+    status: "active",
+    isActive: true,
+    createdByUserId: OWNER_ID,
+  };
+  const organizationMembership = {
+    _id: "organization-membership-1",
+    organizationId: ORGANIZATION_ID,
+    userId: OWNER_ID,
+    role: "owner",
+    status: "active",
+    isActive: true,
+    async save() {
+      return this;
+    },
   };
   const membership = {
     _id: "membership-1",
@@ -296,6 +321,12 @@ test("customer onboarding delegates provisioning and fully restores owner member
   let membershipUpdate;
 
   t.mock.method(User, "findOne", async () => user);
+  t.mock.method(Organization, "findOne", async () => organization);
+  t.mock.method(
+    OrganizationMembership,
+    "findOne",
+    async () => organizationMembership
+  );
   t.mock.method(Company, "findOne", async () => company);
   mockCompanyLookup(t, company);
   t.mock.method(
@@ -319,10 +350,16 @@ test("customer onboarding delegates provisioning and fully restores owner member
 
   const result = await onboardCustomerEnvironment({
     owner: { email: user.email },
-    company: { name: company.name },
+    company: {
+      name: company.name,
+      slug: company.slug,
+      organizationSlug: organization.slug,
+    },
   });
 
   assert.equal(result.provisioning.mode, "customer");
+  assert.equal(result.organization, organization);
+  assert.equal(result.organizationMembership, organizationMembership);
   assert.deepEqual(result.installedApps, ["ai-assistant", "facebook"]);
   assert.deepEqual(membershipUpdate.$set, {
     companyId: COMPANY_ID,
