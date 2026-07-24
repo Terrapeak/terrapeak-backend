@@ -1,12 +1,12 @@
 import asyncHandler from "express-async-handler";
 
 import Company from "../models/company.js";
-import User from "../models/user.js";
 import CompanyMembership from "../models/companyMembership.js";
 import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import { runPlatformAttentionScan } from "../services/platformAttentionScanService.js";
 
 const ACTIVITY_LIMIT = 30;
+const CUSTOMER_COMPANY_FILTER = { isPlatformWorkspace: { $ne: true } };
 
 const formatAppName = (slug = "") =>
   slug
@@ -15,21 +15,24 @@ const formatAppName = (slug = "") =>
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
 
-const getPlatformRecentActivity = async () => {
+const getPlatformRecentActivity = async (customerCompanyIds) => {
   const [recentCompanies, recentInstallations, companiesWithActivity] =
     await Promise.all([
-      Company.find({})
+      Company.find(CUSTOMER_COMPANY_FILTER)
         .select("name displayName createdAt")
         .sort({ createdAt: -1 })
         .limit(12)
         .lean(),
-      CompanyAppInstallation.find({})
+      CompanyAppInstallation.find({ companyId: { $in: customerCompanyIds } })
         .select("companyId appSlug enabled status installedAt createdAt updatedAt")
         .populate("companyId", "name displayName")
         .sort({ updatedAt: -1 })
         .limit(20)
         .lean(),
-      Company.find({ "activityEvents.0": { $exists: true } })
+      Company.find({
+        ...CUSTOMER_COMPANY_FILTER,
+        "activityEvents.0": { $exists: true },
+      })
         .select("name displayName activityEvents")
         .sort({ updatedAt: -1 })
         .limit(15)
@@ -108,34 +111,48 @@ const getPlatformRecentActivity = async () => {
 };
 
 export const getPlatformDashboardSummary = asyncHandler(async (req, res) => {
+  const customerCompanies = await Company.find(CUSTOMER_COMPANY_FILTER)
+    .select("_id isActive")
+    .lean();
+  const customerCompanyIds = customerCompanies.map((company) => company._id);
+
   const [
-    totalCompanies,
-    totalUsers,
-    totalActiveMemberships,
+    customerMemberships,
     totalInstalledApps,
-    activeCompanies,
     aiAssistantInstalls,
     reservationInstalls,
     attentionScan,
     recentActivity,
   ] = await Promise.all([
-    Company.countDocuments(),
-    User.countDocuments(),
-    CompanyMembership.countDocuments({ status: "active" }),
-    CompanyAppInstallation.countDocuments({ enabled: true }),
-    Company.countDocuments({ isActive: true }),
+    CompanyMembership.find({ companyId: { $in: customerCompanyIds } })
+      .select("userId status")
+      .lean(),
     CompanyAppInstallation.countDocuments({
+      companyId: { $in: customerCompanyIds },
+      enabled: true,
+    }),
+    CompanyAppInstallation.countDocuments({
+      companyId: { $in: customerCompanyIds },
       appSlug: "ai-assistant",
       enabled: true,
     }),
     CompanyAppInstallation.countDocuments({
+      companyId: { $in: customerCompanyIds },
       appSlug: "reservations",
       enabled: true,
     }),
     runPlatformAttentionScan(),
-    getPlatformRecentActivity(),
+    getPlatformRecentActivity(customerCompanyIds),
   ]);
 
+  const activeMemberships = customerMemberships.filter(
+    (membership) => membership.status === "active"
+  );
+  const totalCustomerUsers = new Set(
+    customerMemberships
+      .map((membership) => membership.userId?.toString())
+      .filter(Boolean)
+  ).size;
   const needsAttention = attentionScan.needsAttention;
   const hasAttentionItems = needsAttention.length > 0;
 
@@ -143,10 +160,10 @@ export const getPlatformDashboardSummary = asyncHandler(async (req, res) => {
     success: true,
     summary: {
       platformStatus: "operational",
-      totalCompanies,
-      activeCompanies,
-      totalUsers,
-      totalActiveMemberships,
+      totalCompanies: customerCompanies.length,
+      activeCompanies: customerCompanies.filter((company) => company.isActive).length,
+      totalUsers: totalCustomerUsers,
+      totalActiveMemberships: activeMemberships.length,
       totalInstalledApps,
       aiAssistantInstalls,
       reservationInstalls,
