@@ -26,6 +26,17 @@ function createTrialBilling() {
   };
 }
 
+function createEmptyBilling() {
+  return {
+    status: "not_configured",
+    trialEndDate: null,
+    renewalDate: null,
+    contractEndDate: null,
+    creditsRemaining: null,
+    paymentStatus: "not_configured",
+  };
+}
+
 function slugify(text = "") {
   return text
     .toLowerCase()
@@ -47,6 +58,8 @@ function makeReferencePrefix(companyName = "") {
 export async function onboardCustomerEnvironment({
   owner,
   company: companyInput,
+  organization: organizationInput = {},
+  billing: billingInput = {},
   installedApps = null,
 }) {
   if (!owner?.email) {
@@ -57,9 +70,20 @@ export async function onboardCustomerEnvironment({
     throw new Error("Company name is required.");
   }
 
+  const organizationMode = organizationInput.mode || "create";
+  const billingMode = billingInput.mode || "company";
+
+  if (!["create", "existing"].includes(organizationMode)) {
+    throw new Error("Organization mode must be create or existing.");
+  }
+
+  if (!["organization", "company"].includes(billingMode)) {
+    throw new Error("Billing mode must be organization or company.");
+  }
+
   const companySlug = companyInput.slug || slugify(companyInput.name);
   const organizationSlug =
-    companyInput.organizationSlug || `${companySlug}-organization`;
+    organizationInput.slug || `${companySlug}-organization`;
   const referencePrefix =
     companyInput.referencePrefix || makeReferencePrefix(companyInput.name);
 
@@ -67,8 +91,12 @@ export async function onboardCustomerEnvironment({
     throw new Error("A valid company slug could not be generated.");
   }
 
-  if (!organizationSlug) {
+  if (organizationMode === "create" && !organizationSlug) {
     throw new Error("A valid organization slug could not be generated.");
+  }
+
+  if (organizationMode === "existing" && !organizationInput.id) {
+    throw new Error("An existing Organization must be selected.");
   }
 
   if (!referencePrefix) {
@@ -106,7 +134,7 @@ export async function onboardCustomerEnvironment({
   } else {
     if (user.platformRole && user.platformRole !== "none") {
       throw new Error(
-        "A Platform user cannot be assigned as a customer organization owner."
+        "A Platform user cannot be assigned as a customer organization member.",
       );
     }
 
@@ -132,37 +160,70 @@ export async function onboardCustomerEnvironment({
     }
   }
 
-  let organization = await Organization.findOne({ slug: organizationSlug });
+  let organization;
 
-  if (!organization) {
-    organization = new Organization({
-      name: companyInput.organizationName || companyInput.name,
-      slug: organizationSlug,
-      status: "active",
-      createdByUserId: user._id,
-      metadata: {
-        source: "customer-onboarding",
-      },
+  if (organizationMode === "existing") {
+    organization = await Organization.findOne({
+      _id: organizationInput.id,
+      status: { $ne: "archived" },
     });
-    await organization.save();
+
+    if (!organization) {
+      throw new Error("The selected Organization could not be found.");
+    }
   } else {
-    let organizationChanged = false;
+    organization = await Organization.findOne({ slug: organizationSlug });
 
-    if (organization.status !== "active") {
-      organization.status = "active";
-      organizationChanged = true;
-    }
-
-    if (!organization.createdByUserId) {
-      organization.createdByUserId = user._id;
-      organizationChanged = true;
-    }
-
-    if (organizationChanged) {
+    if (!organization) {
+      organization = new Organization({
+        name: organizationInput.name || companyInput.name,
+        slug: organizationSlug,
+        status: "active",
+        billingMode,
+        plan: companyInput.plan || "starter",
+        billing:
+          billingMode === "organization"
+            ? {
+                ...createTrialBilling(),
+                maxUsers: companyInput.maxUsers || 1,
+                maxCompanies: null,
+              }
+            : {
+                ...createEmptyBilling(),
+                maxUsers: null,
+                maxCompanies: null,
+              },
+        createdByUserId: user._id,
+        metadata: {
+          source: "customer-onboarding",
+        },
+      });
       await organization.save();
+    } else if (organization.status === "archived") {
+      throw new Error("An archived Organization cannot be used for onboarding.");
     }
   }
 
+  if (billingMode === "organization") {
+    organization.billingMode = "organization";
+    organization.plan = companyInput.plan || organization.plan || "starter";
+
+    if (!organization.billing || organization.billing.status === "not_configured") {
+      organization.billing = {
+        ...createTrialBilling(),
+        maxUsers: organization.billing?.maxUsers ?? companyInput.maxUsers ?? 1,
+        maxCompanies: organization.billing?.maxCompanies ?? null,
+      };
+    }
+
+    await organization.save();
+  } else if (organizationMode === "create") {
+    organization.billingMode = "company";
+    await organization.save();
+  }
+
+  const organizationMembershipRole =
+    organizationMode === "create" ? "owner" : "member";
   let organizationMembership = await OrganizationMembership.findOne({
     organizationId: organization._id,
     userId: user._id,
@@ -172,16 +233,20 @@ export async function onboardCustomerEnvironment({
     organizationMembership = new OrganizationMembership({
       organizationId: organization._id,
       userId: user._id,
-      role: "owner",
+      role: organizationMembershipRole,
       status: "active",
     });
   } else {
-    organizationMembership.role = "owner";
+    if (organizationMode === "create") {
+      organizationMembership.role = "owner";
+    }
     organizationMembership.status = "active";
   }
   await organizationMembership.save();
 
   let company = await Company.findOne({ slug: companySlug });
+  const companyBilling =
+    billingMode === "company" ? createTrialBilling() : createEmptyBilling();
 
   if (!company) {
     company = new Company({
@@ -192,13 +257,14 @@ export async function onboardCustomerEnvironment({
       reservationBusinessSlug:
         companyInput.reservationBusinessSlug || companySlug,
       installedApps: [],
-      plan: companyInput.plan || "starter",
+      plan: companyInput.plan || organization.plan || "starter",
+      billingSource: billingMode,
       maxUsers: companyInput.maxUsers || 1,
       ownerUserId: user._id,
       organizationId: organization._id,
       isActive: true,
       isPlatformWorkspace: false,
-      billing: createTrialBilling(),
+      billing: companyBilling,
     });
 
     await company.save();
@@ -217,13 +283,13 @@ export async function onboardCustomerEnvironment({
       String(company.organizationId) !== String(organization._id)
     ) {
       throw new Error(
-        "The existing company already belongs to a different organization."
+        "The existing company already belongs to a different Organization.",
       );
     }
 
     if (company.isPlatformWorkspace) {
       throw new Error(
-        "A Platform workspace cannot be used for customer onboarding."
+        "A Platform workspace cannot be used for customer onboarding.",
       );
     }
 
@@ -232,8 +298,21 @@ export async function onboardCustomerEnvironment({
       companyChanged = true;
     }
 
-    if (!company.billing || company.billing.status === "not_configured") {
+    if (company.billingSource !== billingMode) {
+      company.billingSource = billingMode;
+      companyChanged = true;
+    }
+
+    if (
+      billingMode === "company" &&
+      (!company.billing || company.billing.status === "not_configured")
+    ) {
       company.billing = createTrialBilling();
+      companyChanged = true;
+    }
+
+    if (billingMode === "organization" && company.billing?.status !== "not_configured") {
+      company.billing = createEmptyBilling();
       companyChanged = true;
     }
 
@@ -266,12 +345,12 @@ export async function onboardCustomerEnvironment({
       upsert: true,
       new: true,
       runValidators: true,
-    }
+    },
   );
 
   let contract = await Contract.findOne({ companyId: company._id });
 
-  if (!contract) {
+  if (billingMode === "company" && !contract) {
     contract = await createTrialContract({
       company,
       createdBy: user,
@@ -288,10 +367,10 @@ export async function onboardCustomerEnvironment({
     new Set([
       ...provisioning.installedApps,
       ...provisioning.alreadyInstalledApps,
-    ])
+    ]),
   );
   company.installedApps = Array.from(
-    new Set([...(company.installedApps || []), ...provisionedAppSlugs])
+    new Set([...(company.installedApps || []), ...provisionedAppSlugs]),
   );
   await company.save();
 
@@ -302,7 +381,7 @@ export async function onboardCustomerEnvironment({
 
     if (!chatbotSettings) {
       throw new Error(
-        "AI Assistant installation completed without linked ChatbotSettings."
+        "AI Assistant installation completed without linked ChatbotSettings.",
       );
     }
 
@@ -319,6 +398,8 @@ export async function onboardCustomerEnvironment({
     user,
     organization,
     organizationMembership,
+    organizationMode,
+    billingMode,
     company,
     contract,
     membership,
@@ -331,29 +412,35 @@ export async function onboardCustomerEnvironment({
         user?._id &&
           user.isApproved &&
           user.accountStatus === "active" &&
-          user.platformRole === "none"
+          user.platformRole === "none",
       ),
       organizationReady: Boolean(
-        organization?._id && organization.status === "active"
+        organization?._id && organization.status === "active",
       ),
       organizationMembershipReady: Boolean(
         organizationMembership?._id &&
-          organizationMembership.role === "owner" &&
-          organizationMembership.status === "active"
+          organizationMembership.status === "active",
       ),
+      billingReady:
+        billingMode === "organization"
+          ? ["trial", "active", "manual"].includes(
+              organization.billing?.status,
+            )
+          : ["trial", "active", "manual"].includes(company.billing?.status),
       companyReady: Boolean(
         company?._id &&
           company.isActive &&
           !company.isPlatformWorkspace &&
-          String(company.organizationId) === String(organization._id)
+          company.billingSource === billingMode &&
+          String(company.organizationId) === String(organization._id),
       ),
       membershipReady: Boolean(
-        membership?._id && membership.status === "active"
+        membership?._id && membership.status === "active",
       ),
       aiAssistantReady: provisionedAppSlugs.includes("ai-assistant")
         ? Boolean(
             chatbotSettings?._id &&
-              chatbotSettings.companyId?.toString() === company._id.toString()
+              chatbotSettings.companyId?.toString() === company._id.toString(),
           )
         : null,
     },
