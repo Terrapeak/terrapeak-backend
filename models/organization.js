@@ -1,6 +1,23 @@
 import mongoose from "mongoose";
 
 const ORGANIZATION_STATUSES = ["active", "inactive", "archived"];
+const BILLING_STATUSES = [
+  "not_configured",
+  "trial",
+  "active",
+  "past_due",
+  "cancelled",
+  "manual",
+];
+const PAYMENT_STATUSES = [
+  "not_configured",
+  "paid",
+  "unpaid",
+  "past_due",
+  "failed",
+  "manual",
+];
+const PLANS = ["starter", "growth", "professional", "enterprise"];
 
 const OrganizationSchema = new mongoose.Schema(
   {
@@ -28,6 +45,56 @@ const OrganizationSchema = new mongoose.Schema(
       default: true,
     },
 
+    billingMode: {
+      type: String,
+      enum: ["organization", "company"],
+      default: "company",
+      index: true,
+    },
+
+    plan: {
+      type: String,
+      enum: PLANS,
+      default: "starter",
+    },
+
+    billing: {
+      status: {
+        type: String,
+        enum: BILLING_STATUSES,
+        default: "not_configured",
+      },
+      trialEndDate: {
+        type: Date,
+        default: null,
+      },
+      renewalDate: {
+        type: Date,
+        default: null,
+      },
+      contractEndDate: {
+        type: Date,
+        default: null,
+      },
+      creditsRemaining: {
+        type: Number,
+        default: null,
+      },
+      paymentStatus: {
+        type: String,
+        enum: PAYMENT_STATUSES,
+        default: "not_configured",
+      },
+      maxUsers: {
+        type: Number,
+        default: null,
+      },
+      maxCompanies: {
+        type: Number,
+        default: null,
+      },
+    },
+
     createdByUserId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -41,7 +108,7 @@ const OrganizationSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 export const synchronizeOrganizationDocument = (organization) => {
@@ -84,7 +151,7 @@ export const normalizeOrganizationUpdate = (sourceUpdate = {}) => {
 
   if (touchesIsActive && !touchesStatus) {
     throw new Error(
-      "Organization updates must set status instead of isActive."
+      "Organization updates must set status instead of isActive.",
     );
   }
 
@@ -126,5 +193,6 @@ OrganizationSchema.pre("findOneAndReplace", synchronizeOrganizationUpdate);
 
 OrganizationSchema.index({ slug: 1 }, { unique: true });
 OrganizationSchema.index({ status: 1 });
+OrganizationSchema.index({ billingMode: 1, "billing.status": 1 });
 
 export default mongoose.model("Organization", OrganizationSchema);
