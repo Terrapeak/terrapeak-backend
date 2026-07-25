@@ -74,6 +74,13 @@ const CompanySchema = new mongoose.Schema(
       default: "starter",
     },
 
+    billingSource: {
+      type: String,
+      enum: ["company", "organization"],
+      default: "company",
+      index: true,
+    },
+
     billing: {
       status: {
         type: String,
@@ -200,7 +207,9 @@ const CompanySchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
+
+CompanySchema.index({ organizationId: 1, billingSource: 1 });
 
 export default mongoose.model("Company", CompanySchema);
