@@ -2,8 +2,11 @@ import asyncHandler from "express-async-handler";
 
 import Company from "../models/company.js";
 import Contract from "../models/contract.js";
+import Organization from "../models/organization.js";
+import { getCompanyEffectiveBillingHealth } from "../services/platformBillingHealthService.js";
 
 const PLANS = new Set(["starter", "growth", "professional", "enterprise"]);
+const BILLING_SOURCES = new Set(["company", "organization"]);
 const BILLING_STATUSES = new Set([
   "not_configured",
   "trial",
@@ -56,7 +59,7 @@ const buildChanges = (before, after, fields) =>
     return changes;
   }, {});
 
-const appendCommercialActivity = async ({ companyId, actor, changes }) => {
+const appendCommercialActivity = async ({ companyId, actor, changes, title }) => {
   await Company.updateOne(
     { _id: companyId },
     {
@@ -65,7 +68,7 @@ const appendCommercialActivity = async ({ companyId, actor, changes }) => {
           $each: [
             {
               eventType: "updated",
-              title: "Commercial settings updated",
+              title: title || "Commercial settings updated",
               appSlug: "platform-admin",
               appName: "Platform Administration",
               actorUserId: actor?._id || null,
@@ -79,9 +82,20 @@ const appendCommercialActivity = async ({ companyId, actor, changes }) => {
           $slice: ACTIVITY_LIMIT,
         },
       },
-    }
+    },
   );
 };
+
+const companyBillingSummary = (company) => ({
+  source: company.billingSource || "company",
+  plan: company.plan,
+  billingStatus: company.billing?.status || "not_configured",
+  trialEndDate: company.billing?.trialEndDate || null,
+  renewalDate: company.billing?.renewalDate || null,
+  contractEndDate: company.billing?.contractEndDate || null,
+  creditsRemaining: company.billing?.creditsRemaining ?? null,
+  paymentStatus: company.billing?.paymentStatus || "not_configured",
+});
 
 export const updatePlatformCommercialSettings = asyncHandler(async (req, res) => {
   const { companyId } = req.params;
@@ -91,9 +105,77 @@ export const updatePlatformCommercialSettings = asyncHandler(async (req, res) =>
     return res.status(404).json({ success: false, message: "Company not found." });
   }
 
+  const billingSource = req.body.billingSource || company.billingSource || "company";
+  if (!BILLING_SOURCES.has(billingSource)) {
+    return res.status(400).json({
+      success: false,
+      message: "Billing source must be Company or Organization.",
+    });
+  }
+
+  const previousBillingSource = company.billingSource || "company";
+
+  if (billingSource === "organization") {
+    if (!company.organizationId) {
+      return res.status(409).json({
+        success: false,
+        message: "This Company cannot inherit billing because it has no Organization.",
+      });
+    }
+
+    const organization = await Organization.findById(company.organizationId);
+    if (!organization) {
+      return res.status(409).json({
+        success: false,
+        message: "The attached Organization could not be found.",
+      });
+    }
+
+    if (organization.billingMode !== "organization") {
+      return res.status(409).json({
+        success: false,
+        message: "Enable Organization-level billing at HQ before this Company can inherit billing.",
+      });
+    }
+
+    company.billingSource = "organization";
+    await company.save();
+
+    const changes = {
+      company: {
+        billingSource: {
+          oldValue: previousBillingSource,
+          newValue: "organization",
+        },
+      },
+      contract: {},
+    };
+
+    await appendCommercialActivity({
+      companyId: company._id,
+      actor: req.platformUser,
+      changes,
+      title: "Billing inherited from Organization",
+    });
+
+    const effectiveBilling = await getCompanyEffectiveBillingHealth(company);
+
+    return res.json({
+      success: true,
+      message: `Billing is now inherited from ${organization.name}.`,
+      company,
+      contract: await Contract.findOne({ companyId: company._id }),
+      billingSummary: companyBillingSummary(company),
+      effectiveBilling,
+      changes,
+    });
+  }
+
   const plan = req.body.plan ?? company.plan;
-  const billingStatus = req.body.billingStatus ?? company.billing?.status ?? "not_configured";
-  const paymentStatus = req.body.paymentStatus ?? company.billing?.paymentStatus ?? "not_configured";
+  const billingStatus =
+    req.body.billingStatus ?? company.billing?.status ?? "not_configured";
+  const paymentStatus =
+    req.body.paymentStatus ?? company.billing?.paymentStatus ?? "not_configured";
   const contractStatus = req.body.contractStatus;
   const billingType = req.body.billingType;
 
@@ -114,6 +196,7 @@ export const updatePlatformCommercialSettings = asyncHandler(async (req, res) =>
   }
 
   const beforeCompany = {
+    billingSource: previousBillingSource,
     plan: company.plan,
     billingStatus: company.billing?.status,
     trialEndDate: company.billing?.trialEndDate,
@@ -123,6 +206,7 @@ export const updatePlatformCommercialSettings = asyncHandler(async (req, res) =>
     paymentStatus: company.billing?.paymentStatus,
   };
 
+  company.billingSource = "company";
   company.plan = plan;
   company.billing.status = billingStatus;
   company.billing.paymentStatus = paymentStatus;
@@ -193,7 +277,9 @@ export const updatePlatformCommercialSettings = asyncHandler(async (req, res) =>
       }
       contract.endDate = endDate;
     }
-    if (req.body.autoRenew !== undefined) contract.autoRenew = Boolean(req.body.autoRenew);
+    if (req.body.autoRenew !== undefined) {
+      contract.autoRenew = Boolean(req.body.autoRenew);
+    }
     if (billingType !== undefined) contract.billingType = billingType;
     contract.convertedFromTrial = contract.status !== "trial";
   }
@@ -215,6 +301,7 @@ export const updatePlatformCommercialSettings = asyncHandler(async (req, res) =>
   const companyChanges = buildChanges(
     beforeCompany,
     {
+      billingSource: company.billingSource,
       plan: company.plan,
       billingStatus: company.billing.status,
       trialEndDate: company.billing.trialEndDate,
@@ -224,6 +311,7 @@ export const updatePlatformCommercialSettings = asyncHandler(async (req, res) =>
       paymentStatus: company.billing.paymentStatus,
     },
     [
+      "billingSource",
       "plan",
       "billingStatus",
       "trialEndDate",
@@ -231,7 +319,7 @@ export const updatePlatformCommercialSettings = asyncHandler(async (req, res) =>
       "contractEndDate",
       "creditsRemaining",
       "paymentStatus",
-    ]
+    ],
   );
 
   const contractChanges = buildChanges(
@@ -244,7 +332,7 @@ export const updatePlatformCommercialSettings = asyncHandler(async (req, res) =>
       autoRenew: contract.autoRenew,
       billingType: contract.billingType,
     },
-    ["plan", "status", "startDate", "endDate", "autoRenew", "billingType"]
+    ["plan", "status", "startDate", "endDate", "autoRenew", "billingType"],
   );
 
   const changes = {
@@ -256,21 +344,24 @@ export const updatePlatformCommercialSettings = asyncHandler(async (req, res) =>
     companyId: company._id,
     actor: req.platformUser,
     changes,
+    title:
+      previousBillingSource === "organization"
+        ? "Company billing override enabled"
+        : "Commercial settings updated",
   });
+
+  const effectiveBilling = await getCompanyEffectiveBillingHealth(company);
 
   res.json({
     success: true,
+    message:
+      previousBillingSource === "organization"
+        ? "Individual Company billing override enabled."
+        : "Commercial settings updated.",
     company,
     contract,
-    billingSummary: {
-      plan: company.plan,
-      billingStatus: company.billing.status,
-      trialEndDate: company.billing.trialEndDate,
-      renewalDate: company.billing.renewalDate,
-      contractEndDate: company.billing.contractEndDate,
-      creditsRemaining: company.billing.creditsRemaining,
-      paymentStatus: company.billing.paymentStatus,
-    },
+    billingSummary: companyBillingSummary(company),
+    effectiveBilling,
     changes,
   });
 });
