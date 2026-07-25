@@ -1,6 +1,7 @@
 import asyncHandler from "express-async-handler";
 
 import App from "../models/app.js";
+import Company from "../models/company.js";
 import Organization from "../models/organization.js";
 import onboardCustomerEnvironment from "../services/customerOnboardingService.js";
 
@@ -168,7 +169,7 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
     }
   }
 
-  const result = await onboardCustomerEnvironment({
+  const onboardingInput = {
     owner: {
       name: ownerName,
       email: ownerEmail,
@@ -197,7 +198,29 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
       maxUsers: Number(maxUsers) || 1,
     },
     installedApps: Array.from(finalApps),
-  });
+  };
+
+  let result;
+  let resumedPartialOnboarding = false;
+
+  try {
+    result = await onboardCustomerEnvironment(onboardingInput);
+  } catch (firstError) {
+    const partialCompany = await Company.findOne({ slug: normalizedSlug })
+      .select("_id")
+      .lean();
+
+    if (!partialCompany) {
+      throw firstError;
+    }
+
+    resumedPartialOnboarding = true;
+    console.warn(
+      `Customer onboarding for ${normalizedSlug} failed after creating records. Resuming once automatically.`,
+      firstError,
+    );
+    result = await onboardCustomerEnvironment(onboardingInput);
+  }
 
   result.company.country = country;
   result.company.address = companyAddress.trim();
@@ -208,7 +231,10 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
 
   res.status(201).json({
     success: true,
-    message: "Customer onboarding completed.",
+    message: resumedPartialOnboarding
+      ? "Customer onboarding completed after automatically resuming a partial setup."
+      : "Customer onboarding completed.",
+    resumedPartialOnboarding,
     organizationMode: result.organizationMode,
     billingMode: result.billingMode,
     user: {
