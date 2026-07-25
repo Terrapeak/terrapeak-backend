@@ -3,14 +3,17 @@ import APP_REGISTRY_DEFINITIONS from "../appRegistryDefinitions.js";
 import installApps, { hasAppInstaller } from "../installers/installApps.js";
 import Company from "../models/company.js";
 import CompanyAppInstallation from "../models/companyAppInstallation.js";
-import { canEnableCompanyApp } from "./companyAppAccessService.js";
+import {
+  canEnableCompanyApp,
+  resolveEffectiveBilling,
+} from "./companyAppAccessService.js";
 import { isPlatformOwnerCompany } from "../utils/companyIdentity.js";
 import { getReservationsProvisioningHealth } from "../provisioners/reservationProvisioner.js";
 
 const MODES = new Set(["customer", "platform-workspace"]);
 
 const registryBySlug = new Map(
-  APP_REGISTRY_DEFINITIONS.map((definition) => [definition.slug, definition])
+  APP_REGISTRY_DEFINITIONS.map((definition) => [definition.slug, definition]),
 );
 
 export const appProvisioningHealthChecks = {
@@ -23,14 +26,14 @@ const uniqueSlugs = (values = []) =>
       values
         .filter((value) => typeof value === "string")
         .map((value) => value.trim().toLowerCase())
-        .filter(Boolean)
-    )
+        .filter(Boolean),
+    ),
   );
 
 const isPlatformWorkspace = (company) =>
   company.isPlatformWorkspace === true || isPlatformOwnerCompany(company);
 
-const getPolicyFailure = ({ company, definition, mode }) => {
+const getPolicyFailure = ({ company, definition, mode, effectiveBilling }) => {
   if (definition.isComingSoon) {
     return "This app is coming soon.";
   }
@@ -49,11 +52,21 @@ const getPolicyFailure = ({ company, definition, mode }) => {
     return "This app is not available to customers.";
   }
 
-  const access = canEnableCompanyApp({ company, app: definition });
+  const access = canEnableCompanyApp({
+    company,
+    app: definition,
+    effectiveBilling,
+  });
   return access.allowed ? null : access.reason;
 };
 
-const resolveApps = ({ company, mode, requestedApps, warnings }) => {
+const resolveApps = ({
+  company,
+  mode,
+  requestedApps,
+  warnings,
+  effectiveBilling,
+}) => {
   const resolved = [];
   const resolvedSet = new Set();
   const skippedSet = new Set();
@@ -72,7 +85,12 @@ const resolveApps = ({ company, mode, requestedApps, warnings }) => {
     const definition = registryBySlug.get(slug);
     if (!definition) return skip(slug, "App is not registered.");
 
-    const policyFailure = getPolicyFailure({ company, definition, mode });
+    const policyFailure = getPolicyFailure({
+      company,
+      definition,
+      mode,
+      effectiveBilling,
+    });
     if (policyFailure) return skip(slug, policyFailure);
 
     if (resolving.has(slug)) {
@@ -121,13 +139,13 @@ export const provisionCompany = async ({
 
   if (mode === "platform-workspace" && !isPlatformWorkspace(company)) {
     throw new Error(
-      "Platform Workspace provisioning requires the Terrapeak Platform Workspace."
+      "Platform Workspace provisioning requires the Terrapeak Platform Workspace.",
     );
   }
 
   if (mode === "customer" && isPlatformWorkspace(company)) {
     throw new Error(
-      "The Terrapeak Platform Workspace must use platform-workspace provisioning mode."
+      "The Terrapeak Platform Workspace must use platform-workspace provisioning mode.",
     );
   }
 
@@ -142,18 +160,22 @@ export const provisionCompany = async ({
             (definition) =>
               !definition.isComingSoon &&
               definition.allowInstall !== false &&
-              hasAppInstaller(definition.slug)
+              hasAppInstaller(definition.slug),
           ).map((definition) => definition.slug)
         : APP_REGISTRY_DEFINITIONS.filter(
-            (definition) => definition.defaultForCustomer === true
+            (definition) => definition.defaultForCustomer === true,
           ).map((definition) => definition.slug)
       : uniqueSlugs(requestedAppSlugs);
+
   const warnings = [];
+  const effectiveBilling =
+    mode === "customer" ? await resolveEffectiveBilling(company) : null;
   const { resolved, skipped } = resolveApps({
     company,
     mode,
     requestedApps,
     warnings,
+    effectiveBilling,
   });
   const existingInstallations = resolved.length
     ? await CompanyAppInstallation.find({
@@ -167,9 +189,9 @@ export const provisionCompany = async ({
     existingInstallations
       .filter(
         (installation) =>
-          installation.enabled && installation.status === "active"
+          installation.enabled && installation.status === "active",
       )
-      .map((installation) => installation.appSlug)
+      .map((installation) => installation.appSlug),
   );
   const alreadyInstalledApps = [];
   const appsToInstall = [];
@@ -193,7 +215,7 @@ export const provisionCompany = async ({
     } else {
       repairedApps.push(slug);
       warnings.push(
-        `${slug}: repairing missing or stale provisioning configuration.`
+        `${slug}: repairing missing or stale provisioning configuration.`,
       );
     }
   }
@@ -214,7 +236,7 @@ export const provisionCompany = async ({
   }
 
   const synchronizedLegacyApps = Array.from(
-    new Set([...(company.installedApps || []), ...resolved])
+    new Set([...(company.installedApps || []), ...resolved]),
   );
   if (synchronizedLegacyApps.length !== (company.installedApps || []).length) {
     company.installedApps = synchronizedLegacyApps;
@@ -230,6 +252,16 @@ export const provisionCompany = async ({
     alreadyInstalledApps,
     skippedApps: skipped,
     warnings,
+    effectiveBilling: effectiveBilling
+      ? {
+          source: effectiveBilling.source,
+          plan: effectiveBilling.plan,
+          billingStatus: effectiveBilling.billing?.status || "not_configured",
+          organization: effectiveBilling.organization,
+          valid: effectiveBilling.valid,
+          issue: effectiveBilling.issue,
+        }
+      : null,
   };
 };
 
