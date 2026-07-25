@@ -1,6 +1,7 @@
 import asyncHandler from "express-async-handler";
 
 import App from "../models/app.js";
+import Organization from "../models/organization.js";
 import onboardCustomerEnvironment from "../services/customerOnboardingService.js";
 
 const slugify = (text = "") =>
@@ -20,14 +21,25 @@ const makeReferencePrefix = (companyName = "") =>
     .slice(0, 5);
 
 export const getPlatformOnboardingOptions = asyncHandler(async (req, res) => {
-  const apps = await App.find({
-    isVisible: true,
-    isComingSoon: false,
-    allowInstall: { $ne: false },
-  })
-    .select("slug name description category isCore requiresAIAssistant dependencies sortOrder")
-    .sort({ sortOrder: 1, name: 1 })
-    .lean();
+  const [apps, organizations] = await Promise.all([
+    App.find({
+      isVisible: true,
+      isComingSoon: false,
+      allowInstall: { $ne: false },
+    })
+      .select(
+        "slug name description category isCore requiresAIAssistant dependencies sortOrder",
+      )
+      .sort({ sortOrder: 1, name: 1 })
+      .lean(),
+    Organization.find({
+      status: "active",
+      isActive: true,
+    })
+      .select("name slug billingMode plan billing.status billing.paymentStatus")
+      .sort({ name: 1 })
+      .lean(),
+  ]);
 
   res.json({
     success: true,
@@ -35,7 +47,19 @@ export const getPlatformOnboardingOptions = asyncHandler(async (req, res) => {
       country: "PH",
       plan: "starter",
       maxUsers: 1,
+      organizationMode: "create",
+      billingMode: "company",
     },
+    organizations: organizations.map((organization) => ({
+      id: organization._id,
+      name: organization.name,
+      slug: organization.slug,
+      billingMode: organization.billingMode || "company",
+      plan: organization.plan || "starter",
+      billingStatus: organization.billing?.status || "not_configured",
+      paymentStatus:
+        organization.billing?.paymentStatus || "not_configured",
+    })),
     apps,
   });
 });
@@ -59,11 +83,18 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
     plan = "starter",
     maxUsers = 1,
     installedApps = [],
+    organizationMode = "create",
+    organizationId = null,
+    organizationName = "",
+    organizationSlug = "",
+    billingMode = "company",
   } = req.body || {};
 
   if (!ownerName || !ownerEmail || !ownerPhone || !ownerPassword) {
     res.status(400);
-    throw new Error("Owner name, email, phone and temporary password are required.");
+    throw new Error(
+      "Owner name, email, phone and temporary password are required.",
+    );
   }
 
   if (!companyName || !companyAddress || !companyEmail || !companyPhone) {
@@ -71,10 +102,29 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
     throw new Error("Company name, address, email and phone are required.");
   }
 
+  if (!["create", "existing"].includes(organizationMode)) {
+    res.status(400);
+    throw new Error("Organization mode must be create or existing.");
+  }
+
+  if (!["organization", "company"].includes(billingMode)) {
+    res.status(400);
+    throw new Error("Billing mode must be organization or company.");
+  }
+
+  if (organizationMode === "existing" && !organizationId) {
+    res.status(400);
+    throw new Error("Select an existing Organization.");
+  }
+
   const normalizedSlug = companySlug || slugify(companyName);
   const normalizedPrefix = referencePrefix || makeReferencePrefix(companyName);
   const normalizedReservationSlug =
     reservationBusinessSlug || normalizedSlug;
+  const normalizedOrganizationName =
+    organizationName?.trim() || companyName.trim();
+  const normalizedOrganizationSlug =
+    organizationSlug || `${slugify(normalizedOrganizationName)}-organization`;
 
   const availableApps = await App.find({
     isVisible: true,
@@ -85,8 +135,12 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
     .lean();
 
   const availableSlugs = new Set(availableApps.map((app) => app.slug));
-  const coreApps = availableApps.filter((app) => app.isCore).map((app) => app.slug);
-  const requestedApps = installedApps.filter((slug) => availableSlugs.has(slug));
+  const coreApps = availableApps
+    .filter((app) => app.isCore)
+    .map((app) => app.slug);
+  const requestedApps = installedApps.filter((slug) =>
+    availableSlugs.has(slug),
+  );
   const finalApps = new Set([...coreApps, ...requestedApps]);
 
   let changed = true;
@@ -122,6 +176,17 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
       password: ownerPassword,
       country,
     },
+    organization: {
+      mode: organizationMode,
+      id: organizationMode === "existing" ? organizationId : null,
+      name:
+        organizationMode === "create" ? normalizedOrganizationName : null,
+      slug:
+        organizationMode === "create" ? normalizedOrganizationSlug : null,
+    },
+    billing: {
+      mode: billingMode,
+    },
     company: {
       name: companyName,
       displayName: displayName || companyName,
@@ -144,10 +209,21 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
   res.status(201).json({
     success: true,
     message: "Customer onboarding completed.",
+    organizationMode: result.organizationMode,
+    billingMode: result.billingMode,
     user: {
       id: result.user._id,
       name: result.user.name,
       email: result.user.email,
+    },
+    organization: {
+      id: result.organization._id,
+      name: result.organization.name,
+      slug: result.organization.slug,
+      billingMode: result.organization.billingMode,
+      plan: result.organization.plan,
+      billingStatus:
+        result.organization.billing?.status || "not_configured",
     },
     company: {
       id: result.company._id,
@@ -155,6 +231,7 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
       displayName: result.company.displayName,
       slug: result.company.slug,
       plan: result.company.plan,
+      billingSource: result.company.billingSource,
       maxUsers: result.company.maxUsers,
       country: result.company.country,
       address: result.company.address,
