@@ -4,6 +4,7 @@ import Company from "../models/company.js";
 import CompanyMembership from "../models/companyMembership.js";
 import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import { runPlatformAttentionScan } from "../services/platformAttentionScanService.js";
+import { getPlatformBillingHealth } from "../services/platformBillingHealthService.js";
 
 const ACTIVITY_LIMIT = 30;
 const CUSTOMER_COMPANY_FILTER = { isPlatformWorkspace: { $ne: true } };
@@ -58,7 +59,8 @@ const getPlatformRecentActivity = async (customerCompanyIds) => {
     if (!company) return;
 
     const appName = formatAppName(installation.appSlug);
-    const isDisabled = !installation.enabled || installation.status === "disabled";
+    const isDisabled =
+      !installation.enabled || installation.status === "disabled";
 
     activities.push({
       id: `installation-${installation._id}`,
@@ -70,7 +72,9 @@ const getPlatformRecentActivity = async (customerCompanyIds) => {
       }.`,
       companyId: company._id,
       occurredAt:
-        installation.updatedAt || installation.installedAt || installation.createdAt,
+        installation.updatedAt ||
+        installation.installedAt ||
+        installation.createdAt,
     });
   });
 
@@ -99,7 +103,7 @@ const getPlatformRecentActivity = async (customerCompanyIds) => {
     .sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt))
     .forEach((activity) => {
       const key = `${activity.type}-${activity.title}-${activity.companyId}-${new Date(
-        activity.occurredAt
+        activity.occurredAt,
       ).toISOString()}`;
 
       if (!uniqueActivities.has(key)) {
@@ -109,6 +113,21 @@ const getPlatformRecentActivity = async (customerCompanyIds) => {
 
   return Array.from(uniqueActivities.values()).slice(0, ACTIVITY_LIMIT);
 };
+
+const mapBillingActionToAttentionItem = (action, index) => ({
+  id: `billing-${action.type}-${action.organizationId || "none"}-${
+    action.companyId || index
+  }`,
+  source: "billing",
+  severity: action.severity,
+  type: action.type,
+  title: action.title,
+  message: action.description,
+  companyId: action.companyId,
+  companyName: action.companyName,
+  organizationId: action.organizationId,
+  organizationName: action.organizationName,
+});
 
 export const getPlatformDashboardSummary = asyncHandler(async (req, res) => {
   const customerCompanies = await Company.find(CUSTOMER_COMPANY_FILTER)
@@ -122,6 +141,7 @@ export const getPlatformDashboardSummary = asyncHandler(async (req, res) => {
     aiAssistantInstalls,
     reservationInstalls,
     attentionScan,
+    billingHealth,
     recentActivity,
   ] = await Promise.all([
     CompanyMembership.find({ companyId: { $in: customerCompanyIds } })
@@ -142,62 +162,93 @@ export const getPlatformDashboardSummary = asyncHandler(async (req, res) => {
       enabled: true,
     }),
     runPlatformAttentionScan(),
+    getPlatformBillingHealth(),
     getPlatformRecentActivity(customerCompanyIds),
   ]);
 
   const activeMemberships = customerMemberships.filter(
-    (membership) => membership.status === "active"
+    (membership) => membership.status === "active",
   );
   const totalCustomerUsers = new Set(
     customerMemberships
       .map((membership) => membership.userId?.toString())
-      .filter(Boolean)
+      .filter(Boolean),
   ).size;
-  const needsAttention = attentionScan.needsAttention;
+
+  const billingAttention = billingHealth.actions.map(
+    mapBillingActionToAttentionItem,
+  );
+  const needsAttention = [
+    ...billingAttention,
+    ...attentionScan.needsAttention,
+  ];
   const hasAttentionItems = needsAttention.length > 0;
 
   res.json({
     success: true,
     summary: {
-      platformStatus: "operational",
+      platformStatus:
+        billingHealth.summary.criticalBillingCount > 0
+          ? "attention required"
+          : "operational",
       totalCompanies: customerCompanies.length,
-      activeCompanies: customerCompanies.filter((company) => company.isActive).length,
+      activeCompanies: customerCompanies.filter((company) => company.isActive)
+        .length,
       totalUsers: totalCustomerUsers,
       totalActiveMemberships: activeMemberships.length,
       totalInstalledApps,
       aiAssistantInstalls,
       reservationInstalls,
       needsAttentionCount: needsAttention.length,
+      billingAttentionCount: billingHealth.summary.billingAttentionCount,
+      criticalBillingCount: billingHealth.summary.criticalBillingCount,
+      healthyBillingCount: billingHealth.summary.healthyBillingCount,
+      inheritedBillingCount: billingHealth.summary.inheritedBillingCount,
+      organizationBillingCount:
+        billingHealth.summary.organizationBillingCount,
       scannedCompanies: attentionScan.scannedCompanies,
       scannedAt: attentionScan.scannedAt,
       activityRefreshedAt: new Date(),
     },
     customerHealth: attentionScan.customerHealth,
+    billingHealth,
     needsAttention,
     recentActivity,
     morningBrief: {
       title: "Good morning",
       message: hasAttentionItems
-        ? `${needsAttention.length} customer workspace${
+        ? `${needsAttention.length} platform action${
             needsAttention.length === 1 ? " requires" : "s require"
           } attention.`
-        : "Platform is operational. No critical customer issues detected.",
+        : "Platform is operational. No critical customer or billing issues detected.",
       recommendations: hasAttentionItems
-        ? ["Review the customer workspaces listed under Customer Health."]
+        ? [
+            billingAttention.length > 0
+              ? "Review billing and Organization structure issues first."
+              : "Review the customer workspaces listed under Customer Health.",
+          ]
         : ["Continue monitoring customer onboarding and platform activity."],
     },
   });
 });
 
 export const runPlatformAttentionScanNow = asyncHandler(async (req, res) => {
-  const attentionScan = await runPlatformAttentionScan();
+  const [attentionScan, billingHealth] = await Promise.all([
+    runPlatformAttentionScan(),
+    getPlatformBillingHealth(),
+  ]);
+  const billingAttention = billingHealth.actions.map(
+    mapBillingActionToAttentionItem,
+  );
 
   res.json({
     success: true,
     scannedAt: attentionScan.scannedAt,
     scannedCompanies: attentionScan.scannedCompanies,
-    needsAttentionCount: attentionScan.needsAttentionCount,
+    needsAttentionCount:
+      attentionScan.needsAttention.length + billingAttention.length,
     customerHealth: attentionScan.customerHealth,
-    needsAttention: attentionScan.needsAttention,
+    billingHealth,
+    needsAttention: [...billingAttention, ...attentionScan.needsAttention],
   });
 });
