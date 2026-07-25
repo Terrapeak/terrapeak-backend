@@ -37,6 +37,7 @@ import {
   getPlatformOnboardingOptions,
   onboardPlatformCustomer,
 } from "../controllers/platformOnboardingController.js";
+import { getPlatformCompanyEffectiveBilling } from "../controllers/platformCompanyBillingController.js";
 
 const router = express.Router();
 
@@ -48,6 +49,7 @@ router.get("/onboarding/options", isPlatformAuthenticated, isPlatformAdmin, getP
 router.post("/onboarding", isPlatformAuthenticated, isPlatformAdmin, onboardPlatformCustomer);
 router.get("/companies/search", isPlatformAuthenticated, isPlatformAdmin, searchPlatformCompanies);
 router.get("/companies/:companyId", isPlatformAuthenticated, isPlatformAdmin, getPlatformCompanyDetail);
+router.get("/companies/:companyId/effective-billing", isPlatformAuthenticated, isPlatformAdmin, getPlatformCompanyEffectiveBilling);
 router.patch("/companies/:companyId", isPlatformAuthenticated, isPlatformAdmin, updatePlatformCompany);
 router.patch("/companies/:companyId/commercial", isPlatformAuthenticated, isPlatformAdmin, updatePlatformCommercialSettings);
 router.get("/companies/:companyId/ai-config", isPlatformAuthenticated, isPlatformAdmin, getPlatformAIConfig);
