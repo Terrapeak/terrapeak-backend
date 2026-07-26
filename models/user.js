@@ -33,6 +33,10 @@ const userSchema = new mongoose.Schema(
       enum: ["pending", "active", "suspended", "removed"],
       default: "active",
     },
+    mustChangePassword: {
+      type: Boolean,
+      default: false,
+    },
     invitationStatus: {
       type: String,
       enum: ["not_invited", "pending", "accepted", "expired"],
