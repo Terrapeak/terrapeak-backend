@@ -29,6 +29,7 @@ export const acceptInvitation = asyncHandler(async (req, res) => {
   }
 
   user.password = password;
+  user.mustChangePassword = false;
   user.invitationStatus = "accepted";
   user.invitationTokenHash = null;
   user.invitationExpiresAt = null;
@@ -62,6 +63,7 @@ export const completePasswordReset = asyncHandler(async (req, res) => {
   }
 
   user.password = password;
+  user.mustChangePassword = false;
   user.passwordResetTokenHash = null;
   user.passwordResetExpiresAt = null;
   user.accountStatus = "active";
@@ -70,5 +72,60 @@ export const completePasswordReset = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     message: "Your password has been updated. You can now sign in.",
+  });
+});
+
+export const changeTemporaryPassword = asyncHandler(async (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+
+  if (!currentPassword || !validatePassword(newPassword)) {
+    return res.status(400).json({
+      success: false,
+      message: "Your current password and a new password of at least 8 characters are required.",
+    });
+  }
+
+  if (!req.user?.mustChangePassword) {
+    return res.status(409).json({
+      success: false,
+      message: "This account does not require a temporary password change.",
+    });
+  }
+
+  const matches = await req.user.matchPassword(currentPassword);
+  if (!matches) {
+    return res.status(400).json({
+      success: false,
+      message: "The current temporary password is incorrect.",
+    });
+  }
+
+  if (await req.user.matchPassword(newPassword)) {
+    return res.status(400).json({
+      success: false,
+      message: "Choose a new password that is different from the temporary password.",
+    });
+  }
+
+  req.user.password = newPassword;
+  req.user.mustChangePassword = false;
+  await req.user.save();
+
+  res.json({
+    success: true,
+    message: "Your password has been changed. Your workspace is now available.",
+    user: {
+      _id: req.user._id,
+      name: req.user.name,
+      email: req.user.email,
+      phone: req.user.phone,
+      country: req.user.country,
+      companyName: req.user.companyName,
+      isAdmin: req.user.isAdmin,
+      isApproved: req.user.isApproved,
+      role: req.user.role || "user",
+      platformRole: req.user.platformRole || "none",
+      mustChangePassword: false,
+    },
   });
 });
