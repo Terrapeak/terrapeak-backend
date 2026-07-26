@@ -11,6 +11,7 @@ const buildDashboardUser = (user) => ({
   isApproved: user.isApproved,
   role: user.role || "user",
   platformRole: user.platformRole || "none",
+  mustChangePassword: user.mustChangePassword === true,
 });
 
 const buildPlatformUser = (user) => ({
