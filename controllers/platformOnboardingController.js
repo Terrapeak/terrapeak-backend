@@ -3,6 +3,7 @@ import asyncHandler from "express-async-handler";
 import App from "../models/app.js";
 import Company from "../models/company.js";
 import Organization from "../models/organization.js";
+import User from "../models/user.js";
 import onboardCustomerEnvironment from "../services/customerOnboardingService.js";
 
 const slugify = (text = "") =>
@@ -118,6 +119,10 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
     throw new Error("Select an existing Organization.");
   }
 
+  const normalizedOwnerEmail = ownerEmail.toLowerCase().trim();
+  const ownerAlreadyExisted = Boolean(
+    await User.exists({ email: normalizedOwnerEmail }),
+  );
   const normalizedSlug = companySlug || slugify(companyName);
   const normalizedPrefix = referencePrefix || makeReferencePrefix(companyName);
   const normalizedReservationSlug =
@@ -172,7 +177,7 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
   const onboardingInput = {
     owner: {
       name: ownerName,
-      email: ownerEmail,
+      email: normalizedOwnerEmail,
       phone: ownerPhone,
       password: ownerPassword,
       country,
@@ -222,6 +227,11 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
     result = await onboardCustomerEnvironment(onboardingInput);
   }
 
+  if (!ownerAlreadyExisted && result.user.mustChangePassword !== true) {
+    result.user.mustChangePassword = true;
+    await result.user.save();
+  }
+
   result.company.country = country;
   result.company.address = companyAddress.trim();
   result.company.website = companyWebsite?.trim() || "";
@@ -241,6 +251,7 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
       id: result.user._id,
       name: result.user.name,
       email: result.user.email,
+      mustChangePassword: result.user.mustChangePassword === true,
     },
     organization: {
       id: result.organization._id,
