@@ -9,6 +9,7 @@ import {
 } from "../controllers/authController.js";
 import {
   acceptInvitation,
+  changeTemporaryPassword,
   completePasswordReset,
 } from "../controllers/accountLifecycleController.js";
 import { exchangeGoogleCode } from "../controllers/appointmentController.js";
@@ -26,6 +27,11 @@ router.post("/signup/request-otp", requestSignupOTP);
 router.post("/signup/verify-otp", verifySignupOTP);
 router.post("/invitations/accept", acceptInvitation);
 router.post("/password-reset/complete", completePasswordReset);
+router.post(
+  "/temporary-password/change",
+  isVerifiedUser,
+  changeTemporaryPassword,
+);
 router.get("/google/callback", exchangeGoogleCode);
 router.post("/login", login);
 router.post("/logout", logout);
