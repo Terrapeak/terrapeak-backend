@@ -16,7 +16,7 @@ export const listPlatformCompanyUsers = asyncHandler(async (req, res) => {
 
   const memberships = await CompanyMembership.find({
     companyId,
-    status: { $in: ["active", "inactive"] },
+    status: { $in: ["active", "inactive", "removed"] },
   })
     .sort({ status: 1, createdAt: 1 })
     .populate(
