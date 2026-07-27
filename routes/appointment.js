@@ -14,26 +14,67 @@ import {
 } from "../controllers/appointmentController.js";
 import isAuthenticated from "../middleware/isAuthenticated.js";
 import isVerifiedUser from "../middleware/isVerifiedUser.js";
+import resolveCompanyContext from "../middleware/resolveCompanyContext.js";
+import requireCompanyWriteAccess from "../middleware/requireCompanyWriteAccess.js";
 
 const router = express.Router();
 
 // ---------------- Google Authentication ----------------
 router.get("/google-calender-conn", isAuthenticated, getUserCalenderConn);
-router.post("/google-disconnect", isAuthenticated, disconnectGoogleCalendar);
-router.get("/google-auth-url", isVerifiedUser, getGoogleAuthUrlController); // Get OAuth URL
-
-//router.post("/google-api-key", isAuthenticated, saveGoogleApiKey); // Optional API key save
+router.post(
+  "/google-disconnect",
+  isVerifiedUser,
+  resolveCompanyContext,
+  requireCompanyWriteAccess,
+  disconnectGoogleCalendar
+);
+router.get(
+  "/google-auth-url",
+  isVerifiedUser,
+  resolveCompanyContext,
+  requireCompanyWriteAccess,
+  getGoogleAuthUrlController
+);
 
 // ---------------- Time Slot Routes ----------------
-router.post("/time-slots", isAuthenticated, createTimeSlot); // Create slot
-router.patch("/time-slots/:timeSlotId", isAuthenticated, updateTimeSlot);
-router.delete("/time-slots/:timeSlotId", isAuthenticated, deleteTimeSlot);
-router.get("/time-slots", isAuthenticated, getTimeSlots); // Guests can check availability
+router.post(
+  "/time-slots",
+  isVerifiedUser,
+  resolveCompanyContext,
+  requireCompanyWriteAccess,
+  createTimeSlot
+);
+router.patch(
+  "/time-slots/:timeSlotId",
+  isVerifiedUser,
+  resolveCompanyContext,
+  requireCompanyWriteAccess,
+  updateTimeSlot
+);
+router.delete(
+  "/time-slots/:timeSlotId",
+  isVerifiedUser,
+  resolveCompanyContext,
+  requireCompanyWriteAccess,
+  deleteTimeSlot
+);
+router.get("/time-slots", isAuthenticated, getTimeSlots);
 
 // ---------------- Appointment Routes ----------------
-//router.post("/", bookAppointment); // Guest booking allowed
-router.get("/get", isAuthenticated, getAppointments); // Owner only
-router.put("/:appointmentId/confirm", isAuthenticated, ConfirmAppointment); // Owner confirms
-router.put("/:appointmentId/cancel", isAuthenticated, CancelAppointment); // Owner cancels (instead of delete)
+router.get("/get", isAuthenticated, getAppointments);
+router.put(
+  "/:appointmentId/confirm",
+  isVerifiedUser,
+  resolveCompanyContext,
+  requireCompanyWriteAccess,
+  ConfirmAppointment
+);
+router.put(
+  "/:appointmentId/cancel",
+  isVerifiedUser,
+  resolveCompanyContext,
+  requireCompanyWriteAccess,
+  CancelAppointment
+);
 
 export default router;
