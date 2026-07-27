@@ -5,12 +5,33 @@ import OrganizationMembership from "../models/organizationMembership.js";
 import User from "../models/user.js";
 import isAuthenticated from "./isAuthenticated.js";
 
+const ORGANIZATION_ROLE_PRIORITY = Object.freeze({
+  viewer: 0,
+  member: 1,
+  manager: 2,
+  admin: 3,
+  owner: 4,
+});
+
 const sendError = (res, status, code, message) =>
   res.status(status).json({
     success: false,
     code,
     message,
   });
+
+const selectSafestActiveMembership = (memberships = []) =>
+  [...memberships].sort((left, right) => {
+    const leftPriority = ORGANIZATION_ROLE_PRIORITY[left.role] ?? -1;
+    const rightPriority = ORGANIZATION_ROLE_PRIORITY[right.role] ?? -1;
+
+    if (leftPriority !== rightPriority) {
+      return leftPriority - rightPriority;
+    }
+
+    return new Date(right.updatedAt || right.createdAt || 0).getTime() -
+      new Date(left.updatedAt || left.createdAt || 0).getTime();
+  })[0] || null;
 
 const attachOrganizationContext = async (req, res, next) => {
   const routeOrganizationId = String(
@@ -33,8 +54,7 @@ const attachOrganizationContext = async (req, res, next) => {
     );
   }
 
-  const organizationId =
-    routeOrganizationId || headerOrganizationId;
+  const organizationId = routeOrganizationId || headerOrganizationId;
 
   if (!organizationId) {
     return sendError(
@@ -95,13 +115,13 @@ const attachOrganizationContext = async (req, res, next) => {
     organizationId: organization._id,
     userId: user._id,
     status: "active",
-  }).sort({ updatedAt: -1, createdAt: -1, _id: -1 });
+  });
 
-  const membership = activeMemberships[0] || null;
+  const membership = selectSafestActiveMembership(activeMemberships);
 
   if (activeMemberships.length > 1) {
     console.warn(
-      `Multiple active Organization memberships found for user ${user._id} in Organization ${organization._id}. Using the most recently updated membership ${membership._id}.`
+      `Multiple active Organization memberships found for user ${user._id} in Organization ${organization._id}. Applying the least-privileged role ${membership?.role || "none"} until duplicate records are repaired.`
     );
   }
 
