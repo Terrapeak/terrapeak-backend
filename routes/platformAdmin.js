@@ -13,9 +13,11 @@ import {
 import {
   updatePlatformCompany,
   addPlatformCompanyUser,
-  updatePlatformCompanyUser,
-  removePlatformCompanyUser,
 } from "../controllers/platformCompanyEditController.js";
+import {
+  updatePlatformCompanyUserLifecycle,
+  removePlatformCompanyUserLifecycle,
+} from "../controllers/platformCompanyUserLifecycleController.js";
 import {
   invitePlatformCompanyUser,
   resendPlatformCompanyInvitation,
@@ -59,8 +61,8 @@ router.patch("/companies/:companyId/ai-config", isPlatformAuthenticated, isPlatf
 router.post("/companies/:companyId/ai-config/test", isPlatformAuthenticated, isPlatformAdmin, testPlatformAIConfig);
 router.post("/companies/:companyId/users", isPlatformAuthenticated, isPlatformAdmin, addPlatformCompanyUser);
 router.post("/companies/:companyId/users/invite", isPlatformAuthenticated, isPlatformAdmin, invitePlatformCompanyUser);
-router.patch("/companies/:companyId/users/:membershipId", isPlatformAuthenticated, isPlatformAdmin, updatePlatformCompanyUser);
-router.delete("/companies/:companyId/users/:membershipId", isPlatformAuthenticated, isPlatformAdmin, removePlatformCompanyUser);
+router.patch("/companies/:companyId/users/:membershipId", isPlatformAuthenticated, isPlatformAdmin, updatePlatformCompanyUserLifecycle);
+router.delete("/companies/:companyId/users/:membershipId", isPlatformAuthenticated, isPlatformAdmin, removePlatformCompanyUserLifecycle);
 router.post("/companies/:companyId/users/:membershipId/resend-invitation", isPlatformAuthenticated, isPlatformAdmin, resendPlatformCompanyInvitation);
 router.post("/companies/:companyId/users/:membershipId/password-reset", isPlatformAuthenticated, isPlatformAdmin, sendPlatformUserPasswordReset);
 router.post("/companies/:companyId/apps/:appId/toggle", isPlatformAuthenticated, isPlatformAdmin, toggleCompanyApp);
