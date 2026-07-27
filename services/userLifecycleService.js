@@ -3,14 +3,45 @@ import crypto from "crypto";
 import sendEmail from "../utils/sendEmail.js";
 
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+const PRODUCTION_DASHBOARD_URL = "https://dashboard.terrapeakgroup.com";
+const LEGACY_FRONTEND_HOSTS = new Set([
+  "terrapeak-gemini-assistant.vercel.app",
+  "terrapeak.vercel.app",
+]);
 
 const hashToken = (token) =>
   crypto.createHash("sha256").update(token).digest("hex");
 
 const createToken = () => crypto.randomBytes(32).toString("hex");
 
-const getFrontendUrl = () =>
-  (process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "");
+const normalizeBaseUrl = (value) => String(value || "").trim().replace(/\/$/, "");
+
+const getCustomerDashboardUrl = () => {
+  const explicitlyConfigured = normalizeBaseUrl(
+    process.env.CUSTOMER_DASHBOARD_URL || process.env.DASHBOARD_URL,
+  );
+
+  if (explicitlyConfigured) return explicitlyConfigured;
+
+  const legacyFrontendUrl = normalizeBaseUrl(process.env.FRONTEND_URL);
+
+  if (legacyFrontendUrl) {
+    try {
+      const configuredUrl = new URL(legacyFrontendUrl);
+      if (!LEGACY_FRONTEND_HOSTS.has(configuredUrl.hostname)) {
+        return legacyFrontendUrl;
+      }
+    } catch {
+      // Ignore malformed legacy values and use the safe production URL below.
+    }
+  }
+
+  if (process.env.NODE_ENV === "test" || process.env.NODE_ENV === "development") {
+    return legacyFrontendUrl || "http://localhost:5173";
+  }
+
+  return PRODUCTION_DASHBOARD_URL;
+};
 
 export const issueInvitation = async ({ user, company, role }) => {
   const token = createToken();
@@ -23,7 +54,7 @@ export const issueInvitation = async ({ user, company, role }) => {
   user.accountStatus = "pending";
   await user.save();
 
-  const setupUrl = `${getFrontendUrl()}/account/setup?mode=invite&token=${token}`;
+  const setupUrl = `${getCustomerDashboardUrl()}/account/setup?mode=invite&token=${token}`;
   const companyName = company.displayName || company.name;
 
   await sendEmail({
@@ -57,7 +88,7 @@ export const issuePasswordReset = async ({ user }) => {
   user.passwordResetSentAt = new Date();
   await user.save();
 
-  const resetUrl = `${getFrontendUrl()}/account/setup?mode=reset&token=${token}`;
+  const resetUrl = `${getCustomerDashboardUrl()}/account/setup?mode=reset&token=${token}`;
 
   await sendEmail({
     to: user.email,
