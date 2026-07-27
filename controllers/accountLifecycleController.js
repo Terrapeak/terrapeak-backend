@@ -1,6 +1,7 @@
 import asyncHandler from "express-async-handler";
 
 import User from "../models/user.js";
+import ensureOrganizationMembershipsForCompanyUser from "../services/customerWorkspaceMembershipService.js";
 import {
   findInvitationUser,
   findPasswordResetUser,
@@ -37,6 +38,8 @@ export const acceptInvitation = asyncHandler(async (req, res) => {
   user.isApproved = true;
   await user.save();
 
+  await ensureOrganizationMembershipsForCompanyUser({ userId: user._id });
+
   res.json({
     success: true,
     message: "Your account is ready. You can now sign in.",
@@ -68,6 +71,8 @@ export const completePasswordReset = asyncHandler(async (req, res) => {
   user.passwordResetExpiresAt = null;
   user.accountStatus = "active";
   await user.save();
+
+  await ensureOrganizationMembershipsForCompanyUser({ userId: user._id });
 
   res.json({
     success: true,
@@ -110,6 +115,8 @@ export const changeTemporaryPassword = asyncHandler(async (req, res) => {
   req.user.password = newPassword;
   req.user.mustChangePassword = false;
   await req.user.save();
+
+  await ensureOrganizationMembershipsForCompanyUser({ userId: req.user._id });
 
   res.json({
     success: true,
