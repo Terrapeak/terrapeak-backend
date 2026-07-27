@@ -14,6 +14,7 @@ import {
 } from "../controllers/chatbotController.js";
 import isVerifiedUser from "../middleware/isVerifiedUser.js";
 import resolveCompanyContext from "../middleware/resolveCompanyContext.js";
+import requireCompanyWriteAccess from "../middleware/requireCompanyWriteAccess.js";
 import { askRateLimiter } from "../middleware/rateLimiter.js";
 import { verifyDomain } from "../middleware/validateChatbotApiKey.js";
 import {
@@ -37,18 +38,44 @@ router.post(
   "/settings",
   isVerifiedUser,
   resolveCompanyContext,
+  requireCompanyWriteAccess,
   stripCustomerAIConfigUpdates,
   maskCustomerAIConfigResponse,
   saveChatbotSettings
 );
 
-router.post("/extract-instruction", upload.single("file"), extractInstructions);
+router.post(
+  "/extract-instruction",
+  isVerifiedUser,
+  resolveCompanyContext,
+  requireCompanyWriteAccess,
+  upload.single("file"),
+  extractInstructions
+);
 
-router.post("/optimize-system-instruction", optimizeSystemInstruction);
+router.post(
+  "/optimize-system-instruction",
+  isVerifiedUser,
+  resolveCompanyContext,
+  requireCompanyWriteAccess,
+  optimizeSystemInstruction
+);
 
 router.get("/getApiKey", isVerifiedUser, resolveCompanyContext, getApiKey);
-router.post("/website-info", isVerifiedUser, resolveCompanyContext, saveWebsiteInfo);
-router.post("/action", isVerifiedUser, resolveCompanyContext, saveBotAction);
+router.post(
+  "/website-info",
+  isVerifiedUser,
+  resolveCompanyContext,
+  requireCompanyWriteAccess,
+  saveWebsiteInfo
+);
+router.post(
+  "/action",
+  isVerifiedUser,
+  resolveCompanyContext,
+  requireCompanyWriteAccess,
+  saveBotAction
+);
 
 // Public route (uses x-api-key and domain validation instead)
 router.post("/ask", askRateLimiter, askGemini);
