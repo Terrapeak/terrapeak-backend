@@ -312,6 +312,11 @@ export const getOrganizationMembers = organizationHandler(
     });
     res.json({
       success: true,
+      actorMembership: {
+        membershipId: req.organizationMembership._id,
+        role: req.organizationMembership.role,
+        status: req.organizationMembership.status,
+      },
       members: memberships.map(membershipResponse),
     });
   }
