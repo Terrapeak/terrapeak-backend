@@ -1,5 +1,7 @@
 import asyncHandler from "express-async-handler";
 
+import ensureOrganizationMembershipsForCompanyUser from "../services/customerWorkspaceMembershipService.js";
+
 const buildDashboardUser = (user) => ({
   _id: user._id,
   name: user.name,
@@ -22,6 +24,8 @@ const buildPlatformUser = (user) => ({
 });
 
 export const getDashboardSession = asyncHandler(async (req, res) => {
+  await ensureOrganizationMembershipsForCompanyUser({ userId: req.user._id });
+
   return res.status(200).json({
     success: true,
     user: buildDashboardUser(req.user),
