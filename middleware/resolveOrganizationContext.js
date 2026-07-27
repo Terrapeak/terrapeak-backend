@@ -91,11 +91,19 @@ const attachOrganizationContext = async (req, res, next) => {
     );
   }
 
-  const membership = await OrganizationMembership.findOne({
+  const activeMemberships = await OrganizationMembership.find({
     organizationId: organization._id,
     userId: user._id,
     status: "active",
-  });
+  }).sort({ updatedAt: -1, createdAt: -1, _id: -1 });
+
+  const membership = activeMemberships[0] || null;
+
+  if (activeMemberships.length > 1) {
+    console.warn(
+      `Multiple active Organization memberships found for user ${user._id} in Organization ${organization._id}. Using the most recently updated membership ${membership._id}.`
+    );
+  }
 
   if (!membership) {
     return sendError(
