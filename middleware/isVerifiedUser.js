@@ -31,6 +31,14 @@ const isVerifiedUser = async (req, res, next) => {
       });
     }
 
+    if (user.accountStatus !== "active") {
+      return res.status(403).json({
+        success: false,
+        code: "ACCOUNT_INACTIVE",
+        message: "This account is not active.",
+      });
+    }
+
     if (!user.isApproved) {
       return res.status(403).json({
         success: false,
