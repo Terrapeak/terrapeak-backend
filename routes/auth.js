@@ -26,11 +26,22 @@ import {
   platformLoginRateLimit,
   signupOtpRateLimit,
 } from "../middleware/authRateLimits.js";
+import validateSignupPassword from "../middleware/validateSignupPassword.js";
 
 const router = express.Router();
 
-router.post("/signup/request-otp", signupOtpRateLimit, requestSignupOTP);
-router.post("/signup/verify-otp", accountTokenRateLimit, verifySignupOTP);
+router.post(
+  "/signup/request-otp",
+  signupOtpRateLimit,
+  validateSignupPassword,
+  requestSignupOTP,
+);
+router.post(
+  "/signup/verify-otp",
+  accountTokenRateLimit,
+  validateSignupPassword,
+  verifySignupOTP,
+);
 router.post("/invitations/accept", accountTokenRateLimit, acceptInvitation);
 router.post(
   "/password-reset/complete",
