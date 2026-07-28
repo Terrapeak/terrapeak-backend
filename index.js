@@ -9,7 +9,7 @@ import cors from "cors";
 import path from "path";
 import ensureChannelRegistry from "./services/channelRegistryService.js";
 
-// ⬇️ Fix __dirname for ES Modules
+// Fix __dirname for ES Modules
 import { fileURLToPath } from "url";
 import { dirname } from "path";
 const __filename = fileURLToPath(import.meta.url);
@@ -29,19 +29,27 @@ const app = express();
 
 app.use(express.static("public"));
 
+const productionOrigins = [
+  process.env.FRONTEND_URL,
+  "https://platform.terrapeakgroup.com",
+  "https://dashboard.terrapeakgroup.com",
+].filter(Boolean);
+
+const developmentOrigins = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:5175",
+];
+
+const allowedOrigins = new Set([
+  ...productionOrigins,
+  ...(process.env.NODE_ENV === "production" ? [] : developmentOrigins),
+]);
+
 app.use(
   cors({
     origin(origin, callback) {
-      const allowed = [
-        process.env.FRONTEND_URL,
-        "https://platform.terrapeakgroup.com",
-        "https://dashboard.terrapeakgroup.com",
-        "http://localhost:5173",
-        "http://localhost:5174",
-        "http://localhost:5175",
-      ];
-
-      if (!origin || allowed.includes(origin)) {
+      if (!origin || allowedOrigins.has(origin)) {
         callback(null, true);
       } else {
         callback(new Error("Not allowed by CORS"));
@@ -65,21 +73,17 @@ app.use(
 app.use(cookieParser());
 
 // Routes
-// app.use((req, res, next) => {
-//   console.log(req);
-//   next();
-// });
 app.use("/api/", routes);
 app.use("/api", swaggerRoutes);
 
 app.use((err, req, res, next) => {
-  // Use the error's status code or default to 500 (Internal Server Error)
   const statusCode = err.statusCode || 500;
   console.log(err.stack);
   res.status(statusCode).json({
     message: err.message || "An unexpected error occurred",
   });
 });
+
 // Start server
 const port = process.env.PORT || 5000;
 app.listen(port, () => {
