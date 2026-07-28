@@ -6,8 +6,10 @@ import routes from "./routes/index.js";
 import swaggerRoutes from "./swagger.js";
 import cors from "cors";
 import ensureChannelRegistry from "./services/channelRegistryService.js";
+import configureProductionLogging from "./utils/configureProductionLogging.js";
 
 dotenv.config();
+configureProductionLogging();
 
 // Connect to MongoDB
 mongoose
