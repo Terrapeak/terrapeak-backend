@@ -12,7 +12,6 @@ import {
   getUserCalenderConn,
   disconnectGoogleCalendar,
 } from "../controllers/appointmentController.js";
-import isAuthenticated from "../middleware/isAuthenticated.js";
 import isVerifiedUser from "../middleware/isVerifiedUser.js";
 import resolveCompanyContext from "../middleware/resolveCompanyContext.js";
 import requireCompanyWriteAccess from "../middleware/requireCompanyWriteAccess.js";
@@ -20,7 +19,7 @@ import requireCompanyWriteAccess from "../middleware/requireCompanyWriteAccess.j
 const router = express.Router();
 
 // ---------------- Google Authentication ----------------
-router.get("/google-calender-conn", isAuthenticated, getUserCalenderConn);
+router.get("/google-calender-conn", isVerifiedUser, getUserCalenderConn);
 router.post(
   "/google-disconnect",
   isVerifiedUser,
@@ -58,10 +57,10 @@ router.delete(
   requireCompanyWriteAccess,
   deleteTimeSlot
 );
-router.get("/time-slots", isAuthenticated, getTimeSlots);
+router.get("/time-slots", isVerifiedUser, getTimeSlots);
 
 // ---------------- Appointment Routes ----------------
-router.get("/get", isAuthenticated, getAppointments);
+router.get("/get", isVerifiedUser, getAppointments);
 router.put(
   "/:appointmentId/confirm",
   isVerifiedUser,
