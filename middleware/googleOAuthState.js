@@ -39,6 +39,6 @@ export const verifyGoogleOAuthCallbackState = (req, res, next) => {
     );
   }
 
-  req.query.state = decodedState.userId;
+  req.googleOAuthUserId = decodedState.userId;
   return next();
 };
