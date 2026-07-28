@@ -4,6 +4,12 @@ import mongoose from "mongoose";
 const hashOtp = (value) => {
   if (value === undefined || value === null) return value;
 
+  const normalizedValue = String(value).trim();
+
+  if (/^[a-f0-9]{64}$/i.test(normalizedValue)) {
+    return normalizedValue.toLowerCase();
+  }
+
   const secret = process.env.OTP_HASH_SECRET || process.env.JWT_SECRET;
 
   if (!secret) {
@@ -12,7 +18,7 @@ const hashOtp = (value) => {
 
   return crypto
     .createHmac("sha256", secret)
-    .update(String(value).trim())
+    .update(normalizedValue)
     .digest("hex");
 };
 
