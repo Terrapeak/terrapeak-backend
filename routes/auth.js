@@ -28,6 +28,7 @@ import {
 } from "../middleware/authRateLimits.js";
 import normalizeLoginFailure from "../middleware/normalizeLoginFailure.js";
 import preventAuthCaching from "../middleware/preventAuthCaching.js";
+import stripAuthTokens from "../middleware/stripAuthTokens.js";
 import validateSignupPassword from "../middleware/validateSignupPassword.js";
 
 const router = express.Router();
@@ -59,9 +60,20 @@ router.post(
   changeTemporaryPassword,
 );
 router.get("/google/callback", exchangeGoogleCode);
-router.post("/login", loginRateLimit, normalizeLoginFailure, login);
+router.post(
+  "/login",
+  loginRateLimit,
+  normalizeLoginFailure,
+  stripAuthTokens,
+  login,
+);
 router.post("/logout", logout);
-router.post("/platform-login", platformLoginRateLimit, platformLogin);
+router.post(
+  "/platform-login",
+  platformLoginRateLimit,
+  stripAuthTokens,
+  platformLogin,
+);
 router.post("/platform-logout", platformLogout);
 router.get("/session", isVerifiedUser, getDashboardSession);
 router.get(
