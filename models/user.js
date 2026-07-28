@@ -13,6 +13,7 @@ const userSchema = new mongoose.Schema(
     email: { type: String, unique: true, required: true },
     phone: { type: String, unique: true, required: true },
     password: { type: String, required: true },
+    authVersion: { type: Number, default: 0, min: 0 },
     country: { type: String, required: false },
     companyName: { type: String, required: false },
     isAdmin: { type: Boolean, default: false },
