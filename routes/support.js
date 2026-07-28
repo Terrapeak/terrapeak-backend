@@ -1,7 +1,6 @@
 import express from "express";
 import isPlatformAuthenticated from "../middleware/isPlatformAuthenticated.js";
 import isPlatformAdmin from "../middleware/isPlatformAdmin.js";
-import isVerifiedUser from "../middleware/isVerifiedUser.js";
 import resolveCompanyContext from "../middleware/resolveCompanyContext.js";
 import {
   listMySupportConversations,
@@ -27,12 +26,10 @@ import { getSupportReport } from "../controllers/supportReportController.js";
 
 const router = express.Router();
 
-const customerAuth = [isVerifiedUser, resolveCompanyContext];
-
-router.get("/conversations", ...customerAuth, listMySupportConversations);
-router.post("/conversations", ...customerAuth, createSupportConversation);
-router.post("/conversations/:conversationId/messages", ...customerAuth, replyToMySupportConversation);
-router.delete("/conversations/:conversationId", ...customerAuth, hideMySupportConversation);
+router.get("/conversations", resolveCompanyContext, listMySupportConversations);
+router.post("/conversations", resolveCompanyContext, createSupportConversation);
+router.post("/conversations/:conversationId/messages", resolveCompanyContext, replyToMySupportConversation);
+router.delete("/conversations/:conversationId", resolveCompanyContext, hideMySupportConversation);
 
 const platformAuth = [isPlatformAuthenticated, isPlatformAdmin];
 
