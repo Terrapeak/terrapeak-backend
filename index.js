@@ -31,6 +31,7 @@ app.use(express.static("public"));
 
 const productionOrigins = [
   process.env.FRONTEND_URL,
+  "https://terrapeak-gemini-assistant.vercel.app",
   "https://platform.terrapeakgroup.com",
   "https://dashboard.terrapeakgroup.com",
 ].filter(Boolean);
