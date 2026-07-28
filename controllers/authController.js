@@ -1,4 +1,5 @@
 import asyncHandler from "express-async-handler";
+import crypto from "crypto";
 import jwt from "jsonwebtoken";
 
 import User from "../models/user.js";
@@ -31,8 +32,23 @@ const platformCookieOptions = {
   maxAge: 8 * 60 * 60 * 1000,
 };
 
-const generateOTP = () =>
-  Math.floor(100000 + Math.random() * 900000).toString();
+const getOtpHashSecret = () => {
+  const secret = process.env.OTP_HASH_SECRET || process.env.JWT_SECRET;
+
+  if (!secret) {
+    throw new Error("OTP hashing secret is not configured.");
+  }
+
+  return secret;
+};
+
+const hashOtp = (value) =>
+  crypto
+    .createHmac("sha256", getOtpHashSecret())
+    .update(String(value).trim())
+    .digest("hex");
+
+const generateOTP = () => crypto.randomInt(100000, 1000000).toString();
 
 const createAuthToken = (user) =>
   jwt.sign(
@@ -236,7 +252,7 @@ export const verifySignupOTP = asyncHandler(
 
     const record = await Otp.findOne({
       email: normalizedEmail,
-      otp: otp.toString().trim(),
+      otp: hashOtp(otp),
     });
 
     if (!record) {
