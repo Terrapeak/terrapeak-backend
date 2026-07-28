@@ -61,7 +61,13 @@ router.post(
   optimizeSystemInstruction
 );
 
-router.get("/getApiKey", isVerifiedUser, resolveCompanyContext, getApiKey);
+router.get(
+  "/getApiKey",
+  isVerifiedUser,
+  resolveCompanyContext,
+  requireCompanyWriteAccess,
+  getApiKey
+);
 router.post(
   "/website-info",
   isVerifiedUser,
@@ -82,6 +88,11 @@ router.post("/ask", askRateLimiter, askGemini);
 
 router.get("/session/:sessionId", verifyDomain, getSession);
 
-router.get("/sessions", resolveCompanyContext, getUsersChatlog);
+router.get(
+  "/sessions",
+  isVerifiedUser,
+  resolveCompanyContext,
+  getUsersChatlog
+);
 
 export default router;
