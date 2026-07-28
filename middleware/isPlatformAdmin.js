@@ -11,7 +11,23 @@ const isPlatformAdmin = async (req, res, next) => {
   try {
     const user = await User.findById(req.userId);
 
-    if (!user || !PLATFORM_ADMIN_ROLES.includes(user.platformRole)) {
+    if (!user) {
+      return res.status(403).json({
+        success: false,
+        code: "PLATFORM_ACCESS_DENIED",
+        message: "Platform admin access required.",
+      });
+    }
+
+    if (user.accountStatus !== "active") {
+      return res.status(403).json({
+        success: false,
+        code: "ACCOUNT_INACTIVE",
+        message: "This account is not active.",
+      });
+    }
+
+    if (!PLATFORM_ADMIN_ROLES.includes(user.platformRole)) {
       return res.status(403).json({
         success: false,
         code: "PLATFORM_ACCESS_DENIED",
@@ -28,7 +44,6 @@ const isPlatformAdmin = async (req, res, next) => {
       console.error(
         `Platform configuration error: expected exactly one Platform Workspace, found ${platformCompanies.length}.`
       );
-
       return res.status(500).json({
         success: false,
         code: "PLATFORM_CONFIGURATION_INVALID",
