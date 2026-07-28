@@ -15,6 +15,7 @@ import {
 import isVerifiedUser from "../middleware/isVerifiedUser.js";
 import resolveCompanyContext from "../middleware/resolveCompanyContext.js";
 import requireCompanyWriteAccess from "../middleware/requireCompanyWriteAccess.js";
+import { signGoogleOAuthUrlState } from "../middleware/googleOAuthState.js";
 
 const router = express.Router();
 
@@ -32,6 +33,7 @@ router.get(
   isVerifiedUser,
   resolveCompanyContext,
   requireCompanyWriteAccess,
+  signGoogleOAuthUrlState,
   getGoogleAuthUrlController
 );
 
