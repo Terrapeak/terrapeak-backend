@@ -30,6 +30,7 @@ import normalizeLoginFailure from "../middleware/normalizeLoginFailure.js";
 import preventAuthCaching from "../middleware/preventAuthCaching.js";
 import stripAuthTokens from "../middleware/stripAuthTokens.js";
 import validateSignupPassword from "../middleware/validateSignupPassword.js";
+import { verifyGoogleOAuthCallbackState } from "../middleware/googleOAuthState.js";
 
 const router = express.Router();
 
@@ -59,7 +60,11 @@ router.post(
   isVerifiedUser,
   changeTemporaryPassword,
 );
-router.get("/google/callback", exchangeGoogleCode);
+router.get(
+  "/google/callback",
+  verifyGoogleOAuthCallbackState,
+  exchangeGoogleCode,
+);
 router.post(
   "/login",
   loginRateLimit,
