@@ -3,17 +3,10 @@ import cookieParser from "cookie-parser";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import routes from "./routes/index.js";
-import widgetRoutes from "./routes/widget.js";
 import swaggerRoutes from "./swagger.js";
 import cors from "cors";
-import path from "path";
 import ensureChannelRegistry from "./services/channelRegistryService.js";
 
-// Fix __dirname for ES Modules
-import { fileURLToPath } from "url";
-import { dirname } from "path";
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 dotenv.config();
 
 // Connect to MongoDB
