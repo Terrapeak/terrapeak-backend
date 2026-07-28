@@ -6,6 +6,7 @@ import routes from "./routes/index.js";
 import swaggerRoutes from "./swagger.js";
 import cors from "cors";
 import ensureChannelRegistry from "./services/channelRegistryService.js";
+import requireTrustedCookieOrigin from "./middleware/requireTrustedCookieOrigin.js";
 import configureProductionLogging from "./utils/configureProductionLogging.js";
 
 dotenv.config();
@@ -53,30 +54,50 @@ app.use(
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  })
+  }),
 );
 
 // Middleware
 app.use(
   express.json({
+    limit: "1mb",
     verify(req, res, buffer) {
       if (req.originalUrl?.split("?")[0] === "/api/facebook/webhook") {
         req.rawBody = Buffer.from(buffer);
       }
     },
-  })
+  }),
 );
 app.use(cookieParser());
+app.use(requireTrustedCookieOrigin);
 
 // Routes
 app.use("/api/", routes);
 app.use("/api", swaggerRoutes);
 
 app.use((err, req, res, next) => {
-  const statusCode = err.statusCode || 500;
-  console.log(err.stack);
+  const isMulterError = err?.name === "MulterError";
+  const explicitStatus = Number(err?.statusCode || err?.status);
+  const statusCode = isMulterError
+    ? 400
+    : Number.isInteger(explicitStatus) && explicitStatus >= 400 && explicitStatus < 600
+      ? explicitStatus
+      : 500;
+
+  console.error(err?.stack || err);
+
+  const isExpectedClientError = statusCode >= 400 && statusCode < 500;
+  const message = isMulterError
+    ? err.code === "LIMIT_FILE_SIZE"
+      ? "The uploaded file is too large."
+      : "The uploaded file could not be accepted."
+    : isExpectedClientError && err?.message
+      ? err.message
+      : "An unexpected error occurred.";
+
   res.status(statusCode).json({
-    message: err.message || "An unexpected error occurred",
+    success: false,
+    message,
   });
 });
 
