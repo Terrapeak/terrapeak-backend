@@ -27,9 +27,12 @@ import {
   signupOtpRateLimit,
 } from "../middleware/authRateLimits.js";
 import normalizeLoginFailure from "../middleware/normalizeLoginFailure.js";
+import preventAuthCaching from "../middleware/preventAuthCaching.js";
 import validateSignupPassword from "../middleware/validateSignupPassword.js";
 
 const router = express.Router();
+
+router.use(preventAuthCaching);
 
 router.post(
   "/signup/request-otp",
