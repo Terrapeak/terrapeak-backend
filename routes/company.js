@@ -2,6 +2,7 @@ import express from "express";
 import isAuthenticated from "../middleware/isAuthenticated.js";
 import isVerifiedUser from "../middleware/isVerifiedUser.js";
 import resolveCompanyContext from "../middleware/resolveCompanyContext.js";
+import requireCompanyWriteAccess from "../middleware/requireCompanyWriteAccess.js";
 
 import {
   getMyCompanyApps,
@@ -43,6 +44,7 @@ router.get(
   "/channels/facebook/connect",
   isVerifiedUser,
   resolveCompanyContext,
+  requireCompanyWriteAccess,
   connectFacebookChannel
 );
 
@@ -55,6 +57,7 @@ router.post(
   "/channels/facebook/select-page",
   isVerifiedUser,
   resolveCompanyContext,
+  requireCompanyWriteAccess,
   selectFacebookPage
 );
 
@@ -62,6 +65,7 @@ router.post(
   "/channels/facebook/verify-connection",
   isVerifiedUser,
   resolveCompanyContext,
+  requireCompanyWriteAccess,
   verifyFacebookConnection
 );
 
@@ -69,6 +73,7 @@ router.post(
   "/channels/facebook/disconnect",
   isVerifiedUser,
   resolveCompanyContext,
+  requireCompanyWriteAccess,
   disconnectFacebookChannel
 );
 
