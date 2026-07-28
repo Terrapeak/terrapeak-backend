@@ -17,6 +17,7 @@ import resolveCompanyContext from "../middleware/resolveCompanyContext.js";
 import requireCompanyWriteAccess from "../middleware/requireCompanyWriteAccess.js";
 import { askRateLimiter } from "../middleware/rateLimiter.js";
 import { verifyDomain } from "../middleware/validateChatbotApiKey.js";
+import validateChatbotModel from "../middleware/validateChatbotModel.js";
 import {
   maskCustomerAIConfigResponse,
   stripCustomerAIConfigUpdates,
@@ -40,6 +41,7 @@ router.post(
   resolveCompanyContext,
   requireCompanyWriteAccess,
   stripCustomerAIConfigUpdates,
+  validateChatbotModel,
   maskCustomerAIConfigResponse,
   saveChatbotSettings
 );
