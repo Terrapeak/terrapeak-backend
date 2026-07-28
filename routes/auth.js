@@ -12,7 +12,7 @@ import {
   changeTemporaryPassword,
   completePasswordReset,
 } from "../controllers/accountLifecycleController.js";
-import { exchangeGoogleCode } from "../controllers/appointmentController.js";
+import { exchangeVerifiedGoogleCode } from "../controllers/googleOAuthCallbackController.js";
 import {
   getDashboardSession,
   getPlatformSession,
@@ -63,7 +63,7 @@ router.post(
 router.get(
   "/google/callback",
   verifyGoogleOAuthCallbackState,
-  exchangeGoogleCode,
+  exchangeVerifiedGoogleCode,
 );
 router.post(
   "/login",
