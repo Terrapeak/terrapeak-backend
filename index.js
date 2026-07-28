@@ -8,6 +8,7 @@ import swaggerRoutes from "./swagger.js";
 import cors from "cors";
 import path from "path";
 import ensureChannelRegistry from "./services/channelRegistryService.js";
+import securityHeaders from "./middleware/securityHeaders.js";
 
 // Fix __dirname for ES Modules
 import { fileURLToPath } from "url";
@@ -27,6 +28,7 @@ mongoose
 
 const app = express();
 
+app.use(securityHeaders);
 app.use(express.static("public"));
 
 const productionOrigins = [
