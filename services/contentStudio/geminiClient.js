@@ -69,7 +69,6 @@ const mapGeminiError = (status, payload) => {
 };
 
 export const generateWithGemini = async ({
-  systemInstruction,
   prompt,
   temperature = 0.7,
   maxOutputTokens = 4096,
@@ -99,13 +98,9 @@ export const generateWithGemini = async ({
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        ...(systemInstruction
-          ? {
-              systemInstruction: {
-                parts: [{ text: systemInstruction }],
-              },
-            }
-          : {}),
+        systemInstruction: {
+          parts: [{ text: systemInstruction }],
+        },
         contents: [
           {
             role: "user",
