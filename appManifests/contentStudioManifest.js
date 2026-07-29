@@ -1,7 +1,7 @@
 const contentStudioManifest = {
   slug: "content-studio",
   name: "Content Studio",
-  category: "marketing",
+  category: "business",
   icon: "FilePenLine",
   launchMode: "internal",
   basePath: "/dashboard/content-studio",
