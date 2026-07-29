@@ -98,9 +98,6 @@ export const generateWithGemini = async ({
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        systemInstruction: {
-          parts: [{ text: systemInstruction }],
-        },
         contents: [
           {
             role: "user",
