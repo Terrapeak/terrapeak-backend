@@ -37,7 +37,7 @@ const textValue = (value, maximumLength) =>
 const textList = (value, maximumItems, maximumItemLength) => {
   const items = Array.isArray(value)
     ? value
-    : String(value || "").split(/\\r?\\n|,/);
+    : String(value || "").split(/\r?\n|,/));
 
   return items
     .map((item) => textValue(item, maximumItemLength))
