@@ -40,7 +40,7 @@ const APP_REGISTRY_DEFINITIONS = [
     name: "Content Studio",
     description:
       "Create branded articles and social media content using AI.",
-    category: "business",
+    category: "marketing",
     isCore: false,
     standalone: true,
     requiresAIAssistant: true,
