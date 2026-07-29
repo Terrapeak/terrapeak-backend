@@ -2,10 +2,10 @@ import asyncHandler from "express-async-handler";
 import User from "../models/user.js";
 import { oauth2Client } from "../utils/googleMeet.js";
 
-const redirectToAppointment = (res, status, message) => {
+const redirectAfterGoogleOAuth = (res, status, message, purpose = "calendar") => {
   const encodedMessage = encodeURIComponent(message);
   return res.redirect(
-    `${process.env.FRONTEND_URL}/dashboard/appointment?status=${status}&message=${encodedMessage}`,
+    `${process.env.FRONTEND_URL}${purpose === "content-studio-drive" ? "/dashboard/content-studio" : "/dashboard/appointment"}?googleStatus=${status}&message=${encodedMessage}`,
   );
 };
 
@@ -13,37 +13,41 @@ export const exchangeVerifiedGoogleCode = asyncHandler(async (req, res) => {
   try {
     const { code } = req.query;
     const userId = req.googleOAuthUserId;
+    const purpose = req.googleOAuthPurpose || "calendar";
 
     if (!code) {
-      return redirectToAppointment(
+      return redirectAfterGoogleOAuth(
         res,
         "false",
         "Google authorization code is required",
+        purpose,
       );
     }
 
     if (!userId) {
-      return redirectToAppointment(
+      return redirectAfterGoogleOAuth(
         res,
         "false",
         "Google authorization session is invalid or has expired.",
+        purpose,
       );
     }
 
     const { tokens } = await oauth2Client.getToken(code);
 
     if (!tokens?.access_token) {
-      return redirectToAppointment(
+      return redirectAfterGoogleOAuth(
         res,
         "false",
         "Failed to exchange Google authorization code.",
+        purpose,
       );
     }
 
     const user = await User.findById(userId);
 
     if (!user) {
-      return redirectToAppointment(res, "false", "User not found.");
+      return redirectAfterGoogleOAuth(res, "false", "User not found.", purpose);
     }
 
     user.isGoogleOauth = true;
@@ -55,13 +59,16 @@ export const exchangeVerifiedGoogleCode = asyncHandler(async (req, res) => {
 
     await user.save();
 
-    return redirectToAppointment(
+    return redirectAfterGoogleOAuth(
       res,
       "true",
-      "Google Calendar connected successfully",
+      purpose === "content-studio-drive"
+        ? "Google Drive connected successfully"
+        : "Google Calendar connected successfully",
+      purpose,
     );
   } catch (error) {
     console.error("Google OAuth callback failed:", error.message);
-    return redirectToAppointment(res, "false", "Google authentication failed.");
+    return redirectAfterGoogleOAuth(res, "false", "Google authentication failed.", req.googleOAuthPurpose);
   }
 });

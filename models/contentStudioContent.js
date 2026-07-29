@@ -120,6 +120,35 @@ const ContentStudioContentSchema = new mongoose.Schema(
       },
     },
 
+    imagePlacementMode: {
+      type: String,
+      enum: ["manual", "assisted", "automatic"],
+      default: "manual",
+    },
+
+    images: {
+      type: [
+        {
+          assetId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "ContentStudioImageAsset",
+            required: true,
+          },
+          position: {
+            type: String,
+            enum: ["cover", "after-heading", "after-paragraph", "inline", "manual"],
+            default: "manual",
+          },
+          anchor: { type: String, default: "", maxlength: 500 },
+          order: { type: Number, default: 0 },
+          altText: { type: String, default: "", maxlength: 500 },
+          caption: { type: String, default: "", maxlength: 1000 },
+          approved: { type: Boolean, default: true },
+        },
+      ],
+      default: [],
+    },
+
     lastEditedByUserId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

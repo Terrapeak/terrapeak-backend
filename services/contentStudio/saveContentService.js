@@ -42,6 +42,22 @@ const normalizeGenerationMetadata = (metadata = {}) => ({
   generationId: normalizeString(metadata.generationId),
 });
 
+const normalizeImages = (images) => {
+  if (!Array.isArray(images)) return [];
+  return images.slice(0, 30).filter((item) =>
+    item?.assetId && mongoose.Types.ObjectId.isValid(item.assetId)
+  ).map((item, index) => ({
+    assetId: item.assetId,
+    position: ["cover", "after-heading", "after-paragraph", "inline", "manual"].includes(item.position)
+      ? item.position : "manual",
+    anchor: normalizeString(item.anchor).slice(0, 500),
+    order: Number.isFinite(Number(item.order)) ? Number(item.order) : index,
+    altText: normalizeString(item.altText).slice(0, 500),
+    caption: normalizeString(item.caption).slice(0, 1000),
+    approved: item.approved !== false,
+  }));
+};
+
 const buildContentPayload = ({
   companyId,
   userId,
@@ -52,6 +68,8 @@ const buildContentPayload = ({
   status,
   brief,
   generationMetadata,
+  imagePlacementMode,
+  images,
 }) => {
   ensureObjectId(companyId, "company ID");
   ensureObjectId(userId, "user ID");
@@ -88,6 +106,9 @@ const buildContentPayload = ({
     generationMetadata: normalizeGenerationMetadata(
       generationMetadata,
     ),
+    imagePlacementMode: ["manual", "assisted", "automatic"].includes(imagePlacementMode)
+      ? imagePlacementMode : "manual",
+    images: normalizeImages(images),
   };
 };
 
@@ -247,6 +268,14 @@ export const updateContent = async ({
     ["draft", "final", "archived"].includes(updates.status)
   ) {
     allowedUpdates.status = updates.status;
+  }
+
+  if (["manual", "assisted", "automatic"].includes(updates.imagePlacementMode)) {
+    allowedUpdates.imagePlacementMode = updates.imagePlacementMode;
+  }
+
+  if (Array.isArray(updates.images)) {
+    allowedUpdates.images = normalizeImages(updates.images);
   }
 
   if (updates.brief && typeof updates.brief === "object") {
