@@ -10,6 +10,7 @@ import widgetRouter from "./widget.js";
 import facebookRoutes from "./facebook.js";
 import organizationRoutes from "./organizations.js";
 import platformOrganizationRoutes from "./platformOrganizations.js";
+import contentStudioRoutes from "./contentStudio.js";
 
 const router = express.Router();
 
@@ -24,5 +25,6 @@ router.use("/organizations", organizationRoutes);
 router.use("/support", supportRoutes);
 router.use("/api", widgetRouter);
 router.use("/facebook", facebookRoutes);
+router.use("/content-studio", contentStudioRoutes);
 
 export default router;

@@ -1,11 +1,14 @@
 import aiAssistantManifest from "./aiAssistantManifest.js";
 import facebookManifest from "./facebookManifest.js";
 import reservationsManifest from "./reservationsManifest.js";
+import contentStudioManifest from "./contentStudioManifest.js";
+
 
 const manifests = {
   "ai-assistant": aiAssistantManifest,
   facebook: facebookManifest,
   reservations: reservationsManifest,
+  "content-studio": contentStudioManifest,
 };
 
 export function getAppManifest(appSlug) {
