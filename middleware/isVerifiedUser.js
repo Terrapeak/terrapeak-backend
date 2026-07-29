@@ -18,6 +18,7 @@ const isVerifiedUser = async (req, res, next) => {
       }
 
       req.userId = decoded._id;
+      req.authTokenIssuedAt = decoded.iat;
       req.authTokenSource = source;
     }
 
@@ -28,6 +29,18 @@ const isVerifiedUser = async (req, res, next) => {
         success: false,
         code: "USER_NOT_FOUND",
         message: "User not found.",
+      });
+    }
+
+    if (
+      user.passwordChangedAt &&
+      req.authTokenIssuedAt &&
+      req.authTokenIssuedAt * 1000 < user.passwordChangedAt.getTime() - 1000
+    ) {
+      return res.status(401).json({
+        success: false,
+        code: "SESSION_REVOKED",
+        message: "Your session is no longer valid. Please sign in again.",
       });
     }
 
