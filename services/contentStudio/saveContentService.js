@@ -14,13 +14,27 @@ const ensureObjectId = (value, fieldName) => {
 const normalizeString = (value, fallback = "") =>
   typeof value === "string" ? value.trim() : fallback;
 
-const normalizeStringList = (value) => {
+const normalizeStringList = (
+  value,
+  maximumItems = 50,
+  maximumItemLength = 500,
+) => {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => normalizeString(item).slice(0, maximumItemLength))
+    .filter(Boolean)
+    .slice(0, maximumItems);
+};
+
+const escapeRegularExpression = (value) =>
+  value.replace(/[.*+?^$\\{}()|[\]\\\\]/g, "\\const normalizeStringList = (value) => {
   if (!Array.isArray(value)) return [];
 
   return value
     .map((item) => normalizeString(item))
     .filter(Boolean);
-};
+};");
 
 const normalizeBrief = (brief = {}) => ({
   goal: normalizeString(brief.goal),
@@ -125,25 +139,25 @@ export const getContentLibrary = async ({
     query.contentType = normalizeString(contentType).toLowerCase();
   }
 
-  const normalizedSearch = normalizeString(search);
+  const normalizedSearch = normalizeString(search).slice(0, 200);
 
   if (normalizedSearch) {
     query.$or = [
       {
         title: {
-          $regex: normalizedSearch,
+          $regex: escapeRegularExpression(normalizedSearch),
           $options: "i",
         },
       },
       {
         summary: {
-          $regex: normalizedSearch,
+          $regex: escapeRegularExpression(normalizedSearch),
           $options: "i",
         },
       },
       {
         content: {
-          $regex: normalizedSearch,
+          $regex: escapeRegularExpression(normalizedSearch),
           $options: "i",
         },
       },
