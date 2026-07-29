@@ -28,13 +28,7 @@ const normalizeStringList = (
 };
 
 const escapeRegularExpression = (value) =>
-  value.replace(/[.*+?^$\\{}()|[\]\\\\]/g, "\\const normalizeStringList = (value) => {
-  if (!Array.isArray(value)) return [];
-
-  return value
-    .map((item) => normalizeString(item))
-    .filter(Boolean);
-};");
+  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const normalizeBrief = (brief = {}) => ({
   goal: normalizeString(brief.goal),
