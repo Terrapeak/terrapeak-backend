@@ -73,7 +73,6 @@ export const generateContent = async ({
 });
 
   const aiResult = await generateWithGemini({
-    systemInstruction,
     prompt,
     temperature: 0.65,
     maxOutputTokens:
