@@ -2,6 +2,7 @@ import express from "express";
 import isVerifiedUser from "../middleware/isAuthenticated.js";
 import resolveCompanyContext from "../middleware/resolveCompanyContext.js";
 import requireCompanyWriteAccess from "../middleware/requireCompanyWriteAccess.js";
+import requireCompanyApp from "../middleware/requireCompanyApp.js";
 import { generateContentDraft } from "../controllers/contentStudioController.js";
 import {
   deleteContentController,
@@ -21,6 +22,7 @@ router.use(
   isVerifiedUser,
   resolveCompanyContext,
   requireCompanyWriteAccess,
+  requireCompanyApp("content-studio"),
 );
 
 router.post("/generate", generateContentDraft);
