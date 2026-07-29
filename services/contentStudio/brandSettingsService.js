@@ -14,18 +14,24 @@ const ensureObjectId = (value, fieldName) => {
 const normalizeString = (value, fallback = "") =>
   typeof value === "string" ? value.trim() : fallback;
 
-const normalizeStringList = (value) => {
+const normalizeStringList = (
+  value,
+  maximumItems = 100,
+  maximumItemLength = 500,
+) => {
   if (Array.isArray(value)) {
     return value
-      .map((item) => normalizeString(item))
-      .filter(Boolean);
+      .map((item) => normalizeString(item).slice(0, maximumItemLength))
+      .filter(Boolean)
+      .slice(0, maximumItems);
   }
 
   if (typeof value === "string") {
     return value
       .split(/\r?\n|,/)
-      .map((item) => item.trim())
-      .filter(Boolean);
+      .map((item) => item.trim().slice(0, maximumItemLength))
+      .filter(Boolean)
+      .slice(0, maximumItems);
   }
 
   return [];
