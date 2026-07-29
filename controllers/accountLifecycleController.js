@@ -66,6 +66,7 @@ export const completePasswordReset = asyncHandler(async (req, res) => {
   }
 
   user.password = password;
+  user.passwordChangedAt = new Date();
   user.mustChangePassword = false;
   user.passwordResetTokenHash = null;
   user.passwordResetExpiresAt = null;
