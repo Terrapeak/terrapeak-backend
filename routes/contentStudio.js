@@ -1,5 +1,5 @@
 import express from "express";
-import isVerifiedUser from "../middleware/isAuthenticated.js";
+import isVerifiedUser from "../middleware/isVerifiedUser.js";
 import resolveCompanyContext from "../middleware/resolveCompanyContext.js";
 import requireCompanyWriteAccess from "../middleware/requireCompanyWriteAccess.js";
 import requireCompanyApp from "../middleware/requireCompanyApp.js";
