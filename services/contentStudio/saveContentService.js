@@ -14,21 +14,13 @@ const ensureObjectId = (value, fieldName) => {
 const normalizeString = (value, fallback = "") =>
   typeof value === "string" ? value.trim() : fallback;
 
-const normalizeStringList = (
-  value,
-  maximumItems = 50,
-  maximumItemLength = 500,
-) => {
+const normalizeStringList = (value) => {
   if (!Array.isArray(value)) return [];
 
   return value
-    .map((item) => normalizeString(item).slice(0, maximumItemLength))
-    .filter(Boolean)
-    .slice(0, maximumItems);
+    .map((item) => normalizeString(item))
+    .filter(Boolean);
 };
-
-const escapeRegularExpression = (value) =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const normalizeBrief = (brief = {}) => ({
   goal: normalizeString(brief.goal),
@@ -133,25 +125,25 @@ export const getContentLibrary = async ({
     query.contentType = normalizeString(contentType).toLowerCase();
   }
 
-  const normalizedSearch = normalizeString(search).slice(0, 200);
+  const normalizedSearch = normalizeString(search);
 
   if (normalizedSearch) {
     query.$or = [
       {
         title: {
-          $regex: escapeRegularExpression(normalizedSearch),
+          $regex: normalizedSearch,
           $options: "i",
         },
       },
       {
         summary: {
-          $regex: escapeRegularExpression(normalizedSearch),
+          $regex: normalizedSearch,
           $options: "i",
         },
       },
       {
         content: {
-          $regex: escapeRegularExpression(normalizedSearch),
+          $regex: normalizedSearch,
           $options: "i",
         },
       },

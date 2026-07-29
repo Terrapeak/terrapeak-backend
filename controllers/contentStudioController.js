@@ -34,17 +34,6 @@ const ALLOWED_LENGTHS = new Set(["short", "medium", "long"]);
 const textValue = (value, maximumLength) =>
   String(value || "").trim().slice(0, maximumLength);
 
-const textList = (value, maximumItems, maximumItemLength) => {
-  const items = Array.isArray(value)
-    ? value
-    : String(value || "").split(/\r?\n|,/);
-
-  return items
-    .map((item) => textValue(item, maximumItemLength))
-    .filter(Boolean)
-    .slice(0, maximumItems);
-};
-
 const validateBrief = (body = {}) => {
   const errors = {};
 
@@ -82,8 +71,17 @@ const normalizeBrief = (body) => ({
   audience: textValue(body.audience, 1000),
   tone: body.tone,
   length: body.length,
-  keyPoints: textList(body.keyPoints, 50, 500),
-  keywords: textList(body.keywords, 30, 100),
+  keyPoints: textValue(body.keyPoints, 5000),
+  keywords: Array.isArray(body.keywords)
+    ? body.keywords
+        .map((keyword) => textValue(keyword, 100))
+        .filter(Boolean)
+        .slice(0, 30)
+    : textValue(body.keywords, 2000)
+        .split(",")
+        .map((keyword) => keyword.trim())
+        .filter(Boolean)
+        .slice(0, 30),
   callToAction: textValue(body.callToAction, 1000),
 });
 

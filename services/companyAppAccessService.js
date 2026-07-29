@@ -4,14 +4,10 @@ import { isPlatformOwnerCompany } from "../utils/companyIdentity.js";
 const BILLING_ENABLED_STATUSES = new Set(["trial", "active", "manual"]);
 
 const PLAN_LEVELS = {
-  demo: 0,
   starter: 1,
   growth: 2,
-  business: 2,
   professional: 3,
-  pro: 3,
   enterprise: 4,
-  custom: 4,
 };
 
 export const resolveEffectiveBilling = async (company) => {
