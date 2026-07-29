@@ -16,6 +16,7 @@ const isPlatformAuthenticated = async (req, res, next) => {
 
   req.userId = decoded._id;
   req.platformRole = decoded.platformRole;
+  req.authTokenIssuedAt = decoded.iat;
   req.authTokenSource = source;
   return next();
 };
