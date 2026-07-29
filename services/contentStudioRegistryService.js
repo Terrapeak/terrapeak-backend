@@ -1,15 +1,24 @@
-import APP_REGISTRY_DEFINITIONS from "../appRegistryDefinitions.js";
 import App from "../models/app.js";
 
-const CONTENT_STUDIO_APP = APP_REGISTRY_DEFINITIONS.find(
-  (app) => app.slug === "content-studio",
-);
+const CONTENT_STUDIO_APP = {
+  slug: "content-studio",
+  name: "Content Studio",
+  description: "Create branded business content using AI.",
+  category: "business",
+  isCore: false,
+  standalone: false,
+  requiresAIAssistant: true,
+  launchUrl: "/dashboard/content-studio",
+  isVisible: true,
+  isComingSoon: false,
+  allowInstall: true,
+  minimumPlan: "business",
+  dependencies: ["ai-assistant"],
+  icon: "FilePenLine",
+  sortOrder: 30,
+};
 
 export default async function ensureContentStudioRegistry() {
-  if (!CONTENT_STUDIO_APP) {
-    throw new Error("Content Studio registry definition is missing.");
-  }
-
   await App.findOneAndUpdate(
     { slug: CONTENT_STUDIO_APP.slug },
     { $set: CONTENT_STUDIO_APP },
