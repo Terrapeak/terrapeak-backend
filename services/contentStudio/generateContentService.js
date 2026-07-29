@@ -8,10 +8,7 @@ const safeJsonParse = (value) => {
     return JSON.parse(value);
   } catch {
     const match = String(value || "").match(/\{[\s\S]*\}/);
-
-    if (!match) {
-      return null;
-    }
+    if (!match) return null;
 
     try {
       return JSON.parse(match[0]);
@@ -25,9 +22,7 @@ const cleanText = (value, maximumLength) =>
   String(value || "").trim().slice(0, maximumLength);
 
 const normalizeGeneratedContent = (value) => {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
+  if (!value || typeof value !== "object") return null;
 
   const suggestedKeywords = Array.isArray(value.suggestedKeywords)
     ? value.suggestedKeywords
@@ -46,34 +41,29 @@ const normalizeGeneratedContent = (value) => {
     socialCaption: cleanText(value.socialCaption, 2000),
   };
 
-  if (!normalized.title || !normalized.content) {
-    return null;
-  }
-
+  if (!normalized.title || !normalized.content) return null;
   return normalized;
 };
 
-export const generateContent = async ({
-  company,
-  userId,
-  brief,
-}) => {
+export const generateContent = async ({ company, userId, brief }) => {
   const brandSettings = company?._id
-    ? await getBrandSettings({
-      companyId: company._id,
-    })
-  : {};
+    ? await getBrandSettings({ companyId: company._id })
+    : {};
 
   const prompt = buildContentPrompt({
-  brief: {
-    ...brief,
-    companyName: company?.name,
-  },
-  brandSettings,
-});
+    brief: {
+      ...brief,
+      companyName: company?.name,
+    },
+    brandSettings,
+  });
 
+  const aiConfig = company?.contentStudioAiConfig || {};
   const aiResult = await generateWithGemini({
     prompt,
+    apiKey: aiConfig.geminiKey,
+    model: aiConfig.model || "gemini-2.5-flash",
+    fallbackModel: aiConfig.fallbackModel || "gemini-2.5-flash-lite",
     temperature: 0.65,
     maxOutputTokens:
       brief.length === "long"
@@ -88,12 +78,10 @@ export const generateContent = async ({
 
   if (!generatedContent) {
     const error = new Error(
-      "The generated content could not be processed. Please try again."
+      "The generated content could not be processed. Please try again.",
     );
-
     error.code = "INVALID_GENERATED_CONTENT";
     error.statusCode = 502;
-
     throw error;
   }
 
