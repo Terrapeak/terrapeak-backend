@@ -6,6 +6,7 @@ import routes from "./routes/index.js";
 import swaggerRoutes from "./swagger.js";
 import cors from "cors";
 import ensureChannelRegistry from "./services/channelRegistryService.js";
+import ensureContentStudioRegistry from "./services/contentStudioRegistryService.js";
 import requireTrustedCookieOrigin from "./middleware/requireTrustedCookieOrigin.js";
 import configureProductionLogging from "./utils/configureProductionLogging.js";
 
@@ -18,6 +19,7 @@ mongoose
   .then(async () => {
     console.log("MongoDB connected");
     await ensureChannelRegistry();
+    await ensureContentStudioRegistry();
   })
   .catch((error) => console.error("MongoDB connection error:", error));
 
