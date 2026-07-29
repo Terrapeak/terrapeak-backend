@@ -31,6 +31,11 @@ import {
   testPlatformAIConfig,
 } from "../controllers/platformAIConfigController.js";
 import {
+  getPlatformContentStudioAIConfig,
+  updatePlatformContentStudioAIConfig,
+  testPlatformContentStudioAIConfig,
+} from "../controllers/platformContentStudioAIConfigController.js";
+import {
   getPlatformDashboardSummary,
   runPlatformAttentionScanNow,
 } from "../controllers/platformAttentionController.js";
@@ -59,6 +64,9 @@ router.patch("/companies/:companyId/commercial", isPlatformAuthenticated, isPlat
 router.get("/companies/:companyId/ai-config", isPlatformAuthenticated, isPlatformAdmin, getPlatformAIConfig);
 router.patch("/companies/:companyId/ai-config", isPlatformAuthenticated, isPlatformAdmin, updatePlatformAIConfig);
 router.post("/companies/:companyId/ai-config/test", isPlatformAuthenticated, isPlatformAdmin, testPlatformAIConfig);
+router.get("/companies/:companyId/content-studio-ai-config", isPlatformAuthenticated, isPlatformAdmin, getPlatformContentStudioAIConfig);
+router.patch("/companies/:companyId/content-studio-ai-config", isPlatformAuthenticated, isPlatformAdmin, updatePlatformContentStudioAIConfig);
+router.post("/companies/:companyId/content-studio-ai-config/test", isPlatformAuthenticated, isPlatformAdmin, testPlatformContentStudioAIConfig);
 router.post("/companies/:companyId/users", isPlatformAuthenticated, isPlatformAdmin, addPlatformCompanyUser);
 router.post("/companies/:companyId/users/invite", isPlatformAuthenticated, isPlatformAdmin, invitePlatformCompanyUser);
 router.patch("/companies/:companyId/users/:membershipId", isPlatformAuthenticated, isPlatformAdmin, updatePlatformCompanyUserLifecycle);
