@@ -19,6 +19,18 @@ const isPlatformAdmin = async (req, res, next) => {
       });
     }
 
+    if (
+      user.passwordChangedAt &&
+      req.authTokenIssuedAt &&
+      req.authTokenIssuedAt * 1000 < user.passwordChangedAt.getTime() - 1000
+    ) {
+      return res.status(401).json({
+        success: false,
+        code: "SESSION_REVOKED",
+        message: "Your session is no longer valid. Please sign in again.",
+      });
+    }
+
     if (user.accountStatus !== "active") {
       return res.status(403).json({
         success: false,
