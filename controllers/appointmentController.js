@@ -113,7 +113,9 @@ export const disconnectGoogleCalendar = asyncHandler(async (req, res, next) => {
 export const getGoogleAuthUrlController = asyncHandler(async (req, res) => {
   const user = await User.findById(req.userId).select("isGoogleOauth");
 
-  if (user?.isGoogleOauth) {
+  const wantsDrive = req.query?.purpose === "content-studio-drive";
+
+  if (user?.isGoogleOauth && !wantsDrive) {
     return res.status(400).json({
       success: false,
       message: "Google Calendar is already connected",
@@ -123,7 +125,12 @@ export const getGoogleAuthUrlController = asyncHandler(async (req, res) => {
   const url = oauth2Client.generateAuthUrl({
     access_type: "offline",
     prompt: "consent",
-    scope: ["https://www.googleapis.com/auth/calendar.events"], // ← narrower & better
+    scope: wantsDrive
+      ? [
+          "https://www.googleapis.com/auth/calendar.events",
+          "https://www.googleapis.com/auth/drive.readonly",
+        ]
+      : ["https://www.googleapis.com/auth/calendar.events"],
     state: req.userId.toString(),
   });
   console.log("Auth URL:", url);
