@@ -10,7 +10,7 @@ export const signGoogleOAuthUrlState = (req, res, next) => {
     if (body?.url) {
       try {
         const authUrl = new URL(body.url);
-        authUrl.searchParams.set("state", createGoogleOAuthState(req.userId));
+        authUrl.searchParams.set("state", createGoogleOAuthState(req.userId, req.query?.purpose));
         body = { ...body, url: authUrl.toString() };
       } catch {
         return originalJson({
@@ -40,5 +40,6 @@ export const verifyGoogleOAuthCallbackState = (req, res, next) => {
   }
 
   req.googleOAuthUserId = decodedState.userId;
+  req.googleOAuthPurpose = decodedState.purpose || "calendar";
   return next();
 };
