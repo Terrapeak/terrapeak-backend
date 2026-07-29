@@ -28,6 +28,7 @@ import {
 } from "../middleware/authRateLimits.js";
 import normalizeLoginFailure from "../middleware/normalizeLoginFailure.js";
 import preventAuthCaching from "../middleware/preventAuthCaching.js";
+import requireActiveLoginAccount from "../middleware/requireActiveLoginAccount.js";
 import stripAuthTokens from "../middleware/stripAuthTokens.js";
 import validateSignupPassword from "../middleware/validateSignupPassword.js";
 import { verifyGoogleOAuthCallbackState } from "../middleware/googleOAuthState.js";
@@ -69,6 +70,7 @@ router.post(
   "/login",
   loginRateLimit,
   normalizeLoginFailure,
+  requireActiveLoginAccount,
   stripAuthTokens,
   login,
 );
@@ -76,6 +78,7 @@ router.post("/logout", logout);
 router.post(
   "/platform-login",
   platformLoginRateLimit,
+  requireActiveLoginAccount,
   stripAuthTokens,
   platformLogin,
 );
