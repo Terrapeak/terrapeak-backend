@@ -36,6 +36,25 @@ const APP_REGISTRY_DEFINITIONS = [
     sortOrder: 2,
   },
   {
+    slug: "content-studio",
+    name: "Content Studio",
+    description:
+      "Create branded articles and social media content using AI.",
+    category: "marketing",
+    isCore: false,
+    standalone: true,
+    requiresAIAssistant: true,
+    launchUrl: "/dashboard/content-studio",
+    isVisible: true,
+    isComingSoon: false,
+    allowInstall: true,
+    minimumPlan: "starter",
+    dependencies: ["ai-assistant"],
+    defaultForCustomer: false,
+    icon: "FilePenLine",
+    sortOrder: 3,
+  },
+  {
     slug: "crm",
     name: "CRM",
     description:
