@@ -18,11 +18,12 @@ const encode = (value) =>
 const sign = (payload) =>
   crypto.createHmac("sha256", getSecret()).update(payload).digest("base64url");
 
-export const createGoogleOAuthState = (userId) => {
+export const createGoogleOAuthState = (userId, purpose = "calendar") => {
   const payload = encode({
     userId: String(userId),
     issuedAt: Date.now(),
     nonce: crypto.randomBytes(16).toString("hex"),
+    purpose: purpose === "content-studio-drive" ? purpose : "calendar",
   });
 
   return `${payload}.${sign(payload)}`;
