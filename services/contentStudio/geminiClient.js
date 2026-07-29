@@ -1,6 +1,10 @@
 const DEFAULT_MODEL =
   process.env.CONTENT_STUDIO_AI_MODEL || "gemini-2.5-flash";
 
+const FALLBACK_MODEL =
+  process.env.CONTENT_STUDIO_AI_FALLBACK_MODEL ||
+  "gemini-2.5-flash-lite";
+
 const REQUEST_TIMEOUT_MS = 30000;
 
 const createAiError = (code, message, statusCode = 503) => {
@@ -14,7 +18,7 @@ const getApiKey = () =>
   process.env.CONTENT_STUDIO_GEMINI_API_KEY ||
   process.env.GEMINI_API_KEY;
 
-const mapGeminiError = (status, payload) => {
+const mapGeminiError = (status, payload, model) => {
   const providerMessage = String(payload?.error?.message || "").toLowerCase();
 
   if (
@@ -44,7 +48,7 @@ const mapGeminiError = (status, payload) => {
   ) {
     return createAiError(
       "AI_MODEL_UNAVAILABLE",
-      `The Content Studio model ${DEFAULT_MODEL} is unavailable.`,
+      `The Content Studio model ${model} is unavailable.`,
       503
     );
   }
@@ -72,6 +76,7 @@ export const generateWithGemini = async ({
   prompt,
   temperature = 0.7,
   maxOutputTokens = 4096,
+  model = DEFAULT_MODEL,
 }) => {
   const apiKey = getApiKey();
 
@@ -89,7 +94,7 @@ export const generateWithGemini = async ({
   try {
     const url =
       "https://generativelanguage.googleapis.com/v1beta/models/" +
-      `${encodeURIComponent(DEFAULT_MODEL)}:generateContent` +
+      `${encodeURIComponent(model)}:generateContent` +
       `?key=${encodeURIComponent(apiKey)}`;
 
     const response = await fetch(url, {
@@ -116,7 +121,21 @@ export const generateWithGemini = async ({
     const payload = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      throw mapGeminiError(response.status, payload);
+      const providerError = mapGeminiError(response.status, payload, model);
+
+      if (
+        providerError.code === "AI_RATE_LIMITED" &&
+        model !== FALLBACK_MODEL
+      ) {
+        return generateWithGemini({
+          prompt,
+          temperature,
+          maxOutputTokens,
+          model: FALLBACK_MODEL,
+        });
+      }
+
+      throw providerError;
     }
 
     const text = (payload?.candidates?.[0]?.content?.parts || [])
@@ -134,7 +153,7 @@ export const generateWithGemini = async ({
 
     return {
       text,
-      model: DEFAULT_MODEL,
+      model,
       usage: payload?.usageMetadata || null,
     };
   } catch (error) {
