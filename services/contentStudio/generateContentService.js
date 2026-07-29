@@ -1,9 +1,6 @@
 import { randomUUID } from "crypto";
 import { generateWithGemini } from "./geminiClient.js";
-import {
-  buildContentPrompt,
-  CONTENT_STUDIO_SYSTEM_INSTRUCTION,
-} from "./promptBuilder.js";
+import { buildContentPrompt } from "./promptBuilder.js";
 import { getBrandSettings } from "./brandSettingsService.js";
 
 const safeJsonParse = (value) => {
@@ -76,7 +73,7 @@ export const generateContent = async ({
 });
 
   const aiResult = await generateWithGemini({
-    systemInstruction: CONTENT_STUDIO_SYSTEM_INSTRUCTION,
+    systemInstruction,
     prompt,
     temperature: 0.65,
     maxOutputTokens:
