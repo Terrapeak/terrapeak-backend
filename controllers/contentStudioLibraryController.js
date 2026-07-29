@@ -6,13 +6,7 @@ import {
   updateContent,
 } from "../services/contentStudio/saveContentService.js";
 
-const getCompanyId = (req) =>
-  req.company?._id ||
-  req.company?.id ||
-  req.companyId ||
-  req.companyContext?.companyId ||
-  req.workspace?.companyId ||
-  req.headers["x-company-id"];
+const getCompanyId = (req) => req.company?._id;
 
 const getUserId = (req) =>
   req.user?._id ||
