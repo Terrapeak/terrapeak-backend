@@ -13,7 +13,7 @@ const userSchema = new mongoose.Schema(
     email: { type: String, unique: true, required: true },
     phone: { type: String, unique: true, required: true },
     password: { type: String, required: true },
-    authVersion: { type: Number, default: 0, min: 0 },
+    passwordChangedAt: { type: Date, default: null },
     country: { type: String, required: false },
     companyName: { type: String, required: false },
     isAdmin: { type: Boolean, default: false },
@@ -89,16 +89,12 @@ userSchema.pre("validate", async function guardPlatformAccess() {
 const guardPlatformAccessQuery = async function guardQuery() {
   const intent = extractPlatformAccessUpdate(this.getUpdate());
   const grantsAccess =
-    (intent.touchesPlatformRole &&
-      intent.platformRole !== "none") ||
+    (intent.touchesPlatformRole && intent.platformRole !== "none") ||
     (intent.touchesIsAdmin && intent.isAdmin === true);
 
   if (!grantsAccess) return;
 
-  const users = await this.model
-    .find(this.getQuery())
-    .select("_id")
-    .lean();
+  const users = await this.model.find(this.getQuery()).select("_id").lean();
   const candidateIds = users.map((user) => user._id);
   const queryId = this.getQuery()?._id;
   const upsertId =
@@ -115,8 +111,7 @@ const guardPlatformAccessQuery = async function guardQuery() {
 
   await assertPlatformAccessAssignmentAllowed({
     userIds: candidateIds,
-    platformRole:
-      intent.touchesPlatformRole ? intent.platformRole : "none",
+    platformRole: intent.touchesPlatformRole ? intent.platformRole : "none",
     isAdmin: intent.touchesIsAdmin ? intent.isAdmin : false,
   });
 };
@@ -163,23 +158,18 @@ userSchema.pre("bulkWrite", function guardBulkAccess(next, operations) {
         }
 
         const mutation =
-          operation.updateOne ||
-          operation.updateMany ||
-          operation.replaceOne;
+          operation.updateOne || operation.updateMany || operation.replaceOne;
         if (!mutation) continue;
 
         const intent = extractPlatformAccessUpdate(
           mutation.update || mutation.replacement
         );
         const grantsAccess =
-          (intent.touchesPlatformRole &&
-            intent.platformRole !== "none") ||
+          (intent.touchesPlatformRole && intent.platformRole !== "none") ||
           (intent.touchesIsAdmin && intent.isAdmin === true);
         if (!grantsAccess) continue;
 
-        const users = await this.find(mutation.filter)
-          .select("_id")
-          .lean();
+        const users = await this.find(mutation.filter).select("_id").lean();
         const candidateIds = users.map((user) => user._id);
         const filterId = mutation.filter?._id;
         const upsertId =
@@ -189,16 +179,13 @@ userSchema.pre("bulkWrite", function guardBulkAccess(next, operations) {
         if (
           mutation.upsert &&
           upsertId &&
-          !candidateIds.some(
-            (id) => id.toString() === upsertId.toString()
-          )
+          !candidateIds.some((id) => id.toString() === upsertId.toString())
         ) {
           candidateIds.push(upsertId);
         }
         await assertPlatformAccessAssignmentAllowed({
           userIds: candidateIds,
-          platformRole:
-            intent.touchesPlatformRole ? intent.platformRole : "none",
+          platformRole: intent.touchesPlatformRole ? intent.platformRole : "none",
           isAdmin: intent.touchesIsAdmin ? intent.isAdmin : false,
         });
       }
