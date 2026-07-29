@@ -1,10 +1,3 @@
-const DEFAULT_MODEL =
-  process.env.CONTENT_STUDIO_AI_MODEL || "gemini-2.5-flash";
-
-const FALLBACK_MODEL =
-  process.env.CONTENT_STUDIO_AI_FALLBACK_MODEL ||
-  "gemini-2.5-flash-lite";
-
 const REQUEST_TIMEOUT_MS = 30000;
 
 const createAiError = (code, message, statusCode = 503) => {
@@ -14,22 +7,17 @@ const createAiError = (code, message, statusCode = 503) => {
   return error;
 };
 
-const getApiKey = () =>
-  process.env.CONTENT_STUDIO_GEMINI_API_KEY ||
-  process.env.GEMINI_API_KEY;
-
 const mapGeminiError = (status, payload, model) => {
   const providerMessage = String(payload?.error?.message || "").toLowerCase();
 
   if (
     status === 400 &&
-    (providerMessage.includes("api key") ||
-      providerMessage.includes("api_key"))
+    (providerMessage.includes("api key") || providerMessage.includes("api_key"))
   ) {
     return createAiError(
       "INVALID_AI_API_KEY",
       "The Content Studio AI API key is invalid.",
-      500
+      500,
     );
   }
 
@@ -37,7 +25,7 @@ const mapGeminiError = (status, payload, model) => {
     return createAiError(
       "AI_PERMISSION_DENIED",
       "The AI provider denied access to Content Studio.",
-      503
+      503,
     );
   }
 
@@ -49,7 +37,7 @@ const mapGeminiError = (status, payload, model) => {
     return createAiError(
       "AI_MODEL_UNAVAILABLE",
       `The Content Studio model ${model} is unavailable.`,
-      503
+      503,
     );
   }
 
@@ -61,14 +49,14 @@ const mapGeminiError = (status, payload, model) => {
     return createAiError(
       "AI_RATE_LIMITED",
       "Content generation is temporarily rate-limited. Please try again shortly.",
-      429
+      429,
     );
   }
 
   return createAiError(
     "AI_REQUEST_FAILED",
     "The AI provider could not generate the requested content.",
-    status >= 400 && status < 600 ? status : 503
+    status >= 400 && status < 600 ? status : 503,
   );
 };
 
@@ -76,15 +64,15 @@ export const generateWithGemini = async ({
   prompt,
   temperature = 0.7,
   maxOutputTokens = 4096,
-  model = DEFAULT_MODEL,
+  apiKey,
+  model = "gemini-2.5-flash",
+  fallbackModel = "gemini-2.5-flash-lite",
 }) => {
-  const apiKey = getApiKey();
-
   if (!apiKey) {
     throw createAiError(
       "MISSING_AI_API_KEY",
-      "CONTENT_STUDIO_GEMINI_API_KEY or GEMINI_API_KEY is not configured.",
-      503
+      "Content Studio AI is not configured for this company.",
+      503,
     );
   }
 
@@ -99,9 +87,7 @@ export const generateWithGemini = async ({
 
     const response = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [
           {
@@ -125,13 +111,16 @@ export const generateWithGemini = async ({
 
       if (
         providerError.code === "AI_RATE_LIMITED" &&
-        model !== FALLBACK_MODEL
+        fallbackModel &&
+        model !== fallbackModel
       ) {
         return generateWithGemini({
           prompt,
           temperature,
           maxOutputTokens,
-          model: FALLBACK_MODEL,
+          apiKey,
+          model: fallbackModel,
+          fallbackModel: null,
         });
       }
 
@@ -147,7 +136,7 @@ export const generateWithGemini = async ({
       throw createAiError(
         "EMPTY_AI_RESPONSE",
         "The AI provider returned an empty response.",
-        502
+        502,
       );
     }
 
@@ -161,18 +150,16 @@ export const generateWithGemini = async ({
       throw createAiError(
         "AI_TIMEOUT",
         "Content generation timed out. Please try again.",
-        504
+        504,
       );
     }
 
-    if (error?.code) {
-      throw error;
-    }
+    if (error?.code) throw error;
 
     throw createAiError(
       "AI_NETWORK_ERROR",
       "The backend could not reach the AI provider.",
-      503
+      503,
     );
   } finally {
     clearTimeout(timeout);
