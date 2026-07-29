@@ -109,6 +109,8 @@ export const importImageUrl = async ({ companyId, userId, imageUrl }) => {
     timeout: 12000,
     maxContentLength: MAX_IMAGE_BYTES,
     maxBodyLength: MAX_IMAGE_BYTES,
+    maxRedirects: 0,
+    validateStatus: (status) => status >= 200 && status < 300,
     headers: { Accept: "image/jpeg,image/png,image/webp" },
   });
   const mimeType = String(response.headers["content-type"] || "").split(";")[0].toLowerCase();
@@ -199,20 +201,51 @@ export const generateImagenAssets = async ({ companyId, userId, prompt, aspectRa
   const model = process.env.CONTENT_STUDIO_IMAGE_MODEL || "imagen-4.0-generate-001";
   const safeCount = Math.min(Math.max(Number(count) || 1, 1), 4);
   const ratios = new Set(["1:1", "3:4", "4:3", "9:16", "16:9"]);
-  const response = await axios.post(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:predict`,
-    {
-      instances: [{ prompt: String(prompt || "").trim() }],
-      parameters: { sampleCount: safeCount, aspectRatio: ratios.has(aspectRatio) ? aspectRatio : "1:1" },
-    },
-    { headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" }, timeout: 90000 },
-  );
-  const predictions = response.data?.predictions || [];
-  if (!predictions.length) throw makeError("Google did not return an image.", 502);
-  return Promise.all(predictions.map(async (prediction, index) => {
-    const bytes = prediction.bytesBase64Encoded || prediction.image?.imageBytes;
+  const normalizedPrompt = String(prompt || "").trim();
+  const requestConfig = {
+    headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+    timeout: 90000,
+  };
+
+  let generated;
+  if (model.startsWith("imagen-")) {
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:predict`,
+      {
+        instances: [{ prompt: normalizedPrompt }],
+        parameters: {
+          sampleCount: safeCount,
+          aspectRatio: ratios.has(aspectRatio) ? aspectRatio : "1:1",
+        },
+      },
+      requestConfig,
+    );
+    generated = (response.data?.predictions || []).map((prediction) => ({
+      bytes: prediction.bytesBase64Encoded || prediction.image?.imageBytes,
+      mimeType: prediction.mimeType || "image/png",
+    }));
+  } else {
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        contents: [{ parts: [{ text: normalizedPrompt }] }],
+        generationConfig: { responseModalities: ["IMAGE"] },
+      },
+      requestConfig,
+    );
+    generated = (response.data?.candidates || []).flatMap((candidate) =>
+      (candidate.content?.parts || [])
+        .filter((part) => part.inlineData?.data)
+        .map((part) => ({
+          bytes: part.inlineData.data,
+          mimeType: part.inlineData.mimeType || "image/png",
+        })),
+    ).slice(0, safeCount);
+  }
+
+  if (!generated.length) throw makeError("Google did not return an image.", 502);
+  return Promise.all(generated.map(async ({ bytes, mimeType }, index) => {
     if (!bytes) throw makeError("Google returned an invalid image response.", 502);
-    const mimeType = prediction.mimeType || "image/png";
     const filename = `generated-${Date.now()}-${index + 1}.png`;
     const upload = await uploadBuffer({ buffer: Buffer.from(bytes, "base64"), companyId, filename });
     return saveAsset({
