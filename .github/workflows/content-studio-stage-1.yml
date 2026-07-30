@@ -41,6 +41,13 @@ jobs:
           node --check services/contentStudio/imageAssetService.js
           node --check controllers/platformContentStudioAIConfigController.js
           node --check models/company.js
+          node --check services/contentStudio/imageNormalizationService.js
+          node --check services/contentStudio/imageLifecycleService.js
+          node --check services/contentStudio/imageLifecycleSchedulerService.js
+          node --check index.js
+
+      - name: Run image normalization tests
+        run: node --test tests/contentStudioImageNormalization.test.js
 
       - name: Run credential encryption tests
         run: node --test tests/contentStudioCredentialEncryption.test.js

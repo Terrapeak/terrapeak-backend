@@ -10,6 +10,7 @@ import { resolveCompanyContentStudioKeys } from "../../utils/contentStudioCreden
 import { findCompanyImageOrThrow } from "./imageOwnershipService.js";
 import { recordImageAudit } from "./imageAuditService.js";
 import { releaseStoredImageUsage } from "./contentStudioUsageService.js";
+import { normalizeContentStudioImage } from "./imageNormalizationService.js";
 
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -118,10 +119,24 @@ const saveAsset = async ({ companyId, userId, source, provider, externalId = "",
 export const uploadLocalImages = async ({ companyId, userId, files }) => {
   if (!files?.length) throw makeError("Select at least one image.");
   return Promise.all(files.map(async (file) => {
-    const upload = await uploadBuffer({ buffer: file.buffer, companyId, filename: file.originalname });
+    const normalized = await normalizeContentStudioImage({
+      buffer: file.buffer,
+      filename: file.originalname,
+      declaredMimeType: file.mimetype,
+    });
+    const upload = await uploadBuffer({
+      buffer: normalized.buffer,
+      companyId,
+      filename: normalized.filename,
+    });
     return saveAsset({
       companyId, userId, source: "local", provider: "cloudinary",
-      filename: file.originalname, mimeType: file.mimetype, upload,
+      filename: normalized.filename, mimeType: normalized.mimeType, upload,
+      metadata: {
+        originalFilename: file.originalname,
+        originalMimeType: normalized.originalMimeType,
+        normalized: true,
+      },
     });
   }));
 };
@@ -142,10 +157,21 @@ export const importImageUrl = async ({ companyId, userId, imageUrl }) => {
   const buffer = Buffer.from(response.data);
   if (buffer.length > MAX_IMAGE_BYTES) throw makeError("The image must be 5 MB or smaller.");
   const filename = decodeURIComponent(new URL(safeUrl).pathname.split("/").pop() || "imported-image");
-  const upload = await uploadBuffer({ buffer, companyId, filename });
+  const normalized = await normalizeContentStudioImage({
+    buffer,
+    filename,
+    declaredMimeType: mimeType,
+  });
+  const upload = await uploadBuffer({
+    buffer: normalized.buffer,
+    companyId,
+    filename: normalized.filename,
+  });
   return saveAsset({
     companyId, userId, source: "url", provider: "cloudinary",
-    externalId: safeUrl, filename, mimeType, upload,
+    externalId: safeUrl, filename: normalized.filename,
+    mimeType: normalized.mimeType, upload,
+    metadata: { originalMimeType: normalized.originalMimeType, normalized: true },
   });
 };
 
@@ -210,11 +236,26 @@ export const importGoogleDriveImage = async ({ companyId, userId, fileId }) => {
     if (Number(metadata.data.size || 0) > MAX_IMAGE_BYTES) throw makeError("The Drive image must be 5 MB or smaller.");
     const response = await drive.files.get({ fileId, alt: "media" }, { responseType: "arraybuffer" });
     const buffer = Buffer.from(response.data);
-    const upload = await uploadBuffer({ buffer, companyId, filename: metadata.data.name });
+    const normalized = await normalizeContentStudioImage({
+      buffer,
+      filename: metadata.data.name,
+      declaredMimeType: mimeType,
+    });
+    const upload = await uploadBuffer({
+      buffer: normalized.buffer,
+      companyId,
+      filename: normalized.filename,
+    });
     return saveAsset({
       companyId, userId, source: "google-drive", provider: "google-drive",
-      externalId: metadata.data.id, filename: metadata.data.name, mimeType, upload,
-      metadata: { modifiedTime: metadata.data.modifiedTime },
+      externalId: metadata.data.id, filename: normalized.filename,
+      mimeType: normalized.mimeType, upload,
+      metadata: {
+        modifiedTime: metadata.data.modifiedTime,
+        originalFilename: metadata.data.name,
+        originalMimeType: normalized.originalMimeType,
+        normalized: true,
+      },
     });
   } catch (error) { return mapDriveError(error); }
 };
@@ -293,17 +334,30 @@ export const generateImagenAssets = async ({ companyId, userId, prompt, aspectRa
   return Promise.all(generated.map(async ({ bytes, mimeType }, index) => {
     if (!bytes) throw makeError("Google returned an invalid image response.", 502);
     const filename = `generated-${Date.now()}-${index + 1}.png`;
-    const upload = await uploadBuffer({ buffer: Buffer.from(bytes, "base64"), companyId, filename });
+    const normalized = await normalizeContentStudioImage({
+      buffer: Buffer.from(bytes, "base64"),
+      filename,
+      declaredMimeType: mimeType,
+    });
+    const upload = await uploadBuffer({
+      buffer: normalized.buffer,
+      companyId,
+      filename: normalized.filename,
+    });
     return saveAsset({
       companyId, userId, source: "generated", provider: "google-gemini-image",
-      filename, mimeType, prompt, upload,
-      metadata: { model, configuredModel, aspectRatio },
+      filename: normalized.filename, mimeType: normalized.mimeType, prompt, upload,
+      metadata: {
+        model, configuredModel, aspectRatio,
+        originalMimeType: normalized.originalMimeType,
+        normalized: true,
+      },
     });
   }));
 };
 
 export const listImageAssets = ({ companyId, source }) => {
-  const query = { companyId };
+  const query = { companyId, status: "active" };
   if (source) query.source = source;
   return ContentStudioImageAsset.find(query).sort({ createdAt: -1 }).limit(100).lean();
 };
@@ -334,10 +388,15 @@ export const deleteImageAsset = async ({ companyId, userId, assetId }) => {
     );
   }
 
-  configureCloudinary();
-  await cloudinary.uploader.destroy(asset.storagePublicId, {
-    resource_type: "image",
-  });
+  const retentionDays = Math.min(
+    Math.max(Number(process.env.CONTENT_STUDIO_IMAGE_RETENTION_DAYS) || 30, 1),
+    90,
+  );
+  asset.status = "deleted";
+  asset.deletedAt = new Date();
+  asset.deletedByUserId = userId;
+  asset.purgeAfter = new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000);
+  await asset.save();
   await recordImageAudit({
     companyId,
     userId,
@@ -346,8 +405,8 @@ export const deleteImageAsset = async ({ companyId, userId, assetId }) => {
     source: asset.source,
     provider: asset.provider,
     fileSize: asset.bytes,
+    secureMetadata: { purgeAfter: asset.purgeAfter },
   });
-  await asset.deleteOne();
   await releaseStoredImageUsage({
     companyId,
     storageBytes: asset.bytes,

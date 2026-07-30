@@ -24,7 +24,9 @@
     "content-studio:keys:verify": "node scripts/migrateContentStudioAiKeys.js verify",
     "content-studio:keys:rollback": "node scripts/migrateContentStudioAiKeys.js rollback",
     "content-studio:usage:audit": "node scripts/reconcileContentStudioUsage.js",
-    "content-studio:usage:reconcile": "node scripts/reconcileContentStudioUsage.js --apply"
+    "content-studio:usage:reconcile": "node scripts/reconcileContentStudioUsage.js --apply",
+    "content-studio:storage:audit": "node scripts/reconcileContentStudioImageStorage.js",
+    "content-studio:storage:cleanup": "node scripts/reconcileContentStudioImageStorage.js --apply"
   },
   "author": "",
   "license": "ISC",
@@ -55,6 +57,7 @@
     "nodemon": "^3.1.11",
     "path": "^0.12.7",
     "pdf-parse": "^2.4.5",
+    "sharp": "^0.35.3",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1"
   },
