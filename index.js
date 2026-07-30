@@ -9,6 +9,7 @@ import ensureChannelRegistry from "./services/channelRegistryService.js";
 import ensureContentStudioRegistry from "./services/contentStudioRegistryService.js";
 import requireTrustedCookieOrigin from "./middleware/requireTrustedCookieOrigin.js";
 import configureProductionLogging from "./utils/configureProductionLogging.js";
+import { startContentStudioImageLifecycleScheduler } from "./services/contentStudio/imageLifecycleSchedulerService.js";
 
 dotenv.config();
 configureProductionLogging();
@@ -20,6 +21,7 @@ mongoose
     console.log("MongoDB connected");
     await ensureChannelRegistry();
     await ensureContentStudioRegistry();
+    startContentStudioImageLifecycleScheduler();
   })
   .catch((error) => console.error("MongoDB connection error:", error));
 
