@@ -60,7 +60,7 @@ const CompanySchema = new mongoose.Schema(
         keyVersion: { type: Number, default: 1 },
         lastFour: { type: String, default: "" },
       },
-      imageModel: { type: String, default: "imagen-4.0-generate-001" },
+      imageModel: { type: String, default: "gemini-2.5-flash-image" },
       updatedAt: { type: Date, default: null },
       credentialMigration: {
         migrationId: { type: String, default: "" },
