@@ -1,6 +1,10 @@
 import asyncHandler from "express-async-handler";
 
 import Company from "../models/company.js";
+import {
+  encryptContentStudioCredential,
+  resolveCompanyContentStudioKeys,
+} from "../utils/contentStudioCredentialEncryption.js";
 
 const ALLOWED_MODELS = new Set([
   "gemini-2.5-flash",
@@ -28,12 +32,16 @@ const buildSafeConfig = (company) => {
   const config = company?.contentStudioAiConfig || {};
   return {
     provider: config.provider || "Gemini",
-    configured: Boolean(config.geminiKey),
-    maskedKey: maskKey(config.geminiKey),
+    configured: Boolean(config.geminiKeyEncrypted?.ciphertext || config.geminiKey),
+    maskedKey: config.geminiKeyEncrypted?.lastFour
+      ? `••••••••${config.geminiKeyEncrypted.lastFour}`
+      : maskKey(config.geminiKey),
     model: config.model || "gemini-2.5-flash",
     fallbackModel: config.fallbackModel || "gemini-2.5-flash-lite",
-    imageConfigured: Boolean(config.imageGeminiKey),
-    maskedImageKey: maskKey(config.imageGeminiKey),
+    imageConfigured: Boolean(config.imageGeminiKeyEncrypted?.ciphertext || config.imageGeminiKey),
+    maskedImageKey: config.imageGeminiKeyEncrypted?.lastFour
+      ? `••••••••${config.imageGeminiKeyEncrypted.lastFour}`
+      : maskKey(config.imageGeminiKey),
     imageModel: config.imageModel || "imagen-4.0-generate-001",
     updatedAt: config.updatedAt || null,
     allowedModels: Array.from(ALLOWED_MODELS),
@@ -117,14 +125,20 @@ export const updatePlatformContentStudioAIConfig = asyncHandler(async (req, res)
   const replacementKey = String(req.body?.geminiKey || "").trim();
   const replacementImageKey = String(req.body?.imageGeminiKey || "").trim();
 
+  const currentObject = current.toObject?.() || { ...current };
   company.contentStudioAiConfig = {
+    ...currentObject,
     provider: "Gemini",
-    geminiKey: replacementKey || current.geminiKey || "",
     model: nextModel,
     fallbackModel: nextFallbackModel,
-    imageGeminiKey: replacementImageKey || current.imageGeminiKey || "",
     imageModel: nextImageModel,
     updatedAt: new Date(),
+    ...(replacementKey
+      ? { geminiKeyEncrypted: encryptContentStudioCredential(replacementKey) }
+      : {}),
+    ...(replacementImageKey
+      ? { imageGeminiKeyEncrypted: encryptContentStudioCredential(replacementImageKey) }
+      : {}),
   };
 
   await company.save();
@@ -187,7 +201,8 @@ export const testPlatformContentStudioAIConfig = asyncHandler(async (req, res) =
   }
 
   const config = company.contentStudioAiConfig || {};
-  if (!config.geminiKey || !config.imageGeminiKey) {
+  const { textKey, imageKey } = resolveCompanyContentStudioKeys(company);
+  if (!textKey || !imageKey) {
     return res.status(409).json({
       success: false,
       message: "Configure both Content Studio text and image Gemini API keys before testing.",
@@ -198,8 +213,8 @@ export const testPlatformContentStudioAIConfig = asyncHandler(async (req, res) =
   const imageModel = config.imageModel || "imagen-4.0-generate-001";
 
   try {
-    await testModelAccess({ key: config.geminiKey, model });
-    await testModelAccess({ key: config.imageGeminiKey, model: imageModel, image: true });
+    await testModelAccess({ key: textKey, model });
+    await testModelAccess({ key: imageKey, model: imageModel, image: true });
   } catch (error) {
     if (error?.name === "AbortError") {
       return res.status(504).json({
