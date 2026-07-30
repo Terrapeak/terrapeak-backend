@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import Company from "../../models/company.js";
 import ContentStudioUsageLedger from "../../models/contentStudioUsageLedger.js";
 import ContentStudioUsageSummary from "../../models/contentStudioUsageSummary.js";
+import ContentStudioImageAsset from "../../models/contentStudioImageAsset.js";
 import { getContentStudioPlanLimits } from "./contentStudioEntitlementService.js";
 
 const monthWindow = (now = new Date()) => ({
@@ -156,3 +157,51 @@ export const releaseStoredImageUsage = ({ companyId, storageBytes = 0 }) =>
       },
     }],
   );
+
+const percentOf = (used, limit) =>
+  limit >= Number.MAX_SAFE_INTEGER ? 0 : Math.min(100, Math.round((used / Math.max(1, limit)) * 100));
+
+export const getContentStudioUsageSnapshot = async ({ companyId }) => {
+  const [company, summary, lastUpload, lastGenerated] = await Promise.all([
+    Company.findById(companyId).select("plan name").lean(),
+    ContentStudioUsageSummary.findOne({ companyId }).lean(),
+    ContentStudioImageAsset.findOne({ companyId, status: "active" }).sort({ createdAt: -1 }).select("createdAt").lean(),
+    ContentStudioImageAsset.findOne({ companyId, status: "active", source: "generated" }).sort({ createdAt: -1 }).select("createdAt").lean(),
+  ]);
+  if (!company) throw quotaError("COMPANY_NOT_FOUND", "Company not found.");
+
+  const limits = getContentStudioPlanLimits(company.plan);
+  const usage = {
+    storageBytes: Math.max(0, summary?.storageBytes || 0),
+    imageCount: Math.max(0, summary?.imageCount || 0),
+    generatedImagesThisMonth: Math.max(0, summary?.generatedImagesThisMonth || 0),
+    uploadedImagesThisMonth: Math.max(0, summary?.uploadedImagesThisMonth || 0),
+  };
+  const percentages = {
+    storage: percentOf(usage.storageBytes, limits.storageBytes),
+    images: percentOf(usage.imageCount, limits.storedImages),
+    generations: percentOf(usage.generatedImagesThisMonth, limits.generatedImagesPerMonth),
+  };
+  const warnings = Object.entries(percentages)
+    .filter(([, percent]) => percent >= 80)
+    .map(([resource, percent]) => ({
+      resource,
+      level: percent >= 100 ? "limit" : "warning",
+      percent,
+      code: percent >= 100 ? "CONTENT_STUDIO_ALLOWANCE_REACHED" : "CONTENT_STUDIO_ALLOWANCE_WARNING",
+    }));
+
+  return {
+    companyId,
+    companyName: company.name,
+    plan: company.plan,
+    periodStart: summary?.periodStart || monthWindow().periodStart,
+    periodEnd: summary?.periodEnd || monthWindow().periodEnd,
+    usage,
+    limits,
+    percentages,
+    warnings,
+    lastUploadAt: lastUpload?.createdAt || null,
+    lastGeneratedAt: lastGenerated?.createdAt || null,
+  };
+};
