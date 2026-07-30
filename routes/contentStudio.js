@@ -16,6 +16,7 @@ import {
   getBrandSettingsController,
   saveBrandSettingsController,
 } from "../controllers/contentStudioBrandSettingsController.js";
+import { getCompanyContentStudioUsage } from "../controllers/contentStudioUsageController.js";
 import {
   deleteImageController,
   generateImagesController,
@@ -41,6 +42,7 @@ router.get("/library", getContentLibraryController);
 router.get("/brand-settings", getBrandSettingsController);
 router.put("/brand-settings", saveBrandSettingsController);
 
+router.get("/usage", getCompanyContentStudioUsage);
 router.get("/images", listImagesController);
 router.post("/images/upload", contentStudioImageUpload, uploadImagesController);
 router.post("/images/import-url", importImageUrlController);
