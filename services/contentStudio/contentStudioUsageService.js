@@ -5,6 +5,7 @@ import ContentStudioUsageLedger from "../../models/contentStudioUsageLedger.js";
 import ContentStudioUsageSummary from "../../models/contentStudioUsageSummary.js";
 import ContentStudioImageAsset from "../../models/contentStudioImageAsset.js";
 import { getContentStudioPlanLimits } from "./contentStudioEntitlementService.js";
+import { resolveEffectiveBilling } from "../companyAppAccessService.js";
 
 const monthWindow = (now = new Date()) => ({
   periodStart: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
@@ -32,9 +33,12 @@ export const reserveContentStudioUsage = async ({
   const existing = await ContentStudioUsageLedger.findOne({ companyId, requestId, action }).lean();
   if (existing) return existing;
 
-  const company = await Company.findById(companyId).select("plan").lean();
+  const company = await Company.findById(companyId)
+    .select("plan billingSource billing organizationId")
+    .lean();
   if (!company) throw quotaError("COMPANY_NOT_FOUND", "Company not found.");
-  const limits = getContentStudioPlanLimits(company.plan);
+  const effectiveBilling = await resolveEffectiveBilling(company);
+  const limits = getContentStudioPlanLimits(effectiveBilling.plan);
   const session = await mongoose.startSession();
   let reservation;
 
@@ -163,14 +167,17 @@ const percentOf = (used, limit) =>
 
 export const getContentStudioUsageSnapshot = async ({ companyId }) => {
   const [company, summary, lastUpload, lastGenerated] = await Promise.all([
-    Company.findById(companyId).select("plan name").lean(),
+    Company.findById(companyId)
+      .select("plan name billingSource billing organizationId")
+      .lean(),
     ContentStudioUsageSummary.findOne({ companyId }).lean(),
     ContentStudioImageAsset.findOne({ companyId, status: "active" }).sort({ createdAt: -1 }).select("createdAt").lean(),
     ContentStudioImageAsset.findOne({ companyId, status: "active", source: "generated" }).sort({ createdAt: -1 }).select("createdAt").lean(),
   ]);
   if (!company) throw quotaError("COMPANY_NOT_FOUND", "Company not found.");
 
-  const limits = getContentStudioPlanLimits(company.plan);
+  const effectiveBilling = await resolveEffectiveBilling(company);
+  const limits = getContentStudioPlanLimits(effectiveBilling.plan);
   const usage = {
     storageBytes: Math.max(0, summary?.storageBytes || 0),
     imageCount: Math.max(0, summary?.imageCount || 0),
@@ -194,7 +201,9 @@ export const getContentStudioUsageSnapshot = async ({ companyId }) => {
   return {
     companyId,
     companyName: company.name,
-    plan: company.plan,
+    plan: effectiveBilling.plan,
+    configuredPlan: company.plan,
+    billingSource: effectiveBilling.source,
     periodStart: summary?.periodStart || monthWindow().periodStart,
     periodEnd: summary?.periodEnd || monthWindow().periodEnd,
     usage,
