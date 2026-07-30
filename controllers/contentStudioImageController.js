@@ -8,19 +8,60 @@ import {
   listImageAssets,
   uploadLocalImages,
 } from "../services/contentStudio/imageAssetService.js";
+import {
+  commitContentStudioUsage,
+  createUsageRequestId,
+  reserveContentStudioUsage,
+  rollbackContentStudioUsage,
+} from "../services/contentStudio/contentStudioUsageService.js";
 
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const context = (req) => ({
   companyId: req.company?._id || req.companyId,
   userId: req.userId,
 });
 
+const requestIdFor = (req) =>
+  String(req.get("Idempotency-Key") || req.body?.requestId || createUsageRequestId()).slice(0, 200);
+
+const withUsageReservation = async ({ req, action, storageBytes, imageCount, generationCount = 0, work }) => {
+  const { companyId } = context(req);
+  const requestId = requestIdFor(req);
+  await reserveContentStudioUsage({
+    companyId, requestId, action, storageBytes, imageCount, generationCount,
+    metadata: { userId: req.userId },
+  });
+  try {
+    const result = await work();
+    const assets = Array.isArray(result) ? result : [result];
+    const actualStorageBytes = assets.reduce((total, asset) => total + Math.max(0, Number(asset?.bytes) || 0), 0);
+    await commitContentStudioUsage({ companyId, requestId, action, actualStorageBytes });
+    return result;
+  } catch (error) {
+    await rollbackContentStudioUsage({
+      companyId, requestId, action,
+      failureCode: error?.code || error?.response?.status || "IMAGE_ACTION_FAILED",
+    });
+    throw error;
+  }
+};
+
 export const uploadImagesController = asyncHandler(async (req, res) => {
-  const assets = await uploadLocalImages({ ...context(req), files: req.files });
+  const files = req.files || [];
+  const assets = await withUsageReservation({
+    req, action: "upload",
+    storageBytes: files.reduce((total, file) => total + Math.max(0, Number(file.size) || file.buffer?.length || 0), 0),
+    imageCount: files.length,
+    work: () => uploadLocalImages({ ...context(req), files }),
+  });
   res.status(201).json({ success: true, data: assets });
 });
 
 export const importImageUrlController = asyncHandler(async (req, res) => {
-  const asset = await importImageUrl({ ...context(req), imageUrl: req.body?.url });
+  const asset = await withUsageReservation({
+    req, action: "import-url", storageBytes: MAX_IMAGE_BYTES, imageCount: 1,
+    work: () => importImageUrl({ ...context(req), imageUrl: req.body?.url }),
+  });
   res.status(201).json({ success: true, data: asset });
 });
 
@@ -30,7 +71,10 @@ export const listDriveImagesController = asyncHandler(async (req, res) => {
 });
 
 export const importDriveImageController = asyncHandler(async (req, res) => {
-  const asset = await importGoogleDriveImage({ ...context(req), fileId: req.body?.fileId });
+  const asset = await withUsageReservation({
+    req, action: "import-drive", storageBytes: MAX_IMAGE_BYTES, imageCount: 1,
+    work: () => importGoogleDriveImage({ ...context(req), fileId: req.body?.fileId }),
+  });
   res.status(201).json({ success: true, data: asset });
 });
 
@@ -41,11 +85,13 @@ export const generateImagesController = asyncHandler(async (req, res) => {
     error.statusCode = 400;
     throw error;
   }
-  const assets = await generateImagenAssets({
-    ...context(req),
-    prompt,
-    aspectRatio: req.body?.aspectRatio,
-    count: req.body?.count,
+  const count = Math.min(Math.max(Number(req.body?.count) || 1, 1), 4);
+  const assets = await withUsageReservation({
+    req, action: "generate", storageBytes: MAX_IMAGE_BYTES * count,
+    imageCount: count, generationCount: count,
+    work: () => generateImagenAssets({
+      ...context(req), prompt, count, aspectRatio: req.body?.aspectRatio,
+    }),
   });
   res.status(201).json({ success: true, data: assets });
 });
@@ -56,14 +102,6 @@ export const listImagesController = asyncHandler(async (req, res) => {
 });
 
 export const deleteImageController = asyncHandler(async (req, res) => {
-  const asset = await deleteImageAsset({
-    ...context(req),
-    assetId: req.params.assetId,
-  });
-  if (!asset) {
-    const error = new Error("Image asset not found.");
-    error.statusCode = 404;
-    throw error;
-  }
+  const asset = await deleteImageAsset({ ...context(req), assetId: req.params.assetId });
   res.json({ success: true, data: asset });
 });
