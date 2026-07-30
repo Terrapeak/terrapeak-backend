@@ -101,7 +101,8 @@ export const generateImagesController = asyncHandler(async (req, res) => {
 });
 
 export const listImagesController = asyncHandler(async (req, res) => {
-  const assets = await listImageAssets({ companyId: context(req).companyId, source: req.query.source });
+  const assetIds = String(req.query.assetIds || "").split(",").map((value) => value.trim()).filter((value) => /^[a-f0-9]{24}$/i.test(value)).slice(0, 100);
+  const assets = await listImageAssets({ companyId: context(req).companyId, source: req.query.source, assetIds });
   res.json({ success: true, data: assets.map((asset) => serializeImageAssetForClient({ req, asset })) });
 });
 
