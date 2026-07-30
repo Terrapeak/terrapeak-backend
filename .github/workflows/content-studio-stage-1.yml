@@ -48,6 +48,11 @@ jobs:
           node --check controllers/contentStudioUsageController.js
           node --check routes/contentStudio.js
           node --check routes/platformAdmin.js
+          node --check services/contentStudio/imageDeliveryService.js
+          node --check scripts/migrateContentStudioImageVisibility.js
+
+      - name: Run image delivery tests
+        run: node --test tests/contentStudioImageDelivery.test.js
 
       - name: Run image normalization tests
         run: node --test tests/contentStudioImageNormalization.test.js
