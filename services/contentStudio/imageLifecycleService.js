@@ -55,13 +55,6 @@ export const expireTemporaryImages = async ({ now = new Date(), maxAgeHours = 24
     asset.deletedAt = now;
     asset.purgeAfter = now;
     await asset.save();
-    if (asset.publishedStoragePublicId) {
-      await cloudinary.uploader.destroy(asset.publishedStoragePublicId, {
-        resource_type: "image",
-        type: "upload",
-        invalidate: true,
-      });
-    }
     await recordImageAudit({
       companyId: asset.companyId,
       imageId: asset._id,
@@ -88,6 +81,13 @@ export const purgeExpiredDeletedImages = async ({ now = new Date(), limit = 100 
       resource_type: "image",
       type: asset.deliveryType || "upload",
     });
+    if (asset.publishedStoragePublicId) {
+      await cloudinary.uploader.destroy(asset.publishedStoragePublicId, {
+        resource_type: "image",
+        type: "upload",
+        invalidate: true,
+      });
+    }
     await recordImageAudit({
       companyId: asset.companyId,
       imageId: asset._id,
@@ -149,7 +149,10 @@ export const reconcileImageStorage = async ({ apply = false, now = new Date() } 
       await ContentStudioImageAsset.updateOne({ _id: asset._id }, {
         $set: { status: "deleted", deletedAt: now, purgeAfter: now },
       });
-      await releaseStoredImageUsage({ companyId: asset.companyId, storageBytes: asset.bytes });
+      await releaseStoredImageUsage({
+        companyId: asset.companyId,
+        storageBytes: (Number(asset.bytes) || 0) + (Number(asset.publishedBytes) || 0),
+      });
       await recordImageAudit({
         companyId: asset.companyId,
         imageId: asset._id,
