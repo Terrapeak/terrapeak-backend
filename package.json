@@ -22,7 +22,9 @@
     "content-studio:keys:audit": "node scripts/migrateContentStudioAiKeys.js audit",
     "content-studio:keys:migrate": "node scripts/migrateContentStudioAiKeys.js apply",
     "content-studio:keys:verify": "node scripts/migrateContentStudioAiKeys.js verify",
-    "content-studio:keys:rollback": "node scripts/migrateContentStudioAiKeys.js rollback"
+    "content-studio:keys:rollback": "node scripts/migrateContentStudioAiKeys.js rollback",
+    "content-studio:usage:audit": "node scripts/reconcileContentStudioUsage.js",
+    "content-studio:usage:reconcile": "node scripts/reconcileContentStudioUsage.js --apply"
   },
   "author": "",
   "license": "ISC",
