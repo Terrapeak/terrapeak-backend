@@ -26,7 +26,10 @@
     "content-studio:usage:audit": "node scripts/reconcileContentStudioUsage.js",
     "content-studio:usage:reconcile": "node scripts/reconcileContentStudioUsage.js --apply",
     "content-studio:storage:audit": "node scripts/reconcileContentStudioImageStorage.js",
-    "content-studio:storage:cleanup": "node scripts/reconcileContentStudioImageStorage.js --apply"
+    "content-studio:storage:cleanup": "node scripts/reconcileContentStudioImageStorage.js --apply",
+    "content-studio:visibility:audit": "node scripts/migrateContentStudioImageVisibility.js audit",
+    "content-studio:visibility:migrate": "node scripts/migrateContentStudioImageVisibility.js apply",
+    "content-studio:visibility:verify": "node scripts/migrateContentStudioImageVisibility.js verify"
   },
   "author": "",
   "license": "ISC",
