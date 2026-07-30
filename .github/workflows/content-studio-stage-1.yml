@@ -36,6 +36,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check Content Studio module syntax
+        run: |
+          node --check services/contentStudio/imageAssetService.js
+          node --check controllers/platformContentStudioAIConfigController.js
+          node --check models/company.js
+
       - name: Run credential encryption tests
         run: node --test tests/contentStudioCredentialEncryption.test.js
 
