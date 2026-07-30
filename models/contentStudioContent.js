@@ -149,29 +149,6 @@ const ContentStudioContentSchema = new mongoose.Schema(
       default: [],
     },
 
-    publishedContent: {
-      type: String,
-      default: "",
-    },
-
-    publishedAt: {
-      type: Date,
-      default: null,
-      index: true,
-    },
-
-    publishedByUserId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      default: null,
-    },
-
-    publishVersion: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-
     lastEditedByUserId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

@@ -36,7 +36,6 @@ const ContentStudioImageAuditSchema = new mongoose.Schema(
         "image.temporary_expired",
         "image.purged",
         "image.storage_missing",
-        "image.published",
       ],
       required: true,
       index: true,

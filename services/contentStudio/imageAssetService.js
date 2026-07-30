@@ -413,7 +413,7 @@ export const deleteImageAsset = async ({ companyId, userId, assetId }) => {
   });
   await releaseStoredImageUsage({
     companyId,
-    storageBytes: (Number(asset.bytes) || 0) + (Number(asset.publishedBytes) || 0),
+    storageBytes: asset.bytes,
   });
   return asset.toObject();
 };
