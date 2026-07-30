@@ -21,19 +21,24 @@ const configureCloudinary = () => {
 const listCloudinaryResources = async () => {
   configureCloudinary();
   const resources = [];
-  for (const type of ["upload", "authenticated"]) {
-    let nextCursor;
-    do {
-      const page = await cloudinary.api.resources({
-        type,
-        resource_type: "image",
-        prefix: "terrapeak/content-studio/",
-        max_results: 500,
-        next_cursor: nextCursor,
-      });
-      resources.push(...(page.resources || []).map((resource) => ({ ...resource, deliveryType: type })));
-      nextCursor = page.next_cursor;
-    } while (nextCursor);
+  for (const prefix of ["terrapeak/content-studio/", "terrapeak/content-studio-published/"]) {
+    for (const type of ["upload", "authenticated"]) {
+      let nextCursor;
+      do {
+        const page = await cloudinary.api.resources({
+          type,
+          resource_type: "image",
+          prefix,
+          max_results: 500,
+          next_cursor: nextCursor,
+        });
+        resources.push(...(page.resources || []).map((resource) => ({
+          ...resource,
+          deliveryType: type,
+        })));
+        nextCursor = page.next_cursor;
+      } while (nextCursor);
+    }
   }
   return resources;
 };
@@ -50,6 +55,13 @@ export const expireTemporaryImages = async ({ now = new Date(), maxAgeHours = 24
     asset.deletedAt = now;
     asset.purgeAfter = now;
     await asset.save();
+    if (asset.publishedStoragePublicId) {
+      await cloudinary.uploader.destroy(asset.publishedStoragePublicId, {
+        resource_type: "image",
+        type: "upload",
+        invalidate: true,
+      });
+    }
     await recordImageAudit({
       companyId: asset.companyId,
       imageId: asset._id,
@@ -96,19 +108,41 @@ export const reconcileImageStorage = async ({ apply = false, now = new Date() } 
     ContentStudioImageAsset.find({ status: { $ne: "deleted" } }).lean(),
   ]);
   const cloudIds = new Set(cloudResources.map((item) => item.public_id));
-  const databaseIds = new Set(databaseAssets.map((item) => item.storagePublicId));
+  const databaseIds = new Set(databaseAssets.flatMap((item) =>
+    [item.storagePublicId, item.publishedStoragePublicId].filter(Boolean),
+  ));
   const orphanCutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
   const orphanedCloud = cloudResources.filter((item) =>
     !databaseIds.has(item.public_id) && new Date(item.created_at) <= orphanCutoff,
   );
   const missingCloud = databaseAssets.filter((item) => !cloudIds.has(item.storagePublicId));
+  const missingPublishedCloud = databaseAssets.filter((item) =>
+    item.publishedStoragePublicId && !cloudIds.has(item.publishedStoragePublicId),
+  );
 
   if (apply) {
     for (const resource of orphanedCloud) {
       await cloudinary.uploader.destroy(resource.public_id, {
         resource_type: "image",
         type: resource.deliveryType || "upload",
+      });
+    }
+    for (const asset of missingPublishedCloud) {
+      await ContentStudioImageAsset.updateOne({ _id: asset._id }, {
+        $set: {
+          visibility: "workspace-only",
+          publishedUrl: "",
+          publishedStoragePublicId: "",
+          publishedBytes: 0,
+          publishedAt: null,
+          publishedByUserId: null,
+        },
+      });
+      await releaseStoredImageUsage({
+        companyId: asset.companyId,
+        storageBytes: asset.publishedBytes,
+        imageCount: 0,
       });
     }
     for (const asset of missingCloud) {
@@ -133,5 +167,6 @@ export const reconcileImageStorage = async ({ apply = false, now = new Date() } 
     databaseAssets: databaseAssets.length,
     orphanedCloud: orphanedCloud.map((item) => item.public_id),
     missingCloud: missingCloud.map((item) => String(item._id)),
+    missingPublishedCloud: missingPublishedCloud.map((item) => String(item._id)),
   };
 };
