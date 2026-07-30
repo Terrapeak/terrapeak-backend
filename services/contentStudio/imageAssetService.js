@@ -357,7 +357,7 @@ export const generateImagenAssets = async ({ companyId, userId, prompt, aspectRa
 };
 
 export const listImageAssets = ({ companyId, source }) => {
-  const query = { companyId };
+  const query = { companyId, status: "active" };
   if (source) query.source = source;
   return ContentStudioImageAsset.find(query).sort({ createdAt: -1 }).limit(100).lean();
 };
@@ -388,10 +388,15 @@ export const deleteImageAsset = async ({ companyId, userId, assetId }) => {
     );
   }
 
-  configureCloudinary();
-  await cloudinary.uploader.destroy(asset.storagePublicId, {
-    resource_type: "image",
-  });
+  const retentionDays = Math.min(
+    Math.max(Number(process.env.CONTENT_STUDIO_IMAGE_RETENTION_DAYS) || 30, 1),
+    90,
+  );
+  asset.status = "deleted";
+  asset.deletedAt = new Date();
+  asset.deletedByUserId = userId;
+  asset.purgeAfter = new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000);
+  await asset.save();
   await recordImageAudit({
     companyId,
     userId,
@@ -400,8 +405,8 @@ export const deleteImageAsset = async ({ companyId, userId, assetId }) => {
     source: asset.source,
     provider: asset.provider,
     fileSize: asset.bytes,
+    secureMetadata: { purgeAfter: asset.purgeAfter },
   });
-  await asset.deleteOne();
   await releaseStoredImageUsage({
     companyId,
     storageBytes: asset.bytes,
