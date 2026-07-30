@@ -45,6 +45,9 @@ jobs:
           node --check services/contentStudio/imageLifecycleService.js
           node --check services/contentStudio/imageLifecycleSchedulerService.js
           node --check index.js
+          node --check controllers/contentStudioUsageController.js
+          node --check routes/contentStudio.js
+          node --check routes/platformAdmin.js
 
       - name: Run image normalization tests
         run: node --test tests/contentStudioImageNormalization.test.js
