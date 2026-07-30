@@ -14,6 +14,10 @@ import {
   reserveContentStudioUsage,
   rollbackContentStudioUsage,
 } from "../services/contentStudio/contentStudioUsageService.js";
+import {
+  createImageDeliveryUrl,
+  serializeImageAssetForClient,
+} from "../services/contentStudio/imageDeliveryService.js";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const context = (req) => ({
@@ -54,7 +58,7 @@ export const uploadImagesController = asyncHandler(async (req, res) => {
     imageCount: files.length,
     work: () => uploadLocalImages({ ...context(req), files }),
   });
-  res.status(201).json({ success: true, data: assets });
+  res.status(201).json({ success: true, data: assets.map((asset) => serializeImageAssetForClient({ req, asset })) });
 });
 
 export const importImageUrlController = asyncHandler(async (req, res) => {
@@ -62,7 +66,7 @@ export const importImageUrlController = asyncHandler(async (req, res) => {
     req, action: "import-url", storageBytes: MAX_IMAGE_BYTES, imageCount: 1,
     work: () => importImageUrl({ ...context(req), imageUrl: req.body?.url }),
   });
-  res.status(201).json({ success: true, data: asset });
+  res.status(201).json({ success: true, data: serializeImageAssetForClient({ req, asset }) });
 });
 
 export const listDriveImagesController = asyncHandler(async (req, res) => {
@@ -75,7 +79,7 @@ export const importDriveImageController = asyncHandler(async (req, res) => {
     req, action: "import-drive", storageBytes: MAX_IMAGE_BYTES, imageCount: 1,
     work: () => importGoogleDriveImage({ ...context(req), fileId: req.body?.fileId }),
   });
-  res.status(201).json({ success: true, data: asset });
+  res.status(201).json({ success: true, data: serializeImageAssetForClient({ req, asset }) });
 });
 
 export const generateImagesController = asyncHandler(async (req, res) => {
@@ -93,15 +97,26 @@ export const generateImagesController = asyncHandler(async (req, res) => {
       ...context(req), prompt, count, aspectRatio: req.body?.aspectRatio,
     }),
   });
-  res.status(201).json({ success: true, data: assets });
+  res.status(201).json({ success: true, data: assets.map((asset) => serializeImageAssetForClient({ req, asset })) });
 });
 
 export const listImagesController = asyncHandler(async (req, res) => {
   const assets = await listImageAssets({ companyId: context(req).companyId, source: req.query.source });
-  res.json({ success: true, data: assets });
+  res.json({ success: true, data: assets.map((asset) => serializeImageAssetForClient({ req, asset })) });
 });
 
 export const deleteImageController = asyncHandler(async (req, res) => {
   const asset = await deleteImageAsset({ ...context(req), assetId: req.params.assetId });
   res.json({ success: true, data: asset });
+});
+
+export const deliverImageController = asyncHandler(async (req, res) => {
+  const { companyId, userId } = context(req);
+  const url = await createImageDeliveryUrl({
+    companyId,
+    userId,
+    assetId: req.params.assetId,
+  });
+  res.set("Cache-Control", "private, no-store");
+  res.redirect(302, url);
 });
