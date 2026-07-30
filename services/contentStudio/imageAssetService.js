@@ -9,6 +9,7 @@ import User from "../../models/user.js";
 import { resolveCompanyContentStudioKeys } from "../../utils/contentStudioCredentialEncryption.js";
 import { findCompanyImageOrThrow } from "./imageOwnershipService.js";
 import { recordImageAudit } from "./imageAuditService.js";
+import { releaseStoredImageUsage } from "./contentStudioUsageService.js";
 
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -347,5 +348,9 @@ export const deleteImageAsset = async ({ companyId, userId, assetId }) => {
     fileSize: asset.bytes,
   });
   await asset.deleteOne();
+  await releaseStoredImageUsage({
+    companyId,
+    storageBytes: asset.bytes,
+  });
   return asset.toObject();
 };

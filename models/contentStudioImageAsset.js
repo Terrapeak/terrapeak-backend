@@ -12,7 +12,7 @@ const ContentStudioImageAssetSchema = new mongoose.Schema(
     },
     provider: {
       type: String,
-      enum: ["cloudinary", "google-drive", "google-imagen", "shutterstock", "custom"],
+      enum: ["cloudinary", "google-drive", "google-imagen", "google-gemini-image", "shutterstock", "custom"],
       required: true,
     },
     externalId: { type: String, default: "", trim: true },
