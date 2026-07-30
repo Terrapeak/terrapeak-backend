@@ -147,7 +147,12 @@ export const rollbackContentStudioUsage = async ({ companyId, requestId, action,
 };
 
 export const releaseStoredImageUsage = ({ companyId, storageBytes = 0 }) =>
-  ContentStudioUsageSummary.updateOne({ companyId }, { $inc: {
-    storageBytes: -Math.max(0, Number(storageBytes) || 0),
-    imageCount: -1,
-  } });
+  ContentStudioUsageSummary.updateOne(
+    { companyId },
+    [{
+      $set: {
+        storageBytes: { $max: [0, { $subtract: ["$storageBytes", Math.max(0, Number(storageBytes) || 0)] }] },
+        imageCount: { $max: [0, { $subtract: ["$imageCount", 1] }] },
+      },
+    }],
+  );
