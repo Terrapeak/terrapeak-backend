@@ -4,6 +4,7 @@ import axios from "axios";
 import { v2 as cloudinary } from "cloudinary";
 import { google } from "googleapis";
 import ContentStudioImageAsset from "../../models/contentStudioImageAsset.js";
+import Company from "../../models/company.js";
 import User from "../../models/user.js";
 
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -196,9 +197,20 @@ export const importGoogleDriveImage = async ({ companyId, userId, fileId }) => {
 };
 
 export const generateImagenAssets = async ({ companyId, userId, prompt, aspectRatio = "1:1", count = 1 }) => {
-  const apiKey = process.env.CONTENT_STUDIO_IMAGE_GEMINI_API_KEY;
-  if (!apiKey) throw makeError("The separate Content Studio image key is not configured.", 503, "IMAGE_GENERATOR_NOT_CONFIGURED");
-  const model = process.env.CONTENT_STUDIO_IMAGE_MODEL || "imagen-4.0-generate-001";
+  const company = await Company.findById(companyId).select("contentStudioAiConfig");
+  if (!company) throw makeError("Company not found.", 404, "COMPANY_NOT_FOUND");
+
+  const config = company.contentStudioAiConfig || {};
+  const apiKey = String(config.imageGeminiKey || "").trim();
+  if (!apiKey) {
+    throw makeError(
+      "Content Studio image generation is not configured for this company.",
+      503,
+      "IMAGE_GENERATOR_NOT_CONFIGURED",
+    );
+  }
+
+  const model = config.imageModel || "imagen-4.0-generate-001";
   const safeCount = Math.min(Math.max(Number(count) || 1, 1), 4);
   const ratios = new Set(["1:1", "3:4", "4:3", "9:16", "16:9"]);
   const normalizedPrompt = String(prompt || "").trim();
