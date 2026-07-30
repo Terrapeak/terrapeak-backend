@@ -52,6 +52,15 @@ const ContentStudioImageAssetSchema = new mongoose.Schema(
       default: null,
     },
     purgeAfter: { type: Date, default: null },
+    publishedUrl: { type: String, default: "" },
+    publishedStoragePublicId: { type: String, default: "", index: true },
+    publishedBytes: { type: Number, default: 0, min: 0 },
+    publishedAt: { type: Date, default: null },
+    publishedByUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
   },
   { timestamps: true },
 );
