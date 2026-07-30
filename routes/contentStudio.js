@@ -13,6 +13,10 @@ import {
   updateContentController,
 } from "../controllers/contentStudioLibraryController.js";
 import {
+  downloadPublishedContentController,
+  publishContentController,
+} from "../controllers/contentStudioPublishController.js";
+import {
   getBrandSettingsController,
   saveBrandSettingsController,
 } from "../controllers/contentStudioBrandSettingsController.js";
@@ -53,6 +57,8 @@ router.post("/images/generate", generateImagesController);
 router.get("/images/:assetId/delivery", deliverImageController);
 router.delete("/images/:assetId", deleteImageController);
 
+router.post("/:id/publish", publishContentController);
+router.get("/:id/published/download", downloadPublishedContentController);
 router.get("/:id", getContentByIdController);
 router.patch("/:id", updateContentController);
 router.delete("/:id", deleteContentController);

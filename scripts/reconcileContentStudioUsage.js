@@ -14,7 +14,7 @@ try {
     { $match: { status: { $ne: "deleted" } } },
     { $group: {
       _id: "$companyId",
-      storageBytes: { $sum: { $ifNull: ["$bytes", 0] } },
+      storageBytes: { $sum: { $add: [{ $ifNull: ["$bytes", 0] }, { $ifNull: ["$publishedBytes", 0] }] } },
       imageCount: { $sum: 1 },
       generatedImagesThisMonth: { $sum: {
         $cond: [
