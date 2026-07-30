@@ -232,7 +232,13 @@ export const generateImagenAssets = async ({ companyId, userId, prompt, aspectRa
     );
   }
 
-  const model = config.imageModel || "imagen-4.0-generate-001";
+  const configuredModel = config.imageModel || "gemini-2.5-flash-image";
+  // Imagen 4 is deprecated and can return MODEL_NOT_FOUND for projects that
+  // no longer have access. Preserve stored legacy settings while routing
+  // generation to Google's supported replacement model.
+  const model = configuredModel.startsWith("imagen-")
+    ? "gemini-2.5-flash-image"
+    : configuredModel;
   const safeCount = Math.min(Math.max(Number(count) || 1, 1), 4);
   const ratios = new Set(["1:1", "3:4", "4:3", "9:16", "16:9"]);
   const normalizedPrompt = String(prompt || "").trim();
@@ -263,7 +269,12 @@ export const generateImagenAssets = async ({ companyId, userId, prompt, aspectRa
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
       {
         contents: [{ parts: [{ text: normalizedPrompt }] }],
-        generationConfig: { responseModalities: ["IMAGE"] },
+        generationConfig: {
+          responseModalities: ["IMAGE"],
+          imageConfig: {
+            aspectRatio: ratios.has(aspectRatio) ? aspectRatio : "1:1",
+          },
+        },
       },
       requestConfig,
     );
@@ -283,8 +294,9 @@ export const generateImagenAssets = async ({ companyId, userId, prompt, aspectRa
     const filename = `generated-${Date.now()}-${index + 1}.png`;
     const upload = await uploadBuffer({ buffer: Buffer.from(bytes, "base64"), companyId, filename });
     return saveAsset({
-      companyId, userId, source: "generated", provider: "google-imagen",
-      filename, mimeType, prompt, upload, metadata: { model, aspectRatio },
+      companyId, userId, source: "generated", provider: "google-gemini-image",
+      filename, mimeType, prompt, upload,
+      metadata: { model, configuredModel, aspectRatio },
     });
   }));
 };
