@@ -18,7 +18,11 @@
     "platform-workspace:audit": "node scripts/repairPlatformWorkspace.js --audit",
     "platform-workspace:repair": "node scripts/repairPlatformWorkspace.js",
     "test:organization:integration": "node --test integration-tests/organizationHardening.integration.mjs",
-    "test:onboarding:integration": "node --test integration-tests/customerOnboarding.integration.mjs"
+    "test:onboarding:integration": "node --test integration-tests/customerOnboarding.integration.mjs",
+    "content-studio:keys:audit": "node scripts/migrateContentStudioAiKeys.js audit",
+    "content-studio:keys:migrate": "node scripts/migrateContentStudioAiKeys.js apply",
+    "content-studio:keys:verify": "node scripts/migrateContentStudioAiKeys.js verify",
+    "content-studio:keys:rollback": "node scripts/migrateContentStudioAiKeys.js rollback"
   },
   "author": "",
   "license": "ISC",
