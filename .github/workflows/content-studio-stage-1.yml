@@ -1,0 +1,43 @@
+name: Content Studio Stage 1
+
+on:
+  pull_request:
+    paths:
+      - "controllers/contentStudioImageController.js"
+      - "controllers/platformContentStudioAIConfigController.js"
+      - "models/company.js"
+      - "models/contentStudioImageAsset.js"
+      - "models/contentStudioImageAudit.js"
+      - "scripts/migrateContentStudioAiKeys.js"
+      - "services/contentStudio/**"
+      - "tests/contentStudioCredentialEncryption.test.js"
+      - "tests/contentStudioImageSecurity.integration.test.js"
+      - "utils/contentStudioCredentialEncryption.js"
+      - ".github/workflows/content-studio-stage-1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  content-studio-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run credential encryption tests
+        run: node --test tests/contentStudioCredentialEncryption.test.js
+
+      - name: Run tenant and reference integration tests
+        run: node --test tests/contentStudioImageSecurity.integration.test.js
