@@ -51,7 +51,6 @@ export const findCompanyImageOrThrow = async ({
         owningCompanyId: String(existing.companyId),
         requestedCompanyId: String(companyId),
       },
-      session,
     });
   }
 
