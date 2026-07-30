@@ -359,9 +359,10 @@ export const generateImagenAssets = async ({ companyId, userId, prompt, aspectRa
   }));
 };
 
-export const listImageAssets = ({ companyId, source }) => {
+export const listImageAssets = ({ companyId, source, assetIds = [] }) => {
   const query = { companyId, status: "active" };
   if (source) query.source = source;
+  if (assetIds.length) query._id = { $in: assetIds };
   return ContentStudioImageAsset.find(query).sort({ createdAt: -1 }).limit(100).lean();
 };
 
