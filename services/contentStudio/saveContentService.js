@@ -1,5 +1,8 @@
 import mongoose from "mongoose";
 import ContentStudioContent from "../../models/contentStudioContent.js";
+import ContentStudioImageAsset from "../../models/contentStudioImageAsset.js";
+import { validateCompanyImages } from "./imageOwnershipService.js";
+import { recordImageAudit } from "./imageAuditService.js";
 
 const ensureObjectId = (value, fieldName) => {
   if (!value || !mongoose.Types.ObjectId.isValid(value)) {
@@ -58,6 +61,64 @@ const normalizeImages = (images) => {
   }));
 };
 
+const imageIdsFrom = (images = []) =>
+  [...new Set(images.map((image) => String(image.assetId)).filter(Boolean))];
+
+const runInTransaction = async (operation) => {
+  const session = await mongoose.startSession();
+  try {
+    let result;
+    await session.withTransaction(async () => {
+      result = await operation(session);
+    });
+    return result;
+  } finally {
+    await session.endSession();
+  }
+};
+
+const updateImageReferences = async ({
+  companyId,
+  userId,
+  addedIds,
+  removedIds,
+  session,
+}) => {
+  if (addedIds.length) {
+    await ContentStudioImageAsset.updateMany(
+      { _id: { $in: addedIds }, companyId, status: { $ne: "deleted" } },
+      { $inc: { referenceCount: 1 } },
+      { session },
+    );
+    await Promise.all(addedIds.map((imageId) =>
+      recordImageAudit({
+        companyId,
+        userId,
+        imageId,
+        eventType: "image.attached",
+        session,
+      }),
+    ));
+  }
+
+  if (removedIds.length) {
+    await ContentStudioImageAsset.updateMany(
+      { _id: { $in: removedIds }, companyId, referenceCount: { $gt: 0 } },
+      { $inc: { referenceCount: -1 } },
+      { session },
+    );
+    await Promise.all(removedIds.map((imageId) =>
+      recordImageAudit({
+        companyId,
+        userId,
+        imageId,
+        eventType: "image.detached",
+        session,
+      }),
+    ));
+  }
+};
+
 const buildContentPayload = ({
   companyId,
   userId,
@@ -114,8 +175,27 @@ const buildContentPayload = ({
 
 export const saveContent = async (input) => {
   const payload = buildContentPayload(input);
+  const assetIds = imageIdsFrom(payload.images);
 
-  return ContentStudioContent.create(payload);
+  return runInTransaction(async (session) => {
+    await validateCompanyImages({
+      companyId: payload.companyId,
+      userId: payload.createdByUserId,
+      assetIds,
+      action: "attach",
+      session,
+    });
+
+    const [created] = await ContentStudioContent.create([payload], { session });
+    await updateImageReferences({
+      companyId: payload.companyId,
+      userId: payload.createdByUserId,
+      addedIds: assetIds,
+      removedIds: [],
+      session,
+    });
+    return created;
+  });
 };
 
 export const getContentLibrary = async ({
@@ -284,19 +364,48 @@ export const updateContent = async ({
 
   allowedUpdates.lastEditedByUserId = userId;
 
-  return ContentStudioContent.findOneAndUpdate(
-    {
+  return runInTransaction(async (session) => {
+    const existing = await ContentStudioContent.findOne({
       _id: contentId,
       companyId,
-    },
-    {
-      $set: allowedUpdates,
-    },
-    {
-      new: true,
-      runValidators: true,
-    },
-  ).lean();
+    }).session(session);
+
+    if (!existing) return null;
+
+    const previousIds = imageIdsFrom(existing.images);
+    const nextIds = Array.isArray(allowedUpdates.images)
+      ? imageIdsFrom(allowedUpdates.images)
+      : previousIds;
+
+    if (Array.isArray(allowedUpdates.images)) {
+      await validateCompanyImages({
+        companyId,
+        userId,
+        assetIds: nextIds,
+        action: "attach",
+        session,
+      });
+    }
+
+    const addedIds = nextIds.filter((id) => !previousIds.includes(id));
+    const removedIds = previousIds.filter((id) => !nextIds.includes(id));
+
+    const updated = await ContentStudioContent.findOneAndUpdate(
+      { _id: contentId, companyId },
+      { $set: allowedUpdates },
+      { new: true, runValidators: true, session },
+    );
+
+    await updateImageReferences({
+      companyId,
+      userId,
+      addedIds,
+      removedIds,
+      session,
+    });
+
+    return updated?.toObject();
+  });
 };
 
 export const deleteContent = async ({
@@ -306,8 +415,22 @@ export const deleteContent = async ({
   ensureObjectId(companyId, "company ID");
   ensureObjectId(contentId, "content ID");
 
-  return ContentStudioContent.findOneAndDelete({
-    _id: contentId,
-    companyId,
-  }).lean();
+  return runInTransaction(async (session) => {
+    const deleted = await ContentStudioContent.findOneAndDelete({
+      _id: contentId,
+      companyId,
+    }).session(session);
+
+    if (!deleted) return null;
+
+    await updateImageReferences({
+      companyId,
+      userId: deleted.lastEditedByUserId || deleted.createdByUserId,
+      addedIds: [],
+      removedIds: imageIdsFrom(deleted.images),
+      session,
+    });
+
+    return deleted.toObject();
+  });
 };

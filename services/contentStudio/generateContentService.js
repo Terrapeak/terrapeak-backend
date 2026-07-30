@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { generateWithGemini } from "./geminiClient.js";
 import { buildContentPrompt } from "./promptBuilder.js";
 import { getBrandSettings } from "./brandSettingsService.js";
+import { resolveCompanyContentStudioKeys } from "../../utils/contentStudioCredentialEncryption.js";
 
 const safeJsonParse = (value) => {
   try {
@@ -59,9 +60,10 @@ export const generateContent = async ({ company, userId, brief }) => {
   });
 
   const aiConfig = company?.contentStudioAiConfig || {};
+  const { textKey } = resolveCompanyContentStudioKeys(company);
   const aiResult = await generateWithGemini({
     prompt,
-    apiKey: aiConfig.geminiKey,
+    apiKey: textKey,
     model: aiConfig.model || "gemini-2.5-flash",
     fallbackModel: aiConfig.fallbackModel || "gemini-2.5-flash-lite",
     temperature: 0.65,

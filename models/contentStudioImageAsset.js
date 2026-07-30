@@ -27,6 +27,20 @@ const ContentStudioImageAssetSchema = new mongoose.Schema(
     caption: { type: String, default: "", trim: true, maxlength: 1000 },
     prompt: { type: String, default: "", trim: true, maxlength: 4000 },
     metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+    status: {
+      type: String,
+      enum: ["temporary", "active", "deleted"],
+      default: "active",
+      index: true,
+    },
+    referenceCount: { type: Number, default: 0, min: 0 },
+    deletedAt: { type: Date, default: null },
+    deletedByUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    purgeAfter: { type: Date, default: null },
   },
   { timestamps: true },
 );
