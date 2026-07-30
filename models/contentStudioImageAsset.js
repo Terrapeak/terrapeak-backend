@@ -16,6 +16,17 @@ const ContentStudioImageAssetSchema = new mongoose.Schema(
       required: true,
     },
     externalId: { type: String, default: "", trim: true },
+    visibility: {
+      type: String,
+      enum: ["legacy-public", "private-draft", "workspace-only", "published-public"],
+      default: "workspace-only",
+      index: true,
+    },
+    deliveryType: {
+      type: String,
+      enum: ["upload", "authenticated"],
+      default: "authenticated",
+    },
     filename: { type: String, required: true, trim: true, maxlength: 300 },
     mimeType: { type: String, required: true, trim: true },
     url: { type: String, required: true },
@@ -47,5 +58,6 @@ const ContentStudioImageAssetSchema = new mongoose.Schema(
 
 ContentStudioImageAssetSchema.index({ companyId: 1, createdAt: -1 });
 ContentStudioImageAssetSchema.index({ companyId: 1, source: 1, createdAt: -1 });
+ContentStudioImageAssetSchema.index({ companyId: 1, visibility: 1, createdAt: -1 });
 
 export default mongoose.model("ContentStudioImageAsset", ContentStudioImageAssetSchema);
