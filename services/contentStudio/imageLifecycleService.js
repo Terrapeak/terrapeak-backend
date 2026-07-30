@@ -21,18 +21,20 @@ const configureCloudinary = () => {
 const listCloudinaryResources = async () => {
   configureCloudinary();
   const resources = [];
-  let nextCursor;
-  do {
-    const page = await cloudinary.api.resources({
-      type: "upload",
-      resource_type: "image",
-      prefix: "terrapeak/content-studio/",
-      max_results: 500,
-      next_cursor: nextCursor,
-    });
-    resources.push(...(page.resources || []));
-    nextCursor = page.next_cursor;
-  } while (nextCursor);
+  for (const type of ["upload", "authenticated"]) {
+    let nextCursor;
+    do {
+      const page = await cloudinary.api.resources({
+        type,
+        resource_type: "image",
+        prefix: "terrapeak/content-studio/",
+        max_results: 500,
+        next_cursor: nextCursor,
+      });
+      resources.push(...(page.resources || []).map((resource) => ({ ...resource, deliveryType: type })));
+      nextCursor = page.next_cursor;
+    } while (nextCursor);
+  }
   return resources;
 };
 
@@ -70,7 +72,10 @@ export const purgeExpiredDeletedImages = async ({ now = new Date(), limit = 100 
 
   let purged = 0;
   for (const asset of assets) {
-    await cloudinary.uploader.destroy(asset.storagePublicId, { resource_type: "image" });
+    await cloudinary.uploader.destroy(asset.storagePublicId, {
+      resource_type: "image",
+      type: asset.deliveryType || "upload",
+    });
     await recordImageAudit({
       companyId: asset.companyId,
       imageId: asset._id,
@@ -101,7 +106,10 @@ export const reconcileImageStorage = async ({ apply = false, now = new Date() } 
 
   if (apply) {
     for (const resource of orphanedCloud) {
-      await cloudinary.uploader.destroy(resource.public_id, { resource_type: "image" });
+      await cloudinary.uploader.destroy(resource.public_id, {
+        resource_type: "image",
+        type: resource.deliveryType || "upload",
+      });
     }
     for (const asset of missingCloud) {
       await ContentStudioImageAsset.updateOne({ _id: asset._id }, {
