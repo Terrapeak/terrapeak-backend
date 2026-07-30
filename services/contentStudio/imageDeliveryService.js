@@ -27,13 +27,24 @@ const requestOrigin = (req) => {
 
 export const serializeImageAssetForClient = ({ req, asset }) => {
   const value = typeof asset?.toObject === "function" ? asset.toObject() : { ...asset };
-  const isPublic = ["legacy-public", "published-public"].includes(value.visibility) &&
-    value.deliveryType === "upload";
+  const visibility = value.visibility || "legacy-public";
+  const deliveryType = value.deliveryType || "upload";
+  const isPublic = ["legacy-public", "published-public"].includes(visibility) &&
+    deliveryType === "upload";
+  if (!isPublic) configureCloudinary();
   const response = {
     ...value,
+    visibility,
+    deliveryType,
     url: isPublic
       ? value.url
-      : `${requestOrigin(req)}/api/content-studio/images/${value._id}/delivery`,
+      : cloudinary.url(value.storagePublicId, {
+          secure: true,
+          sign_url: true,
+          type: "authenticated",
+          resource_type: "image",
+          expires_at: Math.floor(Date.now() / 1000) + 5 * 60,
+        }),
   };
   delete response.storagePublicId;
   if (!isPublic) delete response.externalId;
