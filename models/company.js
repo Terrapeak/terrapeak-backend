@@ -45,6 +45,8 @@ const CompanySchema = new mongoose.Schema(
       geminiKey: { type: String, default: "" },
       model: { type: String, default: "gemini-2.5-flash" },
       fallbackModel: { type: String, default: "gemini-2.5-flash-lite" },
+      imageGeminiKey: { type: String, default: "" },
+      imageModel: { type: String, default: "imagen-4.0-generate-001" },
       updatedAt: { type: Date, default: null },
     },
     maxUsers: { type: Number, default: 1 },
