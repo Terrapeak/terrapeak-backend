@@ -56,7 +56,10 @@ export const listImagesController = asyncHandler(async (req, res) => {
 });
 
 export const deleteImageController = asyncHandler(async (req, res) => {
-  const asset = await deleteImageAsset({ companyId: context(req).companyId, assetId: req.params.assetId });
+  const asset = await deleteImageAsset({
+    ...context(req),
+    assetId: req.params.assetId,
+  });
   if (!asset) {
     const error = new Error("Image asset not found.");
     error.statusCode = 404;
