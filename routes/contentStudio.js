@@ -19,6 +19,7 @@ import {
 import { getCompanyContentStudioUsage } from "../controllers/contentStudioUsageController.js";
 import {
   deleteImageController,
+  deliverImageController,
   generateImagesController,
   importDriveImageController,
   importImageUrlController,
@@ -49,6 +50,7 @@ router.post("/images/import-url", importImageUrlController);
 router.get("/images/google-drive", listDriveImagesController);
 router.post("/images/google-drive/import", importDriveImageController);
 router.post("/images/generate", generateImagesController);
+router.get("/images/:assetId/delivery", deliverImageController);
 router.delete("/images/:assetId", deleteImageController);
 
 router.get("/:id", getContentByIdController);
