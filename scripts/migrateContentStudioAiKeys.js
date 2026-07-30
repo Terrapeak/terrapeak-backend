@@ -9,6 +9,7 @@ import {
 
 const mode = process.argv[2] || "audit";
 const allowedModes = new Set(["audit", "apply", "verify", "rollback"]);
+const MIGRATION_ID = "content-studio-ai-keys-v1";
 
 if (!allowedModes.has(mode)) {
   console.error("Usage: node scripts/migrateContentStudioAiKeys.js audit|apply|verify|rollback");
@@ -21,7 +22,7 @@ if (!allowedModes.has(mode)) {
       $or: [
         { "contentStudioAiConfig.geminiKey": { $nin: ["", null] } },
         { "contentStudioAiConfig.imageGeminiKey": { $nin: ["", null] } },
-        { "contentStudioAiConfig.credentialMigration.migrationId": "content-studio-ai-keys-v1" },
+        { "contentStudioAiConfig.credentialMigration.migrationId": MIGRATION_ID },
       ],
     });
 
@@ -30,6 +31,7 @@ if (!allowedModes.has(mode)) {
       scanned: companies.length,
       candidates: 0,
       migrated: 0,
+      alreadyApplied: 0,
       verified: 0,
       rolledBack: 0,
       failed: [],
@@ -39,31 +41,48 @@ if (!allowedModes.has(mode)) {
       const config = company.contentStudioAiConfig || {};
       const textPlain = String(config.geminiKey || "").trim();
       const imagePlain = String(config.imageGeminiKey || "").trim();
+      const hasEncryptedText = Boolean(config.geminiKeyEncrypted?.ciphertext);
+      const hasEncryptedImage = Boolean(config.imageGeminiKeyEncrypted?.ciphertext);
+      const needsEncryptedText = Boolean(textPlain) && !hasEncryptedText;
+      const needsEncryptedImage = Boolean(imagePlain) && !hasEncryptedImage;
+      const migrationApplied =
+        config.credentialMigration?.migrationId === MIGRATION_ID;
 
       try {
         if (mode === "audit") {
-          if (
-            (textPlain && !config.geminiKeyEncrypted?.ciphertext) ||
-            (imagePlain && !config.imageGeminiKeyEncrypted?.ciphertext)
-          ) summary.candidates += 1;
+          if (needsEncryptedText || needsEncryptedImage || !migrationApplied) {
+            summary.candidates += 1;
+          }
           continue;
         }
 
         if (mode === "apply") {
+          if (
+            migrationApplied &&
+            !needsEncryptedText &&
+            !needsEncryptedImage
+          ) {
+            summary.alreadyApplied += 1;
+            continue;
+          }
+
           const update = {
             "contentStudioAiConfig.credentialMigration": {
-              migrationId: "content-studio-ai-keys-v1",
-              appliedAt: new Date(),
+              migrationId: MIGRATION_ID,
+              appliedAt:
+                config.credentialMigration?.appliedAt || new Date(),
               verifiedAt: null,
-              textPlainFingerprint: fingerprintContentStudioCredential(textPlain),
-              imagePlainFingerprint: fingerprintContentStudioCredential(imagePlain),
+              textPlainFingerprint:
+                fingerprintContentStudioCredential(textPlain),
+              imagePlainFingerprint:
+                fingerprintContentStudioCredential(imagePlain),
             },
           };
-          if (textPlain) {
+          if (needsEncryptedText) {
             update["contentStudioAiConfig.geminiKeyEncrypted"] =
               encryptContentStudioCredential(textPlain);
           }
-          if (imagePlain) {
+          if (needsEncryptedImage) {
             update["contentStudioAiConfig.imageGeminiKeyEncrypted"] =
               encryptContentStudioCredential(imagePlain);
           }
@@ -73,13 +92,13 @@ if (!allowedModes.has(mode)) {
         }
 
         if (mode === "verify") {
-          if (config.credentialMigration?.migrationId !== "content-studio-ai-keys-v1") {
+          if (!migrationApplied) {
             throw new Error("Migration marker is missing.");
           }
-          const encryptedText = config.geminiKeyEncrypted?.ciphertext
+          const encryptedText = hasEncryptedText
             ? decryptContentStudioCredential(config.geminiKeyEncrypted)
             : "";
-          const encryptedImage = config.imageGeminiKeyEncrypted?.ciphertext
+          const encryptedImage = hasEncryptedImage
             ? decryptContentStudioCredential(config.imageGeminiKeyEncrypted)
             : "";
 
@@ -91,21 +110,27 @@ if (!allowedModes.has(mode)) {
             config.credentialMigration.imagePlainFingerprint;
 
           if (!textMatches || !imageMatches) {
-            throw new Error("Encrypted credentials do not match the migration fingerprints.");
+            throw new Error(
+              "Encrypted credentials do not match the migration fingerprints.",
+            );
           }
 
           await Company.updateOne(
             { _id: company._id },
-            { $set: { "contentStudioAiConfig.credentialMigration.verifiedAt": new Date() } },
+            {
+              $set: {
+                "contentStudioAiConfig.credentialMigration.verifiedAt":
+                  new Date(),
+              },
+            },
           );
           summary.verified += 1;
           continue;
         }
 
         if (mode === "rollback") {
-          if (config.credentialMigration?.migrationId !== "content-studio-ai-keys-v1") {
-            continue;
-          }
+          if (!migrationApplied) continue;
+
           await Company.updateOne(
             { _id: company._id },
             {
