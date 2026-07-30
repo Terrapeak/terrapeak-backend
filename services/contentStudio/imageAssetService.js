@@ -42,6 +42,7 @@ const uploadBuffer = async ({ buffer, companyId, filename }) => {
       {
         folder: `terrapeak/content-studio/${companyId}`,
         resource_type: "image",
+        type: "authenticated",
         use_filename: true,
         unique_filename: true,
         filename_override: filename,
@@ -86,6 +87,8 @@ const saveAsset = async ({ companyId, userId, source, provider, externalId = "",
     source,
     provider,
     externalId,
+    visibility: "workspace-only",
+    deliveryType: "authenticated",
     filename,
     mimeType,
     prompt,
@@ -356,9 +359,10 @@ export const generateImagenAssets = async ({ companyId, userId, prompt, aspectRa
   }));
 };
 
-export const listImageAssets = ({ companyId, source }) => {
+export const listImageAssets = ({ companyId, source, assetIds = [] }) => {
   const query = { companyId, status: "active" };
   if (source) query.source = source;
+  if (assetIds.length) query._id = { $in: assetIds };
   return ContentStudioImageAsset.find(query).sort({ createdAt: -1 }).limit(100).lean();
 };
 
