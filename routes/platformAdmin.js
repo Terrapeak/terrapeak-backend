@@ -46,6 +46,7 @@ import {
   onboardPlatformCustomer,
 } from "../controllers/platformOnboardingController.js";
 import { getPlatformCompanyEffectiveBilling } from "../controllers/platformCompanyBillingController.js";
+import { getPlatformCompanyContentStudioUsage } from "../controllers/contentStudioUsageController.js";
 
 const router = express.Router();
 
@@ -64,6 +65,7 @@ router.patch("/companies/:companyId/commercial", isPlatformAuthenticated, isPlat
 router.get("/companies/:companyId/ai-config", isPlatformAuthenticated, isPlatformAdmin, getPlatformAIConfig);
 router.patch("/companies/:companyId/ai-config", isPlatformAuthenticated, isPlatformAdmin, updatePlatformAIConfig);
 router.post("/companies/:companyId/ai-config/test", isPlatformAuthenticated, isPlatformAdmin, testPlatformAIConfig);
+router.get("/companies/:companyId/content-studio-usage", isPlatformAuthenticated, isPlatformAdmin, getPlatformCompanyContentStudioUsage);
 router.get("/companies/:companyId/content-studio-ai-config", isPlatformAuthenticated, isPlatformAdmin, getPlatformContentStudioAIConfig);
 router.patch("/companies/:companyId/content-studio-ai-config", isPlatformAuthenticated, isPlatformAdmin, updatePlatformContentStudioAIConfig);
 router.post("/companies/:companyId/content-studio-ai-config/test", isPlatformAuthenticated, isPlatformAdmin, testPlatformContentStudioAIConfig);
