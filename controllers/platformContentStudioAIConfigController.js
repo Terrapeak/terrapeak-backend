@@ -10,6 +10,12 @@ const ALLOWED_MODELS = new Set([
   "gemini-3.1-flash-lite",
 ]);
 
+const ALLOWED_IMAGE_MODELS = new Set([
+  "imagen-4.0-generate-001",
+  "imagen-4.0-fast-generate-001",
+  "gemini-2.0-flash-preview-image-generation",
+]);
+
 const REQUEST_TIMEOUT_MS = 12000;
 const ACTIVITY_LIMIT = 50;
 
@@ -26,12 +32,23 @@ const buildSafeConfig = (company) => {
     maskedKey: maskKey(config.geminiKey),
     model: config.model || "gemini-2.5-flash",
     fallbackModel: config.fallbackModel || "gemini-2.5-flash-lite",
+    imageConfigured: Boolean(config.imageGeminiKey),
+    maskedImageKey: maskKey(config.imageGeminiKey),
+    imageModel: config.imageModel || "imagen-4.0-generate-001",
     updatedAt: config.updatedAt || null,
     allowedModels: Array.from(ALLOWED_MODELS),
+    allowedImageModels: Array.from(ALLOWED_IMAGE_MODELS),
   };
 };
 
-const appendActivity = async ({ companyId, actor, model, keyReplaced }) => {
+const appendActivity = async ({
+  companyId,
+  actor,
+  model,
+  imageModel,
+  keyReplaced,
+  imageKeyReplaced,
+}) => {
   await Company.updateOne(
     { _id: companyId },
     {
@@ -47,7 +64,12 @@ const appendActivity = async ({ companyId, actor, model, keyReplaced }) => {
               actorName: actor?.name || "",
               actorEmail: actor?.email || "",
               createdAt: new Date(),
-              metadata: { model, keyReplaced: Boolean(keyReplaced) },
+              metadata: {
+                model,
+                imageModel,
+                keyReplaced: Boolean(keyReplaced),
+                imageKeyReplaced: Boolean(imageKeyReplaced),
+              },
             },
           ],
           $position: 0,
@@ -81,17 +103,27 @@ export const updatePlatformContentStudioAIConfig = asyncHandler(async (req, res)
   const nextModel = req.body?.model || current.model || "gemini-2.5-flash";
   const nextFallbackModel =
     req.body?.fallbackModel || current.fallbackModel || "gemini-2.5-flash-lite";
+  const nextImageModel =
+    req.body?.imageModel || current.imageModel || "imagen-4.0-generate-001";
 
   if (!ALLOWED_MODELS.has(nextModel) || !ALLOWED_MODELS.has(nextFallbackModel)) {
-    return res.status(400).json({ success: false, message: "Unsupported Gemini model." });
+    return res.status(400).json({ success: false, message: "Unsupported Gemini text model." });
+  }
+
+  if (!ALLOWED_IMAGE_MODELS.has(nextImageModel)) {
+    return res.status(400).json({ success: false, message: "Unsupported Gemini image model." });
   }
 
   const replacementKey = String(req.body?.geminiKey || "").trim();
+  const replacementImageKey = String(req.body?.imageGeminiKey || "").trim();
+
   company.contentStudioAiConfig = {
     provider: "Gemini",
     geminiKey: replacementKey || current.geminiKey || "",
     model: nextModel,
     fallbackModel: nextFallbackModel,
+    imageGeminiKey: replacementImageKey || current.imageGeminiKey || "",
+    imageModel: nextImageModel,
     updatedAt: new Date(),
   };
 
@@ -100,11 +132,50 @@ export const updatePlatformContentStudioAIConfig = asyncHandler(async (req, res)
     companyId: company._id,
     actor: req.platformUser,
     model: nextModel,
+    imageModel: nextImageModel,
     keyReplaced: Boolean(replacementKey),
+    imageKeyReplaced: Boolean(replacementImageKey),
   });
 
   return res.json({ success: true, aiConfig: buildSafeConfig(company) });
 });
+
+const testModelAccess = async ({ key, model, image = false }) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = image
+      ? await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}?key=${encodeURIComponent(key)}`,
+          { signal: controller.signal },
+        )
+      : await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: "Reply with OK." }] }],
+              generationConfig: { maxOutputTokens: 8 },
+            }),
+            signal: controller.signal,
+          },
+        );
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(
+        payload?.error?.message ||
+          `Gemini rejected the ${image ? "image" : "text"} configuration with status ${response.status}.`,
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+};
 
 export const testPlatformContentStudioAIConfig = asyncHandler(async (req, res) => {
   const company = await Company.findById(req.params.companyId).select(
@@ -116,46 +187,19 @@ export const testPlatformContentStudioAIConfig = asyncHandler(async (req, res) =
   }
 
   const config = company.contentStudioAiConfig || {};
-  if (!config.geminiKey) {
+  if (!config.geminiKey || !config.imageGeminiKey) {
     return res.status(409).json({
       success: false,
-      message: "Content Studio Gemini API key is not configured.",
+      message: "Configure both Content Studio text and image Gemini API keys before testing.",
     });
   }
 
   const model = config.model || "gemini-2.5-flash";
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const imageModel = config.imageModel || "imagen-4.0-generate-001";
 
   try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(config.geminiKey)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: "Reply with OK." }] }],
-          generationConfig: { maxOutputTokens: 8 },
-        }),
-        signal: controller.signal,
-      },
-    );
-
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      return res.status(400).json({
-        success: false,
-        message:
-          payload?.error?.message ||
-          `Gemini rejected the Content Studio configuration with status ${response.status}.`,
-      });
-    }
-
-    return res.json({
-      success: true,
-      message: "Content Studio Gemini connection successful.",
-      model,
-    });
+    await testModelAccess({ key: config.geminiKey, model });
+    await testModelAccess({ key: config.imageGeminiKey, model: imageModel, image: true });
   } catch (error) {
     if (error?.name === "AbortError") {
       return res.status(504).json({
@@ -164,7 +208,12 @@ export const testPlatformContentStudioAIConfig = asyncHandler(async (req, res) =
       });
     }
     throw error;
-  } finally {
-    clearTimeout(timeout);
   }
+
+  return res.json({
+    success: true,
+    message: "Content Studio text and image Gemini connections are configured.",
+    model,
+    imageModel,
+  });
 });
