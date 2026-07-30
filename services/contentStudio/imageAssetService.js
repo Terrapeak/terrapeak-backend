@@ -6,6 +6,9 @@ import { google } from "googleapis";
 import ContentStudioImageAsset from "../../models/contentStudioImageAsset.js";
 import Company from "../../models/company.js";
 import User from "../../models/user.js";
+import { resolveCompanyContentStudioKeys } from "../../utils/contentStudioCredentialEncryption.js";
+import { findCompanyImageOrThrow } from "./imageOwnershipService.js";
+import { recordImageAudit } from "./imageAuditService.js";
 
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -74,8 +77,8 @@ const validateRemoteUrl = async (rawUrl) => {
   return parsed.toString();
 };
 
-const saveAsset = async ({ companyId, userId, source, provider, externalId = "", filename, mimeType, prompt = "", upload, metadata = {} }) =>
-  ContentStudioImageAsset.create({
+const saveAsset = async ({ companyId, userId, source, provider, externalId = "", filename, mimeType, prompt = "", upload, metadata = {} }) => {
+  const asset = await ContentStudioImageAsset.create({
     companyId,
     createdByUserId: userId,
     source,
@@ -91,6 +94,25 @@ const saveAsset = async ({ companyId, userId, source, provider, externalId = "",
     bytes: upload.bytes,
     metadata,
   });
+  const eventType = source === "local"
+    ? "image.uploaded"
+    : source === "url"
+      ? "image.imported.url"
+      : source === "google-drive"
+        ? "image.imported.drive"
+        : "image.generated";
+  await recordImageAudit({
+    companyId,
+    userId,
+    imageId: asset._id,
+    eventType,
+    source,
+    provider,
+    fileSize: asset.bytes,
+    model: metadata?.model || "",
+  });
+  return asset;
+};
 
 export const uploadLocalImages = async ({ companyId, userId, files }) => {
   if (!files?.length) throw makeError("Select at least one image.");
@@ -201,7 +223,7 @@ export const generateImagenAssets = async ({ companyId, userId, prompt, aspectRa
   if (!company) throw makeError("Company not found.", 404, "COMPANY_NOT_FOUND");
 
   const config = company.contentStudioAiConfig || {};
-  const apiKey = String(config.imageGeminiKey || "").trim();
+  const { imageKey: apiKey } = resolveCompanyContentStudioKeys(company);
   if (!apiKey) {
     throw makeError(
       "Content Studio image generation is not configured for this company.",
@@ -273,11 +295,45 @@ export const listImageAssets = ({ companyId, source }) => {
   return ContentStudioImageAsset.find(query).sort({ createdAt: -1 }).limit(100).lean();
 };
 
-export const deleteImageAsset = async ({ companyId, assetId }) => {
-  const asset = await ContentStudioImageAsset.findOne({ _id: assetId, companyId });
-  if (!asset) return null;
+export const deleteImageAsset = async ({ companyId, userId, assetId }) => {
+  const asset = await findCompanyImageOrThrow({
+    companyId,
+    assetId,
+    userId,
+    action: "delete",
+  });
+
+  if (asset.referenceCount > 0) {
+    await recordImageAudit({
+      companyId,
+      userId,
+      imageId: asset._id,
+      eventType: "image.deletion_blocked",
+      source: asset.source,
+      provider: asset.provider,
+      fileSize: asset.bytes,
+      secureMetadata: { referenceCount: asset.referenceCount },
+    });
+    throw makeError(
+      "This image is still used by saved content.",
+      409,
+      "IMAGE_IS_IN_USE",
+    );
+  }
+
   configureCloudinary();
-  await cloudinary.uploader.destroy(asset.storagePublicId, { resource_type: "image" });
+  await cloudinary.uploader.destroy(asset.storagePublicId, {
+    resource_type: "image",
+  });
+  await recordImageAudit({
+    companyId,
+    userId,
+    imageId: asset._id,
+    eventType: "image.deleted",
+    source: asset.source,
+    provider: asset.provider,
+    fileSize: asset.bytes,
+  });
   await asset.deleteOne();
   return asset.toObject();
 };
