@@ -14,11 +14,18 @@ const ALLOWED_MODELS = new Set([
   "gemini-3.1-flash-lite",
 ]);
 
-const ALLOWED_IMAGE_MODELS = new Set([
+const CURRENT_IMAGE_MODEL = "gemini-2.5-flash-image";
+const LEGACY_IMAGE_MODELS = new Set([
   "imagen-4.0-generate-001",
   "imagen-4.0-fast-generate-001",
   "gemini-2.0-flash-preview-image-generation",
 ]);
+const ALLOWED_IMAGE_MODELS = new Set([
+  CURRENT_IMAGE_MODEL,
+  ...LEGACY_IMAGE_MODELS,
+]);
+const normalizeImageModel = (model) =>
+  LEGACY_IMAGE_MODELS.has(model) ? CURRENT_IMAGE_MODEL : model;
 
 const REQUEST_TIMEOUT_MS = 12000;
 const ACTIVITY_LIMIT = 50;
@@ -42,7 +49,7 @@ const buildSafeConfig = (company) => {
     maskedImageKey: config.imageGeminiKeyEncrypted?.lastFour
       ? `••••••••${config.imageGeminiKeyEncrypted.lastFour}`
       : maskKey(config.imageGeminiKey),
-    imageModel: config.imageModel || "imagen-4.0-generate-001",
+    imageModel: normalizeImageModel(config.imageModel || CURRENT_IMAGE_MODEL),
     updatedAt: config.updatedAt || null,
     allowedModels: Array.from(ALLOWED_MODELS),
     allowedImageModels: Array.from(ALLOWED_IMAGE_MODELS),
@@ -112,7 +119,9 @@ export const updatePlatformContentStudioAIConfig = asyncHandler(async (req, res)
   const nextFallbackModel =
     req.body?.fallbackModel || current.fallbackModel || "gemini-2.5-flash-lite";
   const nextImageModel =
-    req.body?.imageModel || current.imageModel || "imagen-4.0-generate-001";
+    normalizeImageModel(
+      req.body?.imageModel || current.imageModel || CURRENT_IMAGE_MODEL,
+    );
 
   if (!ALLOWED_MODELS.has(nextModel) || !ALLOWED_MODELS.has(nextFallbackModel)) {
     return res.status(400).json({ success: false, message: "Unsupported Gemini text model." });
@@ -210,7 +219,9 @@ export const testPlatformContentStudioAIConfig = asyncHandler(async (req, res) =
   }
 
   const model = config.model || "gemini-2.5-flash";
-  const imageModel = config.imageModel || "imagen-4.0-generate-001";
+  const imageModel = normalizeImageModel(
+    config.imageModel || CURRENT_IMAGE_MODEL,
+  );
 
   try {
     await testModelAccess({ key: textKey, model });
