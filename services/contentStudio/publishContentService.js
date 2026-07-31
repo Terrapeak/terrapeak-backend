@@ -70,11 +70,12 @@ export const buildPublishedContent = ({ content, assets }) => {
 const createPublicRendition = async ({ companyId, asset }) => {
   configureCloudinary();
 
+  const deliveryType = asset.deliveryType || "authenticated";
   const sourceUrl = cloudinary.url(asset.storagePublicId, {
     resource_type: "image",
-    type: asset.deliveryType || "authenticated",
+    type: deliveryType,
     secure: true,
-    sign_url: (asset.deliveryType || "authenticated") === "authenticated",
+    sign_url: deliveryType === "authenticated",
   });
 
   return cloudinary.uploader.upload(sourceUrl, {
@@ -158,6 +159,7 @@ export const publishContent = async ({ companyId, userId, contentId }) => {
 
         await asset.save();
         createdPublicIds.push(asset.publishedStoragePublicId);
+        publishedStorageBytes += asset.publishedBytes;
 
         await recordImageAudit({
           companyId,
@@ -173,8 +175,6 @@ export const publishContent = async ({ companyId, userId, contentId }) => {
           },
         });
       }
-
-      publishedStorageBytes += Math.max(0, Number(asset.publishedBytes) || 0);
     }
 
     const publishedContent = buildPublishedContent({
