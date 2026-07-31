@@ -13,10 +13,20 @@ const makeError = (message, statusCode = 400, code = "") => {
 };
 
 const configureCloudinary = () => {
-  const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } = process.env;
+  const {
+    CLOUDINARY_CLOUD_NAME,
+    CLOUDINARY_API_KEY,
+    CLOUDINARY_API_SECRET,
+  } = process.env;
+
   if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
-    throw makeError("Image storage is not configured.", 503, "IMAGE_STORAGE_NOT_CONFIGURED");
+    throw makeError(
+      "Image storage is not configured.",
+      503,
+      "IMAGE_STORAGE_NOT_CONFIGURED",
+    );
   }
+
   cloudinary.config({
     cloud_name: CLOUDINARY_CLOUD_NAME,
     api_key: CLOUDINARY_API_KEY,
@@ -26,12 +36,18 @@ const configureCloudinary = () => {
 };
 
 const uniqueAssetIds = (content) =>
-  [...new Set((content.images || []).map((image) => String(image.assetId)).filter(Boolean))];
+  [...new Set(
+    (content.images || [])
+      .map((image) => String(image.assetId || ""))
+      .filter(Boolean),
+  )];
 
-const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegExp = (value) =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export const buildPublishedContent = ({ content, assets }) => {
   let published = String(content || "");
+
   for (const asset of assets) {
     if (!asset.publishedUrl) {
       throw makeError(
@@ -40,23 +56,27 @@ export const buildPublishedContent = ({ content, assets }) => {
         "PUBLIC_RENDITION_MISSING",
       );
     }
+
     const assetId = String(asset._id);
     published = published.replace(
       new RegExp(`asset:${escapeRegExp(assetId)}`, "gi"),
       asset.publishedUrl,
     );
   }
+
   return published;
 };
 
 const createPublicRendition = async ({ companyId, asset }) => {
   configureCloudinary();
+
   const sourceUrl = cloudinary.url(asset.storagePublicId, {
     resource_type: "image",
     type: asset.deliveryType || "authenticated",
     secure: true,
-    sign_url: asset.deliveryType === "authenticated",
+    sign_url: (asset.deliveryType || "authenticated") === "authenticated",
   });
+
   return cloudinary.uploader.upload(sourceUrl, {
     folder: `terrapeak/content-studio-published/${companyId}`,
     public_id: `asset-${asset._id}`,
@@ -68,6 +88,7 @@ const createPublicRendition = async ({ companyId, asset }) => {
 
 const destroyPublicRendition = async (publicId) => {
   if (!publicId) return;
+
   configureCloudinary();
   await cloudinary.uploader.destroy(publicId, {
     resource_type: "image",
@@ -80,10 +101,16 @@ export const publishContent = async ({ companyId, userId, contentId }) => {
   if (!mongoose.Types.ObjectId.isValid(contentId)) {
     throw makeError("A valid content ID is required.");
   }
-  const content = await ContentStudioContent.findOne({ _id: contentId, companyId });
+
+  const content = await ContentStudioContent.findOne({
+    _id: contentId,
+    companyId,
+  });
+
   if (!content) return null;
 
   const assetIds = uniqueAssetIds(content);
+
   await validateCompanyImages({
     companyId,
     userId,
@@ -100,43 +127,114 @@ export const publishContent = async ({ companyId, userId, contentId }) => {
     : [];
 
   if (assets.length !== assetIds.length) {
-    throw makeErroŠ[ˆ]XÚY[XYÙHØ\È›Ý›Ý[™ˆ‹’SPQÑWÓ“ÕÑ“ÕS‘ŠNÂˆB‚ˆÛÛœÝÜ™X]Y™[™][ÛœÈH×NÂˆžHÂˆ›Üˆ
-ÛÛœÝ\ÜÙ]Ùˆ\ÜÙ]ÊHÂˆYˆ
-\ÜÙ]œX›\ÚY\›	‰ˆ\ÜÙ]œX›\ÚYÝÜ˜YÙTX›XÒY
-HÛÛ[YNÂˆÛÛœÝ\ØYH]ØZ]Ü™X]TX›XÔ™[™][ÛŠÈÛÛ\[žRY\ÜÙ]JNÂˆ\ÜÙ]œX›\ÚY\›H\ØYœÙXÝ\™WÝ\›Âˆ\ÜÙ]œX›\ÚYÝÜ˜YÙTX›XÒYH\ØYœX›X×ÚYÂˆ\ÜÙ]œX›\ÚYž]\ÈHX]›X^
-[X™\Š\ØY˜ž]\ÊH[X™\Š\ÜÙ]˜ž]\ÊH
-NÂˆ\ÜÙ]œX›\ÚY]H™]È]J
-NÂˆ\ÜÙ]œX›\ÚYžU\Ù\’YH\Ù\’YÂˆ\ÜÙ]š\ÚXš[]HHœX›\ÚY\X›XÈŽÂˆÜ™X]Y™[™][ÛœËœ\Ú
-È\ÜÙ]X›XÒYˆ\ØYœX›X×ÚYJNÂˆB‚ˆÛÛœÝX›\ÚYÛÛ[HZ[X›\ÚYÛÛ[
-ÈÛÛ[ˆÛÛ[˜ÛÛ[\ÜÙ]ÈJNÂˆÛÛœÝÙ\ÜÚ[ÛˆH]ØZ][Û™ÛÛÜÙKœÝ\Ù\ÜÚ[ÛŠ
-NÂˆžHÂˆ]ØZ]Ù\ÜÚ[Û‹Ú]˜[œØXÝ[ÛŠ\Þ[˜È
+    throw makeError(
+      "One or more attached images are unavailable.",
+      409,
+      "CONTENT_IMAGE_UNAVAILABLE",
+    );
+  }
 
-HOˆÂˆ›Üˆ
-ÛÛœÝÈ\ÜÙ]HÙˆÜ™X]Y™[™][ÛœÊHÂˆ]ØZ]\ÜÙ]œØ]™JÈÙ\ÜÚ[ÛˆJNÂˆ]ØZ]™XÛÜ™[XYÙP]Y]
-ÂˆÛÛ\[žRYˆ\Ù\’Yˆ[XYÙRYˆ\ÜÙ]—ÚYˆ]™[\Nˆš[XYÙKœX›\ÚY‹ˆÛÝ\˜ÙNˆ\ÜÙ]œÛÝ\˜ÙKˆ›ÝšY\Žˆ\ÜÙ]œ›ÝšY\‹ˆš[TÚ^™Nˆ\ÜÙ]œX›\ÚYž]\ËˆÙXÝ\™SY]Y]NˆÈÛÛ[YˆÝš[™ÊÛÛ[—ÚY
-HKˆÙ\ÜÚ[Û‹ˆJNÂˆBˆÛÛ[œX›\ÚYÛÛ[HX›\ÚYÛÛ[ÂˆÛÛ[œX›\ÚY]H™]È]J
-NÂˆÛÛ[œX›\ÚYžU\Ù\’YH\Ù\’YÂˆÛÛ[œX›\Ú™\œÚ[ÛˆH
-ÛÛ[œX›\Ú™\œÚ[Ûˆ
-H
-ÈNÂˆÛÛ[œÝ]\ÈH™š[˜[ŽÂˆÛÛ[›\ÝY]YžU\Ù\’YH\Ù\’YÂˆ]ØZ]ÛÛ[œØ]™JÈÙ\ÜÚ[ÛˆJNÂˆJNÂˆHš[˜[HÂˆ]ØZ]Ù\ÜÚ[Û‹™[™Ù\ÜÚ[ÛŠ
-NÂˆBˆ™]\›ˆÂˆÛÛ[ˆÛÛ[ÓØš™XÝ
+  const createdPublicIds = [];
+  let publishedStorageBytes = 0;
 
-KˆX›\ÚYÝÜ˜YÙPž]\ÎˆÜ™X]Y™[™][ÛœËœ™YXÙJˆ
-Ý[][JHOˆÝ[
-ÈX]›X^
-[X™\Š][K˜\ÜÙ]œX›\ÚYž]\ÊH
-Kˆˆ
-KˆNÂˆHØ]Ú
-\œ›ÜŠHÂˆ]ØZ]›ÛZ\ÙK˜[Ù]Y
-ˆÜ™X]Y™[™][ÛœË›X\
+  try {
+    for (const asset of assets) {
+      if (!asset.publishedUrl) {
+        const uploaded = await createPublicRendition({ companyId, asset });
 
-ÈX›XÒYJHOˆ\Ý›ÞTX›XÔ™[™][ÛŠX›XÒY
-JKˆ
-NÂˆ›ÝÈ\œ›ÜŽÂˆBŸNÂ‚™^ÜÛÛœÝÙ]X›\ÚYÛÛ[H\Þ[˜È
-ÈÛÛ\[žRYÛÛ[YJHOˆÂˆYˆ
-[[Û™ÛÛÜÙK•\\Ë“Øš™XÝYš\Õ˜[Y
-ÛÛ[Y
-JH™]\›ˆ[ÂˆÛÛœÝÛÛ[H]ØZ]ÛÛ[ÝY[ÐÛÛ[™š[™Û™JÈÚYˆÛÛ[YÛÛ\[žRYJK›X[Š
-NÂˆYˆ
-XÛÛ[ËœX›\ÚY]XÛÛ[œX›\ÚYÛÛ[
-H™]\›ˆ[Âˆ™]\›ˆÂˆYˆÛÛ[—ÚYˆ]NˆÛÛ[]KˆÛÛ[\NˆÛÛ[˜ÛÛ[\KˆX›\ÚYÛÛ[ˆÛÛ[œX›\ÚYÛÛ[ˆX›\ÚY]ˆÛÛ[œX›\ÚY]ˆX›\Ú™\œÚ[ÛŽˆÛÛ[œX›\Ú™\œÚ[Û‹ˆNÂŸNÂ
+        asset.publishedUrl = uploaded.secure_url || uploaded.url || "";
+        asset.publishedStoragePublicId = uploaded.public_id || "";
+        asset.publishedBytes = Math.max(0, Number(uploaded.bytes) || 0);
+        asset.publishedAt = new Date();
+        asset.publishedByUserId = userId || null;
+
+        if (!asset.publishedUrl || !asset.publishedStoragePublicId) {
+          throw makeError(
+            "The public image rendition could not be created.",
+            502,
+            "PUBLIC_RENDITION_FAILED",
+          );
+        }
+
+        await asset.save();
+        createdPublicIds.push(asset.publishedStoragePublicId);
+
+        await recordImageAudit({
+          companyId,
+          userId,
+          imageId: asset._id,
+          eventType: "image.published",
+          source: asset.source || "",
+          provider: "cloudinary",
+          fileSize: asset.publishedBytes,
+          secureMetadata: {
+            publishedStoragePublicId: asset.publishedStoragePublicId,
+            contentId: String(content._id),
+          },
+        });
+      }
+
+      publishedStorageBytes += Math.max(0, Number(asset.publishedBytes) || 0);
+    }
+
+    const publishedContent = buildPublishedContent({
+      content: content.content,
+      assets,
+    });
+
+    content.publishedContent = publishedContent;
+    content.publishedAt = new Date();
+    content.publishedByUserId = userId || null;
+    content.publishVersion = Math.max(0, Number(content.publishVersion) || 0) + 1;
+
+    await content.save();
+
+    return {
+      content: content.toObject(),
+      publishedStorageBytes,
+    };
+  } catch (error) {
+    await Promise.allSettled(
+      createdPublicIds.map((publicId) => destroyPublicRendition(publicId)),
+    );
+
+    if (createdPublicIds.length) {
+      await ContentStudioImageAsset.updateMany(
+        { companyId, publishedStoragePublicId: { $in: createdPublicIds } },
+        {
+          $set: {
+            publishedUrl: "",
+            publishedStoragePublicId: "",
+            publishedBytes: 0,
+            publishedAt: null,
+            publishedByUserId: null,
+          },
+        },
+      );
+    }
+
+    throw error;
+  }
+};
+
+export const getPublishedContent = async ({ companyId, contentId }) => {
+  if (!mongoose.Types.ObjectId.isValid(contentId)) return null;
+
+  const content = await ContentStudioContent.findOne({
+    _id: contentId,
+    companyId,
+    publishedAt: { $ne: null },
+    publishedContent: { $ne: "" },
+  })
+    .select("title publishedContent publishedAt publishVersion")
+    .lean();
+
+  if (!content) return null;
+
+  return {
+    title: content.title,
+    publishedContent: content.publishedContent,
+    publishedAt: content.publishedAt,
+    publishVersion: content.publishVersion,
+  };
+};
