@@ -4,6 +4,8 @@ import ContentStudioImageAsset from "../../models/contentStudioImageAsset.js";
 import { validateCompanyImages } from "./imageOwnershipService.js";
 import { recordImageAudit } from "./imageAuditService.js";
 
+const ASSET_REFERENCE_PATTERN = /!\[([^\]]*)\]\(asset:([a-f0-9]{24})\)(?:\{([^}]*)\})?/gi;
+
 const ensureObjectId = (value, fieldName) => {
   if (!value || !mongoose.Types.ObjectId.isValid(value)) {
     const error = new Error(`A valid ${fieldName} is required.`);
@@ -59,6 +61,61 @@ const normalizeImages = (images) => {
     caption: normalizeString(item.caption).slice(0, 1000),
     approved: item.approved !== false,
   }));
+};
+
+const parseImageOptions = (raw = "") => {
+  const options = {};
+
+  String(raw)
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .forEach((part) => {
+      const separator = part.indexOf("=");
+      if (separator < 0) return;
+      const key = part.slice(0, separator).trim();
+      let value = part.slice(separator + 1).trim();
+      try {
+        value = decodeURIComponent(value);
+      } catch {
+        // Keep legacy values that were not URI encoded.
+      }
+      options[key] = value;
+    });
+
+  return options;
+};
+
+const extractImagesFromContent = (content, fallbackImages = []) => {
+  const fallbackById = new Map(
+    normalizeImages(fallbackImages).map((image) => [String(image.assetId), image]),
+  );
+  const references = [];
+  const seen = new Set();
+  const source = String(content || "");
+  ASSET_REFERENCE_PATTERN.lastIndex = 0;
+
+  let match;
+  while ((match = ASSET_REFERENCE_PATTERN.exec(source)) && references.length < 30) {
+    const assetId = match[2];
+    if (seen.has(assetId)) continue;
+    seen.add(assetId);
+
+    const previous = fallbackById.get(assetId) || {};
+    const options = parseImageOptions(match[3]);
+    references.push({
+      ...previous,
+      assetId,
+      position: previous.position || "manual",
+      anchor: previous.anchor || "",
+      order: references.length,
+      altText: normalizeString(match[1], previous.altText || "Content image").slice(0, 500),
+      caption: normalizeString(options.caption, previous.caption || "").slice(0, 1000),
+      approved: previous.approved !== false,
+    });
+  }
+
+  return normalizeImages(references);
 };
 
 const imageIdsFrom = (images = []) =>
@@ -169,7 +226,7 @@ const buildContentPayload = ({
     ),
     imagePlacementMode: ["manual", "assisted", "automatic"].includes(imagePlacementMode)
       ? imagePlacementMode : "manual",
-    images: normalizeImages(images),
+    images: extractImagesFromContent(normalizedContent, images),
   };
 };
 
@@ -354,10 +411,6 @@ export const updateContent = async ({
     allowedUpdates.imagePlacementMode = updates.imagePlacementMode;
   }
 
-  if (Array.isArray(updates.images)) {
-    allowedUpdates.images = normalizeImages(updates.images);
-  }
-
   if (updates.brief && typeof updates.brief === "object") {
     allowedUpdates.brief = normalizeBrief(updates.brief);
   }
@@ -371,6 +424,18 @@ export const updateContent = async ({
     }).session(session);
 
     if (!existing) return null;
+
+    if (typeof allowedUpdates.content === "string") {
+      const fallbackImages = Array.isArray(updates.images)
+        ? updates.images
+        : existing.images;
+      allowedUpdates.images = extractImagesFromContent(
+        allowedUpdates.content,
+        fallbackImages,
+      );
+    } else if (Array.isArray(updates.images)) {
+      allowedUpdates.images = normalizeImages(updates.images);
+    }
 
     const previousIds = imageIdsFrom(existing.images);
     const nextIds = Array.isArray(allowedUpdates.images)
