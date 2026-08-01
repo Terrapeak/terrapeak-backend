@@ -50,6 +50,45 @@ const withUsageReservation = async ({ req, action, storageBytes, imageCount, gen
   }
 };
 
+const mapImageGenerationError = (error) => {
+  const providerStatus = Number(error?.response?.status || error?.statusCode || 0);
+  const providerCode = String(
+    error?.response?.data?.error?.status ||
+    error?.response?.data?.error?.code ||
+    error?.code ||
+    "",
+  ).toUpperCase();
+
+  if (providerStatus === 429 || providerCode === "RESOURCE_EXHAUSTED") {
+    const mapped = new Error(
+      "Image generation is temporarily unavailable because the provider quota or billing allowance has been reached. Please try again later or contact your TerraPeak administrator.",
+    );
+    mapped.statusCode = 429;
+    mapped.code = "IMAGE_PROVIDER_QUOTA_EXCEEDED";
+    return mapped;
+  }
+
+  if (providerStatus === 401 || providerStatus === 403) {
+    const mapped = new Error(
+      "Image generation could not be authorised for this company. Please contact your TerraPeak administrator.",
+    );
+    mapped.statusCode = 503;
+    mapped.code = "IMAGE_PROVIDER_AUTHORIZATION_FAILED";
+    return mapped;
+  }
+
+  if (providerStatus >= 500) {
+    const mapped = new Error(
+      "The image-generation provider is temporarily unavailable. Please try again shortly.",
+    );
+    mapped.statusCode = 503;
+    mapped.code = "IMAGE_PROVIDER_UNAVAILABLE";
+    return mapped;
+  }
+
+  return error;
+};
+
 export const uploadImagesController = asyncHandler(async (req, res) => {
   const files = req.files || [];
   const assets = await withUsageReservation({
@@ -87,17 +126,24 @@ export const generateImagesController = asyncHandler(async (req, res) => {
   if (!prompt) {
     const error = new Error("Describe the image you want to generate.");
     error.statusCode = 400;
+    error.code = "IMAGE_PROMPT_REQUIRED";
     throw error;
   }
+
   const count = Math.min(Math.max(Number(req.body?.count) || 1, 1), 4);
-  const assets = await withUsageReservation({
-    req, action: "generate", storageBytes: MAX_IMAGE_BYTES * count,
-    imageCount: count, generationCount: count,
-    work: () => generateImagenAssets({
-      ...context(req), prompt, count, aspectRatio: req.body?.aspectRatio,
-    }),
-  });
-  res.status(201).json({ success: true, data: assets.map((asset) => serializeImageAssetForClient({ req, asset })) });
+
+  try {
+    const assets = await withUsageReservation({
+      req, action: "generate", storageBytes: MAX_IMAGE_BYTES * count,
+      imageCount: count, generationCount: count,
+      work: () => generateImagenAssets({
+        ...context(req), prompt, count, aspectRatio: req.body?.aspectRatio,
+      }),
+    });
+    res.status(201).json({ success: true, data: assets.map((asset) => serializeImageAssetForClient({ req, asset })) });
+  } catch (error) {
+    throw mapImageGenerationError(error);
+  }
 });
 
 export const listImagesController = asyncHandler(async (req, res) => {
