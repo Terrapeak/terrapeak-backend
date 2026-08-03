@@ -42,75 +42,87 @@ const sessionSchema = new mongoose.Schema(
     ],
 
     bookingType: {
-  type: String,
-  enum: ["appointment", "reservation", "clarify", null],
-  default: null,
-},
+      type: String,
+      enum: ["appointment", "reservation", "clarify", null],
+      default: null,
+    },
 
-reservationStep: String,
-reservationBusinessSlug: String,
-reservationDate: String,
-reservationTime: String,
-reservationPartySize: Number,
-reservationName: String,
-reservationPhone: String,
-reservationSpecialRequest: String,
-reservationOccasion: String,
-reservationAllergies: String,
-reservationSeatingPreference: String,
+    reservationStep: String,
+    reservationBusinessSlug: String,
+    reservationDate: String,
+    reservationTime: String,
+    reservationPartySize: Number,
+    reservationName: String,
+    reservationPhone: String,
+    reservationSpecialRequest: String,
+    reservationOccasion: String,
+    reservationAllergies: String,
+    reservationSeatingPreference: String,
+    reservationCustomFields: {
+      type: [mongoose.Schema.Types.Mixed],
+      default: [],
+    },
+    reservationCustomFieldIndex: {
+      type: Number,
+      default: 0,
+    },
+    reservationCustomData: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
 
-reservationRescheduleStep: String,
-rescheduleReservationId: String,
-rescheduleReservationOptions: {
-  type: [String],
-  default: [],
-},
-rescheduleReservationData: {
-  type: mongoose.Schema.Types.Mixed,
-  default: {},
-},
+    reservationRescheduleStep: String,
+    rescheduleReservationId: String,
+    rescheduleReservationOptions: {
+      type: [String],
+      default: [],
+    },
+    rescheduleReservationData: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
 
-cancelReservationStep: String,
-cancelReservationId: String,
-cancelReservationOptions: {
-  type: [String],
-  default: [],
-},
+    cancelReservationStep: String,
+    cancelReservationId: String,
+    cancelReservationOptions: {
+      type: [String],
+      default: [],
+    },
 
-appointmentStep: String,
-appointmentDate: String,
-appointmentName: String,
-appointmentEmail: String,
-appointmentPhone: String,
+    appointmentStep: String,
+    appointmentDate: String,
+    appointmentName: String,
+    appointmentEmail: String,
+    appointmentPhone: String,
 
-cancelTypeStep: String,
-forceAppointmentCancel: Boolean,
-cancelAppointmentLookupStep: String,
-rescheduleStep: String,
-rescheduleAppointmentId: String,
-rescheduleAppointmentOptions: {
-  type: [String],
-  default: [],
-},
-isRescheduling: {
-  type: Boolean,
-  default: false,
-},
+    cancelTypeStep: String,
+    forceAppointmentCancel: Boolean,
+    cancelAppointmentLookupStep: String,
+    rescheduleStep: String,
+    rescheduleAppointmentId: String,
+    rescheduleAppointmentOptions: {
+      type: [String],
+      default: [],
+    },
+    isRescheduling: {
+      type: Boolean,
+      default: false,
+    },
 
-cancelStep: String,
-cancelAppointmentId: String,
-cancelAppointmentOptions: {
-  type: [String],
-  default: [],
-},
+    cancelStep: String,
+    cancelAppointmentId: String,
+    cancelAppointmentOptions: {
+      type: [String],
+      default: [],
+    },
 
-// appointmentAddress: String,
-tempSlots: Array,
-selectedSlot: String,
+    // appointmentAddress: String,
+    tempSlots: Array,
+    selectedSlot: String,
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 export default mongoose.model("Session", sessionSchema);
