@@ -8,6 +8,7 @@ import {
 import {
   buildCustomFieldPrompt,
   getActiveBookingCustomFields,
+  normalizeCustomFieldOptions,
   validateCustomFieldAnswer,
 } from "../utils/reservationCustomFieldService.js";
 
@@ -32,13 +33,46 @@ const clearReservationDraft = (session) => {
   session.reservationCustomData = {};
 };
 
-const sendReply = async ({ res, session, message, reply }) => {
+const getCustomFieldInput = (field) => {
+  if (!field) return null;
+
+  if (field.field_type === "dropdown") {
+    const options = normalizeCustomFieldOptions(field.field_options);
+    if (!options.length) return null;
+
+    return {
+      type: options.length <= 6 ? "quick-replies" : "select",
+      fieldId: String(field.id || field._id || field.field_label),
+      label: field.field_label,
+      required: Boolean(field.is_required),
+      options: options.map((option) => ({ label: option, value: option })),
+    };
+  }
+
+  if (field.field_type === "checkbox") {
+    return {
+      type: "quick-replies",
+      fieldId: String(field.id || field._id || field.field_label),
+      label: field.field_label,
+      required: Boolean(field.is_required),
+      options: [
+        { label: "Yes", value: "yes" },
+        { label: "No", value: "no" },
+      ],
+    };
+  }
+
+  return null;
+};
+
+const sendReply = async ({ res, session, message, reply, input = null }) => {
   appendChatExchange(session, message, reply);
   await session.save();
 
   return res.json({
     success: true,
     reply,
+    input,
     appointmentStep: session.appointmentStep,
     reservationStep: session.reservationStep,
     bookingType: session.bookingType,
@@ -119,6 +153,7 @@ export default async function handleReservationCustomFields(req, res, next) {
           session,
           message,
           reply: buildCustomFieldPrompt(fields[0]),
+          input: getCustomFieldInput(fields[0]),
         });
       }
 
@@ -156,6 +191,7 @@ export default async function handleReservationCustomFields(req, res, next) {
           session,
           message,
           reply: `${validation.error}\n\n${buildCustomFieldPrompt(field)}`,
+          input: getCustomFieldInput(field),
         });
       }
 
@@ -172,6 +208,7 @@ export default async function handleReservationCustomFields(req, res, next) {
           session,
           message,
           reply: buildCustomFieldPrompt(nextField),
+          input: getCustomFieldInput(nextField),
         });
       }
 
@@ -215,6 +252,7 @@ export default async function handleReservationCustomFields(req, res, next) {
           session,
           message,
           reply: `${validation.error}\n\n${buildCustomFieldPrompt(field)}`,
+          input: getCustomFieldInput(field),
         });
       }
 
