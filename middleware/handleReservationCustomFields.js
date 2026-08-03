@@ -112,6 +112,17 @@ export default async function handleReservationCustomFields(req, res, next) {
       return next();
     }
 
+    const normalizedMessage = String(message).trim().toLowerCase();
+    if (["cancel", "stop", "exit", "quit"].includes(normalizedMessage)) {
+      clearReservationDraft(session);
+      return sendReply({
+        res,
+        session,
+        message,
+        reply: "Okay, I cancelled the current reservation process. How else can I help you?",
+      });
+    }
+
     const handledSteps = new Set([
       "askPhone",
       "askCustomField",
