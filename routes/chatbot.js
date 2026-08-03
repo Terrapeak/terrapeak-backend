@@ -15,6 +15,7 @@ import {
 import isVerifiedUser from "../middleware/isVerifiedUser.js";
 import resolveCompanyContext from "../middleware/resolveCompanyContext.js";
 import requireCompanyWriteAccess from "../middleware/requireCompanyWriteAccess.js";
+import handleReservationCustomFields from "../middleware/handleReservationCustomFields.js";
 import { askRateLimiter } from "../middleware/rateLimiter.js";
 import { verifyDomain } from "../middleware/validateChatbotApiKey.js";
 import validateChatbotModel from "../middleware/validateChatbotModel.js";
@@ -32,7 +33,7 @@ router.get(
   isVerifiedUser,
   resolveCompanyContext,
   maskCustomerAIConfigResponse,
-  getChatbotSettings
+  getChatbotSettings,
 );
 router.get("/settingByKey", verifyDomain, getChatbotSettingsByKey);
 router.post(
@@ -43,7 +44,7 @@ router.post(
   stripCustomerAIConfigUpdates,
   validateChatbotModel,
   maskCustomerAIConfigResponse,
-  saveChatbotSettings
+  saveChatbotSettings,
 );
 
 router.post(
@@ -52,7 +53,7 @@ router.post(
   resolveCompanyContext,
   requireCompanyWriteAccess,
   upload.single("file"),
-  extractInstructions
+  extractInstructions,
 );
 
 router.post(
@@ -60,7 +61,7 @@ router.post(
   isVerifiedUser,
   resolveCompanyContext,
   requireCompanyWriteAccess,
-  optimizeSystemInstruction
+  optimizeSystemInstruction,
 );
 
 router.get(
@@ -68,25 +69,30 @@ router.get(
   isVerifiedUser,
   resolveCompanyContext,
   requireCompanyWriteAccess,
-  getApiKey
+  getApiKey,
 );
 router.post(
   "/website-info",
   isVerifiedUser,
   resolveCompanyContext,
   requireCompanyWriteAccess,
-  saveWebsiteInfo
+  saveWebsiteInfo,
 );
 router.post(
   "/action",
   isVerifiedUser,
   resolveCompanyContext,
   requireCompanyWriteAccess,
-  saveBotAction
+  saveBotAction,
 );
 
 // Public route (uses x-api-key and domain validation instead)
-router.post("/ask", askRateLimiter, askGemini);
+router.post(
+  "/ask",
+  askRateLimiter,
+  handleReservationCustomFields,
+  askGemini,
+);
 
 router.get("/session/:sessionId", verifyDomain, getSession);
 
@@ -94,7 +100,7 @@ router.get(
   "/sessions",
   isVerifiedUser,
   resolveCompanyContext,
-  getUsersChatlog
+  getUsersChatlog,
 );
 
 export default router;
