@@ -10,16 +10,69 @@ const supabase = createClient(
 
 const SKIP_VALUES = new Set(["none", "skip", "no", "n/a", "na"]);
 
-export const normalizeCustomFieldOptions = (fieldOptions) => {
-  if (Array.isArray(fieldOptions)) {
-    return fieldOptions.map((option) => String(option).trim()).filter(Boolean);
+const optionLabel = (option) => {
+  if (option === undefined || option === null) return "";
+
+  if (typeof option === "object") {
+    return String(
+      option.label ??
+        option.name ??
+        option.value ??
+        option.text ??
+        "",
+    ).trim();
   }
 
-  return String(fieldOptions || "")
+  return String(option).trim();
+};
+
+export const normalizeCustomFieldOptions = (fieldOptions) => {
+  if (fieldOptions === undefined || fieldOptions === null || fieldOptions === "") {
+    return [];
+  }
+
+  if (Array.isArray(fieldOptions)) {
+    return fieldOptions.map(optionLabel).filter(Boolean);
+  }
+
+  if (typeof fieldOptions === "object") {
+    const nestedOptions =
+      fieldOptions.options ??
+      fieldOptions.choices ??
+      fieldOptions.values ??
+      fieldOptions.items ??
+      [];
+
+    return normalizeCustomFieldOptions(nestedOptions);
+  }
+
+  const text = String(fieldOptions).trim();
+  if (!text) return [];
+
+  if (
+    (text.startsWith("[") && text.endsWith("]")) ||
+    (text.startsWith("{") && text.endsWith("}"))
+  ) {
+    try {
+      return normalizeCustomFieldOptions(JSON.parse(text));
+    } catch {
+      // Fall through to newline/comma parsing for malformed legacy values.
+    }
+  }
+
+  return text
     .split(/\r?\n|,/)
-    .map((option) => option.trim())
+    .map((option) => option.trim().replace(/^['"]|['"]$/g, ""))
     .filter(Boolean);
 };
+
+const getFieldOptions = (field = {}) =>
+  normalizeCustomFieldOptions(
+    field.field_options ??
+      field.options ??
+      field.dropdown_options ??
+      field.choices,
+  );
 
 export const buildCustomFieldPrompt = (field) => {
   const label = String(field?.field_label || "Additional information").trim();
@@ -28,8 +81,10 @@ export const buildCustomFieldPrompt = (field) => {
     : " You can reply **skip** if you prefer not to answer.";
 
   if (field?.field_type === "dropdown") {
-    const options = normalizeCustomFieldOptions(field.field_options);
-    const optionText = options.length ? ` Choose one of: **${options.join("**, **")}**.` : "";
+    const options = getFieldOptions(field);
+    const optionText = options.length
+      ? ` Choose one of: **${options.join("**, **")}**.`
+      : " Please enter your preferred option.";
     return `${label}?${optionText}${optionalHint}`;
   }
 
@@ -57,7 +112,14 @@ export const validateCustomFieldAnswer = (field, rawAnswer) => {
   }
 
   if (field?.field_type === "dropdown") {
-    const options = normalizeCustomFieldOptions(field.field_options);
+    const options = getFieldOptions(field);
+
+    // Do not trap the customer in a loop if a legacy dropdown has no readable
+    // options. The answer is still stored while the configuration is repaired.
+    if (!options.length) {
+      return { valid: true, value: answer };
+    }
+
     const match = options.find((option) => option.toLowerCase() === normalized);
 
     if (!match) {
@@ -92,7 +154,7 @@ export const validateCustomFieldAnswer = (field, rawAnswer) => {
 export async function getActiveBookingCustomFields(businessId) {
   const { data, error } = await supabase
     .from("booking_custom_fields")
-    .select("id, field_label, field_type, field_options, is_required, display_order")
+    .select("*")
     .eq("business_id", businessId)
     .eq("is_active", true)
     .order("display_order", { ascending: true });
@@ -102,5 +164,13 @@ export async function getActiveBookingCustomFields(businessId) {
     throw new Error("Could not load reservation custom fields");
   }
 
-  return data || [];
+  return (data || []).map((field) => ({
+    ...field,
+    field_options:
+      field.field_options ??
+      field.options ??
+      field.dropdown_options ??
+      field.choices ??
+      [],
+  }));
 }
