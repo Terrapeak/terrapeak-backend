@@ -7,6 +7,7 @@ import swaggerRoutes from "./swagger.js";
 import cors from "cors";
 import ensureChannelRegistry from "./services/channelRegistryService.js";
 import ensureContentStudioRegistry from "./services/contentStudioRegistryService.js";
+import bootstrapStagingIdentities from "./services/stagingIdentityBootstrapService.js";
 import requireTrustedCookieOrigin from "./middleware/requireTrustedCookieOrigin.js";
 import configureProductionLogging from "./utils/configureProductionLogging.js";
 import { startContentStudioImageLifecycleScheduler } from "./services/contentStudio/imageLifecycleSchedulerService.js";
@@ -14,13 +15,19 @@ import { startContentStudioImageLifecycleScheduler } from "./services/contentStu
 dotenv.config();
 configureProductionLogging();
 
-// Connect to MongoDB
+const parseConfiguredOrigins = () =>
+  String(process.env.FRONTEND_URLS || process.env.FRONTEND_URL || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
 mongoose
   .connect(process.env.MONGO_URI, {})
   .then(async () => {
     console.log("MongoDB connected");
     await ensureChannelRegistry();
     await ensureContentStudioRegistry();
+    await bootstrapStagingIdentities();
     startContentStudioImageLifecycleScheduler();
   })
   .catch((error) => console.error("MongoDB connection error:", error));
@@ -30,7 +37,7 @@ const app = express();
 app.use(express.static("public"));
 
 const productionOrigins = [
-  process.env.FRONTEND_URL,
+  ...parseConfiguredOrigins(),
   "https://terrapeak-gemini-assistant.vercel.app",
   "https://platform.terrapeakgroup.com",
   "https://dashboard.terrapeakgroup.com",
@@ -61,7 +68,6 @@ app.use(
   }),
 );
 
-// Middleware
 app.use(
   express.json({
     limit: "1mb",
@@ -75,7 +81,6 @@ app.use(
 app.use(cookieParser());
 app.use(requireTrustedCookieOrigin);
 
-// Routes
 app.use("/api/", routes);
 app.use("/api", swaggerRoutes);
 
@@ -105,7 +110,6 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
 const port = process.env.PORT || 5000;
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
