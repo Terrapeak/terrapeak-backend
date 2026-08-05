@@ -1,9 +1,15 @@
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
+const parseConfiguredOrigins = () =>
+  String(process.env.FRONTEND_URLS || process.env.FRONTEND_URL || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
 const getTrustedOrigins = () =>
   new Set(
     [
-      process.env.FRONTEND_URL,
+      ...parseConfiguredOrigins(),
       "https://terrapeak-gemini-assistant.vercel.app",
       "https://platform.terrapeakgroup.com",
       "https://dashboard.terrapeakgroup.com",
