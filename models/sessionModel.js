@@ -125,48 +125,4 @@ const sessionSchema = new mongoose.Schema(
   },
 );
 
-/*
- * The chatbot controller keeps a session document in memory while it processes
- * a message and saves it at the end of the request. Two near-simultaneous
- * requests can therefore both observe that no session exists and both attempt
- * to insert the same unique sessionId. MongoDB accepts the first insert and
- * rejects the second with E11000.
- *
- * Claim the session row with an atomic upsert before Mongoose performs the
- * normal save. The current document is then converted into an existing
- * document, so the remainder of the save becomes an update rather than a
- * second insert. This preserves the current controller flow while removing the
- * find-then-insert race.
- */
-sessionSchema.pre("save", async function claimNewSessionAtomically() {
-  if (!this.isNew) {
-    return;
-  }
-
-  const SessionModel = this.constructor;
-  const insertData = this.toObject({ depopulate: true });
-
-  delete insertData.__v;
-  delete insertData.createdAt;
-  delete insertData.updatedAt;
-
-  const claimedSession = await SessionModel.findOneAndUpdate(
-    {
-      sessionId: this.sessionId,
-      chatbotId: this.chatbotId,
-    },
-    {
-      $setOnInsert: insertData,
-    },
-    {
-      upsert: true,
-      new: true,
-      setDefaultsOnInsert: true,
-    },
-  );
-
-  this._id = claimedSession._id;
-  this.$isNew = false;
-});
-
 export default mongoose.model("Session", sessionSchema);
