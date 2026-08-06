@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
 
@@ -8,9 +9,11 @@ dotenv.config();
 const TARGET_EMAIL = "timharmsen@gmail.com";
 const TARGET_NAME = "Tim Harmsen";
 const TARGET_PHONE = process.env.PLATFORM_OWNER_PHONE || "+6500000001";
-const NEW_PASSWORD = process.env.PLATFORM_OWNER_PASSWORD;
 const CONFIRMATION = process.env.INITIALIZE_PLATFORM_OWNER_CONFIRMATION;
 const REQUIRED_CONFIRMATION = "INITIALIZE_PLATFORM_OWNER";
+
+const createTemporaryPassword = () =>
+  `TpV2!${crypto.randomBytes(12).toString("base64url")}#26`;
 
 const run = async () => {
   if (!process.env.MONGO_URI) throw new Error("MONGO_URI is required.");
@@ -19,9 +22,8 @@ const run = async () => {
       `Set INITIALIZE_PLATFORM_OWNER_CONFIRMATION=${REQUIRED_CONFIRMATION}.`,
     );
   }
-  if (!NEW_PASSWORD || NEW_PASSWORD.length < 12) {
-    throw new Error("PLATFORM_OWNER_PASSWORD must be at least 12 characters.");
-  }
+
+  const temporaryPassword = createTemporaryPassword();
 
   await mongoose.connect(process.env.MONGO_URI);
 
@@ -33,7 +35,7 @@ const run = async () => {
         name: TARGET_NAME,
         email: TARGET_EMAIL,
         phone: TARGET_PHONE,
-        password: NEW_PASSWORD,
+        password: temporaryPassword,
         country: "SG",
         role: "user",
         isAdmin: false,
@@ -44,7 +46,7 @@ const run = async () => {
       });
     } else {
       owner.name = TARGET_NAME;
-      owner.password = NEW_PASSWORD;
+      owner.password = temporaryPassword;
       owner.role = "user";
       owner.isAdmin = false;
       owner.platformRole = "platform-owner";
@@ -60,6 +62,7 @@ const run = async () => {
       JSON.stringify(
         {
           success: true,
+          temporaryPassword,
           platformOwner: {
             id: String(owner._id),
             name: owner.name,
