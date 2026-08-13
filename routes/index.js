@@ -11,6 +11,7 @@ import facebookRoutes from "./facebook.js";
 import organizationRoutes from "./organizations.js";
 import platformOrganizationRoutes from "./platformOrganizations.js";
 import contentStudioRoutes from "./contentStudio.js";
+import digitalCloneRoutes from "./digitalClone.js";
 
 const router = express.Router();
 
@@ -26,5 +27,6 @@ router.use("/support", supportRoutes);
 router.use("/api", widgetRouter);
 router.use("/facebook", facebookRoutes);
 router.use("/content-studio", contentStudioRoutes);
+router.use("/digital-clone", digitalCloneRoutes);
 
 export default router;
