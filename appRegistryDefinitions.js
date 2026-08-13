@@ -55,6 +55,24 @@ const APP_REGISTRY_DEFINITIONS = [
     sortOrder: 3,
   },
   {
+    slug: "digital-clone",
+    name: "Digital Clone",
+    description:
+      "Create and manage an authorized digital identity for AI voice, avatar video, and content workflows.",
+    category: "marketing",
+    isCore: false,
+    standalone: true,
+    requiresAIAssistant: true,
+    launchUrl: "/dashboard/digital-clone",
+    isVisible: false,
+    isComingSoon: false,
+    allowInstall: false,
+    minimumPlan: "starter",
+    dependencies: ["ai-assistant"],
+    defaultForCustomer: false,
+    sortOrder: 4,
+  },
+  {
     slug: "crm",
     name: "CRM",
     description:
