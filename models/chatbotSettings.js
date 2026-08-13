@@ -3,19 +3,26 @@ import crypto from "crypto";
 
 const ChatbotSettingsSchema = new mongoose.Schema(
   {
-    brandName: {
+brandName: {
   type: String,
   default: "Terrapeak",
 },
+
 reservationBusinessSlug: {
   type: String,
   default: "",
 },
-    userId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
+
+reservationEnabled: {
+  type: Boolean,
+  default: true,
+},
+
+userId: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "User",
+  required: true,
+},
     companyId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Company",
