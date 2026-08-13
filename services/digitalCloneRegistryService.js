@@ -5,7 +5,7 @@ const DIGITAL_CLONE_APP = {
   name: "Digital Clone",
   description:
     "Create and manage an authorized digital version of yourself for AI-generated voice, avatar video, and content workflows.",
-  category: "marketing",
+  category: "business",
   isCore: false,
   standalone: true,
   requiresAIAssistant: true,
