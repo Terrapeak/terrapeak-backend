@@ -29,6 +29,12 @@ mongoose
 
 const app = express();
 
+// Railway terminates HTTPS at its reverse proxy. Trust the first proxy hop so
+// Express and express-rate-limit resolve the originating client IP correctly.
+if (process.env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+}
+
 app.use(express.static("public"));
 
 const productionOrigins = [
