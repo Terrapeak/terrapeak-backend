@@ -1,8 +1,9 @@
 (function () {
   const script = document.currentScript;
   const apiKey = script?.getAttribute("data-api-key");
-  const botName = script?.getAttribute("data-bot-name") || "Assistant";
+  const fallbackName = script?.getAttribute("data-bot-name") || "Assistant";
   const origin = window.location.origin;
+  const backendOrigin = new URL(script.src, window.location.href).origin;
 
   if (!apiKey) {
     console.error("Chatbot: API key not found in data-api-key attribute.");
@@ -132,19 +133,26 @@
   const chatButton = document.createElement("button");
   chatButton.id = "terrapeak-chat-launcher";
   chatButton.type = "button";
-  chatButton.setAttribute("aria-label", `Chat with ${botName}`);
   chatButton.setAttribute("aria-expanded", "false");
   chatButton.innerHTML = `
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M7.5 18.25 4 20l.9-3.6A7.75 7.75 0 1 1 7.5 18.25Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="M8 11.75h8M8 8.75h5.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
     </svg>
-    <span>Chat with ${botName}</span>
+    <span></span>
   `;
+
+  const label = chatButton.querySelector("span");
+  const setBotName = (name) => {
+    const resolvedName = String(name || fallbackName || "Assistant").trim() || "Assistant";
+    chatButton.setAttribute("aria-label", `Chat with ${resolvedName}`);
+    label.textContent = `Chat with ${resolvedName}`;
+  };
+  setBotName(fallbackName);
 
   const iframe = document.createElement("iframe");
   iframe.id = "terrapeak-chat-frame";
-  iframe.title = `${botName} chat assistant`;
+  iframe.title = `${fallbackName} chat assistant`;
   iframe.src = `https://terrapeak-gemini-assistant.vercel.app/embed?apiKey=${encodeURIComponent(apiKey)}&parentDomain=${encodeURIComponent(origin)}`;
   iframe.setAttribute("allow", "microphone");
 
@@ -157,6 +165,30 @@
       <path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
     </svg>
   `;
+
+  fetch(`${backendOrigin}/api/chatbot/settingByKey?apiKey=${encodeURIComponent(apiKey)}`, {
+    method: "GET",
+    headers: {
+      "x-api-key": apiKey,
+      "x-parent-domain": origin,
+      "X-Origin": origin,
+    },
+  })
+    .then((response) => {
+      if (!response.ok) throw new Error(`Settings request failed with ${response.status}`);
+      return response.json();
+    })
+    .then((payload) => {
+      const settings = payload?.data;
+      const dashboardName = settings?.botName || settings?.brandName;
+      if (dashboardName) {
+        setBotName(dashboardName);
+        iframe.title = `${dashboardName} chat assistant`;
+      }
+    })
+    .catch((error) => {
+      console.warn("Chatbot launcher could not load dashboard name; using fallback.", error);
+    });
 
   const toggleChat = (isOpen) => {
     iframe.style.display = isOpen ? "block" : "none";
