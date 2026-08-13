@@ -47,17 +47,48 @@ const allowedOrigins = new Set([
   ...(process.env.NODE_ENV === "production" ? [] : developmentOrigins),
 ]);
 
+const isPublicChatbotRoute = (path = "") =>
+  path === "/api/chatbot/settingByKey" ||
+  path === "/api/chatbot/ask" ||
+  path.startsWith("/api/chatbot/session/");
+
 app.use(
-  cors({
-    origin(origin, callback) {
-      if (!origin || allowedOrigins.has(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  cors((req, callback) => {
+    const origin = req.header("Origin");
+    const publicChatbotRequest = isPublicChatbotRoute(req.path);
+
+    if (!origin) {
+      return callback(null, {
+        origin: true,
+        credentials: !publicChatbotRequest,
+        methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+      });
+    }
+
+    if (publicChatbotRequest) {
+      return callback(null, {
+        origin: true,
+        credentials: false,
+        methods: ["GET", "POST", "OPTIONS"],
+        allowedHeaders: [
+          "Content-Type",
+          "x-api-key",
+          "x-parent-domain",
+          "x-origin",
+          "origin",
+        ],
+      });
+    }
+
+    if (allowedOrigins.has(origin)) {
+      return callback(null, {
+        origin: true,
+        credentials: true,
+        methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+      });
+    }
+
+    callback(new Error("Not allowed by CORS"));
   }),
 );
 
