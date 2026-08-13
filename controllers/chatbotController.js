@@ -1409,7 +1409,8 @@ Which appointment would you like to cancel? Please reply with the appointment nu
   /* ===============================
      APPOINTMENT FLOW TRIGGER
   ================================ */
-  const detectedBookingType = detectBookingIntent(lowerMsg);
+const reservationEnabled = settings.reservationEnabled !== false;
+const detectedBookingType = detectBookingIntent(lowerMsg);
 const freshAppointmentRequest =
   detectedBookingType === "appointment" &&
   lowerMsg !== "yes" &&
@@ -1468,7 +1469,12 @@ if (!botReply && session.bookingType === "clarify") {
   }
 }
 
-if (!botReply && !inAnyBookingFlow && detectedBookingType === "reservation") {
+if (
+  reservationEnabled &&
+  !botReply &&
+  !inAnyBookingFlow &&
+  detectedBookingType === "reservation"
+) {
   session.bookingType = "reservation";
   session.reservationStep = "askDate";
 
@@ -1483,7 +1489,12 @@ if (!botReply && !inAnyBookingFlow && detectedBookingType === "appointment") {
   botReply = "Do you want to schedule an online meeting or callback? (yes/no)";
 }
 
-if (!botReply && !inAnyBookingFlow && lowerMsg === "reservation") {
+if (
+  reservationEnabled &&
+  !botReply &&
+  !inAnyBookingFlow &&
+  lowerMsg === "reservation"
+) {
   session.bookingType = "reservation";
   session.reservationStep = "askDate";
 
@@ -1498,7 +1509,11 @@ if (!botReply && !inAnyBookingFlow && lowerMsg === "meeting") {
   botReply = "Great. Do you want to schedule an online meeting or callback? (yes/no)";
 }
 
-if (!botReply && (session.bookingType === "reservation" || inReservationFlow)) {
+if (
+  reservationEnabled &&
+  !botReply &&
+  (session.bookingType === "reservation" || inReservationFlow)
+) {
   switch (session.reservationStep) {
     case "askDate":
       session.reservationDate = message.trim();
