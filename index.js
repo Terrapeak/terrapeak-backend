@@ -47,29 +47,27 @@ const allowedOrigins = new Set([
   ...(process.env.NODE_ENV === "production" ? [] : developmentOrigins),
 ]);
 
-const isPublicChatbotRoute = (path = "") =>
-  path === "/api/chatbot/settingByKey" ||
-  path === "/api/chatbot/ask" ||
-  path.startsWith("/api/chatbot/session/");
+const isPublicSettingsRoute = (path = "") =>
+  path === "/api/chatbot/settingByKey";
 
 app.use(
   cors((req, callback) => {
     const origin = req.header("Origin");
-    const publicChatbotRequest = isPublicChatbotRoute(req.path);
+    const publicSettingsRequest = isPublicSettingsRoute(req.path);
 
     if (!origin) {
       return callback(null, {
         origin: true,
-        credentials: !publicChatbotRequest,
+        credentials: !publicSettingsRequest,
         methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
       });
     }
 
-    if (publicChatbotRequest) {
+    if (publicSettingsRequest) {
       return callback(null, {
         origin: true,
         credentials: false,
-        methods: ["GET", "POST", "OPTIONS"],
+        methods: ["GET", "OPTIONS"],
         allowedHeaders: [
           "Content-Type",
           "x-api-key",
