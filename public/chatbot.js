@@ -1,6 +1,7 @@
 (function () {
   const script = document.currentScript;
   const apiKey = script?.getAttribute("data-api-key");
+  const botName = script?.getAttribute("data-bot-name") || "Assistant";
   const origin = window.location.origin;
 
   if (!apiKey) {
@@ -131,19 +132,19 @@
   const chatButton = document.createElement("button");
   chatButton.id = "terrapeak-chat-launcher";
   chatButton.type = "button";
-  chatButton.setAttribute("aria-label", "Chat with Terra");
+  chatButton.setAttribute("aria-label", `Chat with ${botName}`);
   chatButton.setAttribute("aria-expanded", "false");
   chatButton.innerHTML = `
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M7.5 18.25 4 20l.9-3.6A7.75 7.75 0 1 1 7.5 18.25Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="M8 11.75h8M8 8.75h5.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
     </svg>
-    <span>Chat with Terra</span>
+    <span>Chat with ${botName}</span>
   `;
 
   const iframe = document.createElement("iframe");
   iframe.id = "terrapeak-chat-frame";
-  iframe.title = "TerraPeak chat assistant";
+  iframe.title = `${botName} chat assistant`;
   iframe.src = `https://terrapeak-gemini-assistant.vercel.app/embed?apiKey=${encodeURIComponent(apiKey)}&parentDomain=${encodeURIComponent(origin)}`;
   iframe.setAttribute("allow", "microphone");
 
