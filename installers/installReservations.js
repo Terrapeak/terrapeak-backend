@@ -20,11 +20,18 @@ export default async function installReservations({
     store: provisioningStore,
   });
 
+  const provisionedBusinessId = Number(provisioningResult.business?.id);
+  if (Number.isFinite(provisionedBusinessId)) {
+    company.reservationBusinessId = provisionedBusinessId;
+    await company.save();
+  }
+
   console.log("✓ Installed Reservations");
 
   return {
     success: true,
     app: "reservations",
+    reservationBusinessId: company.reservationBusinessId || null,
     reservationBusinessSlug: company.reservationBusinessSlug,
     supabaseBusinessId: provisioningResult.business?.id,
     provisioning: provisioningResult,
