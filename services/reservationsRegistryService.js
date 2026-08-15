@@ -1,5 +1,3 @@
-import App from "../models/app.js";
-
 const normalizeBaseUrl = (value) => {
   const raw = String(value || "").trim();
   if (!raw) return null;
@@ -7,7 +5,7 @@ const normalizeBaseUrl = (value) => {
   try {
     const url = new URL(raw);
     if (url.protocol !== "https:") return null;
-    if (!url.hostname.endsWith("terrapeakgroup.com")) return null;
+    if (url.hostname !== "reservations.terrapeakgroup.com") return null;
     url.pathname = url.pathname.replace(/\/+$/, "");
     url.search = "";
     url.hash = "";
@@ -18,46 +16,39 @@ const normalizeBaseUrl = (value) => {
 };
 
 export default async function ensureReservationsRegistry() {
+  const serviceUrl = normalizeBaseUrl(process.env.RESERVATION_APP_BASE_URL);
+
+  if (!serviceUrl) {
+    console.error(
+      "Reservations service URL is invalid: RESERVATION_APP_BASE_URL must be https://reservations.terrapeakgroup.com.",
+    );
+    return { updated: false, reason: "invalid-service-url" };
+  }
+
   if (process.env.RESERVATION_APP_URL_ACTIVE !== "true") {
     console.log(
-      "Reservations registry reconciliation is paused until the canonical domain is verified live.",
+      "Reservations service URL is configured but not active; customer management remains dashboard-owned.",
     );
-    return { updated: false, reason: "canonical-domain-not-active" };
+    return {
+      updated: false,
+      reason: "service-domain-not-active",
+      customerRoute: "/dashboard/reservations",
+      serviceUrl,
+    };
   }
 
-  const canonicalUrl = normalizeBaseUrl(process.env.RESERVATION_APP_BASE_URL);
-
-  if (!canonicalUrl) {
-    console.error(
-      "Reservations registry not reconciled: RESERVATION_APP_BASE_URL must be an https://*.terrapeakgroup.com URL.",
-    );
-    return { updated: false, reason: "invalid-canonical-url" };
-  }
-
-  const app = await App.findOne({ slug: "reservations" });
-  if (!app) {
-    console.error("Reservations registry not reconciled: reservations app is missing.");
-    return { updated: false, reason: "app-not-found" };
-  }
-
-  if (app.launchUrl === canonicalUrl) {
-    return { updated: false, reason: "already-canonical", launchUrl: canonicalUrl };
-  }
-
-  const previousLaunchUrl = app.launchUrl || "";
-  app.launchUrl = canonicalUrl;
-  await app.save();
-
-  console.log("Reservations launch URL reconciled to canonical TerraPeak domain.", {
-    previousHost: (() => {
-      try {
-        return previousLaunchUrl ? new URL(previousLaunchUrl).hostname : "";
-      } catch {
-        return "invalid";
-      }
-    })(),
-    canonicalHost: new URL(canonicalUrl).hostname,
+  // Reservations is an internal Dashboard app. The App Registry launch URL is no
+  // longer used to host or navigate the customer workspace. This startup check
+  // validates the separate service/public-booking host only.
+  console.log("Reservations service URL verified for dashboard integration.", {
+    customerRoute: "/dashboard/reservations",
+    serviceHost: new URL(serviceUrl).hostname,
   });
 
-  return { updated: true, launchUrl: canonicalUrl };
+  return {
+    updated: false,
+    reason: "service-url-valid",
+    customerRoute: "/dashboard/reservations",
+    serviceUrl,
+  };
 }
