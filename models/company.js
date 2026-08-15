@@ -6,6 +6,7 @@ const CompanySchema = new mongoose.Schema(
     displayName: { type: String, default: "" },
     referencePrefix: { type: String, default: "BOT" },
     slug: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    reservationBusinessId: { type: Number, default: null, index: true },
     reservationBusinessSlug: { type: String, default: "" },
     country: { type: String, default: "PH", uppercase: true, trim: true },
     address: { type: String, default: "", trim: true },
