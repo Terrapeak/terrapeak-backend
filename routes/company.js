@@ -5,6 +5,7 @@ import resolveCompanyContext from "../middleware/resolveCompanyContext.js";
 import requireCompanyWriteAccess from "../middleware/requireCompanyWriteAccess.js";
 
 import {
+  createReservationsSession,
   getMyCompanyApps,
   getMyCompanies,
 } from "../controllers/companyController.js";
@@ -24,6 +25,13 @@ router.get(
   isVerifiedUser,
   resolveCompanyContext,
   getMyCompanyApps
+);
+
+router.post(
+  "/apps/reservations/session",
+  isVerifiedUser,
+  resolveCompanyContext,
+  createReservationsSession
 );
 
 router.get(
