@@ -7,7 +7,13 @@ import CompanyAppInstallation from "../models/companyAppInstallation.js";
 const RESERVATIONS_CUSTOMER_ROUTE = "/dashboard/reservations";
 
 const buildReservationsServiceUrl = (company, installation) => {
-  if (!installation?.enabled || !company?.reservationBusinessSlug) return "";
+  if (
+    !installation?.enabled ||
+    !company?.reservationBusinessId ||
+    !company?.reservationBusinessSlug
+  ) {
+    return "";
+  }
 
   const baseUrl = String(process.env.RESERVATION_APP_BASE_URL || "")
     .trim()
@@ -40,6 +46,9 @@ export const getMyCompanyApps = asyncHandler(async (req, res) => {
     const installation = installedMap.get(app.slug);
     const manifest = getAppManifest(app.slug);
     const isReservations = app.slug === "reservations";
+    const reservationsMapped = Boolean(
+      company.reservationBusinessId && company.reservationBusinessSlug
+    );
 
     return {
       slug: app.slug,
@@ -47,17 +56,25 @@ export const getMyCompanyApps = asyncHandler(async (req, res) => {
       name: app.name,
       description: app.description,
       category: app.category,
-      // launchUrl remains for standalone apps. Reservations is dashboard-owned.
       launchUrl: isReservations ? RESERVATIONS_CUSTOMER_ROUTE : app.launchUrl,
       customerRoute: isReservations ? RESERVATIONS_CUSTOMER_ROUTE : app.launchUrl,
       serviceUrl: isReservations
         ? buildReservationsServiceUrl(company, installation)
+        : "",
+      reservationBusinessId: isReservations
+        ? company.reservationBusinessId || null
+        : null,
+      reservationBusinessSlug: isReservations
+        ? company.reservationBusinessSlug || ""
         : "",
       isCore: app.isCore,
       isComingSoon: app.isComingSoon,
       installed: Boolean(installation?.enabled),
       status: installation?.status || "locked",
       locked: !installation?.enabled,
+      configurationReady: isReservations
+        ? Boolean(installation?.enabled && reservationsMapped)
+        : Boolean(installation?.enabled),
     };
   });
 
