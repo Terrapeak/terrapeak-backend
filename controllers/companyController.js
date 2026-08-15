@@ -4,8 +4,11 @@ import App from "../models/app.js";
 import CompanyMembership from "../models/companyMembership.js";
 import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import { createReservationsSessionBootstrap } from "../services/reservationsSessionService.js";
+import { findReservationBusinessBySlug } from "../utils/reservationService.js";
 
 const RESERVATIONS_CUSTOMER_ROUTE = "/dashboard/reservations";
+const RESERVATIONS_SERVICE_FALLBACK =
+  "https://reservation-tool-terrapeak-group-s-projects.vercel.app";
 
 const RESERVATIONS_CAPABILITIES_BY_ROLE = Object.freeze({
   owner: {
@@ -65,6 +68,32 @@ const RESERVATIONS_CAPABILITIES_BY_ROLE = Object.freeze({
   },
 });
 
+const getReservationsServiceBaseUrl = () => {
+  const configured = String(process.env.RESERVATION_APP_BASE_URL || "")
+    .trim()
+    .replace(/\/+$/, "");
+
+  if (configured) return configured;
+  return RESERVATIONS_SERVICE_FALLBACK;
+};
+
+const ensureReservationsBusinessMapping = async (company) => {
+  if (company?.reservationBusinessId || !company?.reservationBusinessSlug) {
+    return company;
+  }
+
+  const business = await findReservationBusinessBySlug(
+    company.reservationBusinessSlug,
+  );
+
+  const businessId = Number(business?.id);
+  if (!Number.isFinite(businessId)) return company;
+
+  company.reservationBusinessId = businessId;
+  await company.save();
+  return company;
+};
+
 const buildReservationsServiceUrl = (company, installation) => {
   if (
     !installation?.enabled ||
@@ -74,10 +103,7 @@ const buildReservationsServiceUrl = (company, installation) => {
     return "";
   }
 
-  const baseUrl = String(process.env.RESERVATION_APP_BASE_URL || "")
-    .trim()
-    .replace(/\/+$/, "");
-
+  const baseUrl = getReservationsServiceBaseUrl();
   if (!baseUrl) return "";
 
   return `${baseUrl}/${company.reservationBusinessSlug}`;
@@ -86,6 +112,8 @@ const buildReservationsServiceUrl = (company, installation) => {
 export const getMyCompanyApps = asyncHandler(async (req, res) => {
   const company = req.company;
   const companyRole = req.companyMembership?.role || "viewer";
+
+  await ensureReservationsBusinessMapping(company);
 
   const apps = await App.find({
     isVisible: true,
@@ -153,6 +181,8 @@ export const getMyCompanyApps = asyncHandler(async (req, res) => {
 export const createReservationsSession = asyncHandler(async (req, res) => {
   const company = req.company;
   const companyRole = req.companyMembership?.role || "viewer";
+
+  await ensureReservationsBusinessMapping(company);
 
   const installation = await CompanyAppInstallation.findOne({
     companyId: company._id,
