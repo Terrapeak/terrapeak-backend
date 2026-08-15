@@ -7,8 +7,6 @@ import { createReservationsSessionBootstrap } from "../services/reservationsSess
 import { findReservationBusinessBySlug } from "../utils/reservationService.js";
 
 const RESERVATIONS_CUSTOMER_ROUTE = "/dashboard/reservations";
-const RESERVATIONS_SERVICE_FALLBACK =
-  "https://reservation-tool-terrapeak-group-s-projects.vercel.app";
 
 const RESERVATIONS_CAPABILITIES_BY_ROLE = Object.freeze({
   owner: {
@@ -68,14 +66,10 @@ const RESERVATIONS_CAPABILITIES_BY_ROLE = Object.freeze({
   },
 });
 
-const getReservationsServiceBaseUrl = () => {
-  const configured = String(process.env.RESERVATION_APP_BASE_URL || "")
+const getReservationsServiceBaseUrl = () =>
+  String(process.env.RESERVATION_APP_BASE_URL || "")
     .trim()
     .replace(/\/+$/, "");
-
-  if (configured) return configured;
-  return RESERVATIONS_SERVICE_FALLBACK;
-};
 
 const ensureReservationsBusinessMapping = async (company) => {
   if (company?.reservationBusinessId || !company?.reservationBusinessSlug) {
