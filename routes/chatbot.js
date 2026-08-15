@@ -15,6 +15,7 @@ import {
 import isVerifiedUser from "../middleware/isVerifiedUser.js";
 import resolveCompanyContext from "../middleware/resolveCompanyContext.js";
 import requireCompanyWriteAccess from "../middleware/requireCompanyWriteAccess.js";
+import requireReservationTenantForChat from "../middleware/requireReservationTenantForChat.js";
 import handleReservationCustomFields from "../middleware/handleReservationCustomFields.js";
 import { askRateLimiter } from "../middleware/rateLimiter.js";
 import { verifyDomain } from "../middleware/validateChatbotApiKey.js";
@@ -90,6 +91,7 @@ router.post(
 router.post(
   "/ask",
   askRateLimiter,
+  requireReservationTenantForChat,
   handleReservationCustomFields,
   askGemini,
 );
