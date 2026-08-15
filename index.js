@@ -8,6 +8,7 @@ import cors from "cors";
 import ensureChannelRegistry from "./services/channelRegistryService.js";
 import ensureContentStudioRegistry from "./services/contentStudioRegistryService.js";
 import ensureDigitalCloneRegistry from "./services/digitalCloneRegistryService.js";
+import ensureReservationsRegistry from "./services/reservationsRegistryService.js";
 import requireTrustedCookieOrigin from "./middleware/requireTrustedCookieOrigin.js";
 import configureProductionLogging from "./utils/configureProductionLogging.js";
 import { startContentStudioImageLifecycleScheduler } from "./services/contentStudio/imageLifecycleSchedulerService.js";
@@ -23,6 +24,7 @@ mongoose
     await ensureChannelRegistry();
     await ensureContentStudioRegistry();
     await ensureDigitalCloneRegistry();
+    await ensureReservationsRegistry();
     startContentStudioImageLifecycleScheduler();
   })
   .catch((error) => console.error("MongoDB connection error:", error));
