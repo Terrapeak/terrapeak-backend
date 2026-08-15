@@ -6,6 +6,64 @@ import CompanyAppInstallation from "../models/companyAppInstallation.js";
 
 const RESERVATIONS_CUSTOMER_ROUTE = "/dashboard/reservations";
 
+const RESERVATIONS_CAPABILITIES_BY_ROLE = Object.freeze({
+  owner: {
+    manageApp: true,
+    manageSettings: true,
+    manageTeam: true,
+    manageServices: true,
+    manageAvailability: true,
+    manageBookings: true,
+    manageOwnAvailability: true,
+    viewBookings: true,
+    viewAnalytics: true,
+  },
+  admin: {
+    manageApp: true,
+    manageSettings: true,
+    manageTeam: true,
+    manageServices: true,
+    manageAvailability: true,
+    manageBookings: true,
+    manageOwnAvailability: true,
+    viewBookings: true,
+    viewAnalytics: true,
+  },
+  manager: {
+    manageApp: false,
+    manageSettings: false,
+    manageTeam: false,
+    manageServices: true,
+    manageAvailability: true,
+    manageBookings: true,
+    manageOwnAvailability: true,
+    viewBookings: true,
+    viewAnalytics: true,
+  },
+  staff: {
+    manageApp: false,
+    manageSettings: false,
+    manageTeam: false,
+    manageServices: false,
+    manageAvailability: false,
+    manageBookings: false,
+    manageOwnAvailability: true,
+    viewBookings: true,
+    viewAnalytics: false,
+  },
+  viewer: {
+    manageApp: false,
+    manageSettings: false,
+    manageTeam: false,
+    manageServices: false,
+    manageAvailability: false,
+    manageBookings: false,
+    manageOwnAvailability: false,
+    viewBookings: true,
+    viewAnalytics: true,
+  },
+});
+
 const buildReservationsServiceUrl = (company, installation) => {
   if (
     !installation?.enabled ||
@@ -26,6 +84,7 @@ const buildReservationsServiceUrl = (company, installation) => {
 
 export const getMyCompanyApps = asyncHandler(async (req, res) => {
   const company = req.company;
+  const companyRole = req.companyMembership?.role || "viewer";
 
   const apps = await App.find({
     isVisible: true,
@@ -67,6 +126,11 @@ export const getMyCompanyApps = asyncHandler(async (req, res) => {
       reservationBusinessSlug: isReservations
         ? company.reservationBusinessSlug || ""
         : "",
+      companyRole: isReservations ? companyRole : null,
+      capabilities: isReservations
+        ? RESERVATIONS_CAPABILITIES_BY_ROLE[companyRole] ||
+          RESERVATIONS_CAPABILITIES_BY_ROLE.viewer
+        : null,
       isCore: app.isCore,
       isComingSoon: app.isComingSoon,
       installed: Boolean(installation?.enabled),
