@@ -3,6 +3,7 @@ import asyncHandler from "express-async-handler";
 import App from "../models/app.js";
 import CompanyMembership from "../models/companyMembership.js";
 import CompanyAppInstallation from "../models/companyAppInstallation.js";
+import { createReservationsSessionBootstrap } from "../services/reservationsSessionService.js";
 
 const RESERVATIONS_CUSTOMER_ROUTE = "/dashboard/reservations";
 
@@ -146,6 +147,36 @@ export const getMyCompanyApps = asyncHandler(async (req, res) => {
     success: true,
     companyId: company._id,
     apps: result,
+  });
+});
+
+export const createReservationsSession = asyncHandler(async (req, res) => {
+  const company = req.company;
+  const companyRole = req.companyMembership?.role || "viewer";
+
+  const installation = await CompanyAppInstallation.findOne({
+    companyId: company._id,
+    appSlug: "reservations",
+  });
+
+  if (!installation?.enabled) {
+    return res.status(403).json({
+      success: false,
+      code: "RESERVATIONS_NOT_ENTITLED",
+      message: "Reservations is not enabled for this company.",
+    });
+  }
+
+  const bootstrap = await createReservationsSessionBootstrap({
+    email: req.user?.email,
+    terraPeakUserId: req.userId,
+    company,
+    companyRole,
+  });
+
+  return res.json({
+    success: true,
+    bootstrap,
   });
 });
 
