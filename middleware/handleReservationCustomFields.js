@@ -65,7 +65,7 @@ const getCustomFieldInput = (field) => {
   return null;
 };
 
-const sendReply = async ({ res, session, message, reply, input = null }) => {
+const sendReply = async ({ res, session, message, reply, input = null, code = null }) => {
   appendChatExchange(session, message, reply);
   await session.save();
 
@@ -73,6 +73,7 @@ const sendReply = async ({ res, session, message, reply, input = null }) => {
     success: true,
     reply,
     input,
+    ...(code ? { code } : {}),
     appointmentStep: session.appointmentStep,
     reservationStep: session.reservationStep,
     bookingType: session.bookingType,
@@ -133,10 +134,19 @@ export default async function handleReservationCustomFields(req, res, next) {
       return next();
     }
 
-    const businessSlug =
-      settings.reservationBusinessSlug ||
-      process.env.RESERVATION_BUSINESS_SLUG ||
-      "dim-sum-dragon";
+    const businessSlug = String(settings.reservationBusinessSlug || "").trim();
+    if (!businessSlug) {
+      clearReservationDraft(session);
+      return sendReply({
+        res,
+        session,
+        message,
+        reply:
+          "Reservations are not configured for this business. Please contact the business directly or try again later.",
+        code: "RESERVATIONS_NOT_CONFIGURED",
+      });
+    }
+
     const business = await getBusinessBySlug(businessSlug);
 
     if (session.reservationStep === "askPhone") {
