@@ -1,15 +1,37 @@
 import ChatbotSettings from "../models/chatbotSettings.js";
 import Session from "../models/sessionModel.js";
 
+const RESERVATION_KEYWORDS = [
+  "reservation",
+  "reserve",
+  "book a table",
+  "table booking",
+  "reschedule table",
+  "cancel table",
+  "restaurant",
+  "dinner",
+  "lunch",
+  "haircut",
+  "hairdresser",
+  "salon",
+  "barber",
+  "physio",
+  "physical therapist",
+  "therapy",
+  "clinic",
+  "doctor",
+  "dentist",
+  "gp",
+  "general practitioner",
+  "service appointment",
+  "visit",
+  "in person",
+  "in-person",
+];
+
 const reservationIntent = (message = "") => {
   const text = String(message).toLowerCase();
-  return (
-    text.includes("reservation") ||
-    text.includes("table booking") ||
-    text.includes("book a table") ||
-    text.includes("reschedule table") ||
-    text.includes("cancel table")
-  );
+  return RESERVATION_KEYWORDS.some((keyword) => text.includes(keyword));
 };
 
 const reservationSessionActive = (session) =>
