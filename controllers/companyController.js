@@ -4,6 +4,20 @@ import App from "../models/app.js";
 import CompanyMembership from "../models/companyMembership.js";
 import CompanyAppInstallation from "../models/companyAppInstallation.js";
 
+const RESERVATIONS_CUSTOMER_ROUTE = "/dashboard/reservations";
+
+const buildReservationsServiceUrl = (company, installation) => {
+  if (!installation?.enabled || !company?.reservationBusinessSlug) return "";
+
+  const baseUrl = String(process.env.RESERVATION_APP_BASE_URL || "")
+    .trim()
+    .replace(/\/+$/, "");
+
+  if (!baseUrl) return "";
+
+  return `${baseUrl}/${company.reservationBusinessSlug}`;
+};
+
 export const getMyCompanyApps = asyncHandler(async (req, res) => {
   const company = req.company;
 
@@ -25,6 +39,7 @@ export const getMyCompanyApps = asyncHandler(async (req, res) => {
   const result = apps.map((app) => {
     const installation = installedMap.get(app.slug);
     const manifest = getAppManifest(app.slug);
+    const isReservations = app.slug === "reservations";
 
     return {
       slug: app.slug,
@@ -32,10 +47,12 @@ export const getMyCompanyApps = asyncHandler(async (req, res) => {
       name: app.name,
       description: app.description,
       category: app.category,
-      launchUrl:
-        app.slug === "reservations" && installation?.enabled
-          ? `${process.env.RESERVATION_APP_BASE_URL}/${company.reservationBusinessSlug}/admin`
-          : app.launchUrl,
+      // launchUrl remains for standalone apps. Reservations is dashboard-owned.
+      launchUrl: isReservations ? RESERVATIONS_CUSTOMER_ROUTE : app.launchUrl,
+      customerRoute: isReservations ? RESERVATIONS_CUSTOMER_ROUTE : app.launchUrl,
+      serviceUrl: isReservations
+        ? buildReservationsServiceUrl(company, installation)
+        : "",
       isCore: app.isCore,
       isComingSoon: app.isComingSoon,
       installed: Boolean(installation?.enabled),
