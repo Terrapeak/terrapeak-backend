@@ -20,6 +20,11 @@ export const reservationProvisioningStore = {
 const normalizeSlug = (value) =>
   typeof value === "string" && value.trim() ? value.trim().toLowerCase() : null;
 
+const normalizeBusinessId = (value) => {
+  const businessId = Number(value);
+  return Number.isFinite(businessId) && businessId > 0 ? businessId : null;
+};
+
 const getChatbotReservationSlug = (chatbot) =>
   normalizeSlug(chatbot?.reservationBusinessSlug || chatbot?.reservationSlug);
 
@@ -30,12 +35,17 @@ export async function getReservationsProvisioningHealth({
   if (!company?._id) throw new Error("A company is required.");
 
   const companySlug = normalizeSlug(company.reservationBusinessSlug);
+  const companyBusinessId = normalizeBusinessId(company.reservationBusinessId);
   const missing = [];
   const mismatches = [];
   let business = null;
   let profile = null;
   let settings = null;
   let branding = null;
+
+  if (!companyBusinessId) {
+    missing.push("company.reservationBusinessId");
+  }
 
   if (!companySlug) {
     missing.push("company.reservationBusinessSlug");
@@ -44,6 +54,15 @@ export async function getReservationsProvisioningHealth({
     if (!business) {
       missing.push("businesses");
     } else {
+      const resolvedBusinessId = normalizeBusinessId(business.id);
+      if (
+        companyBusinessId &&
+        resolvedBusinessId &&
+        companyBusinessId !== resolvedBusinessId
+      ) {
+        mismatches.push("company.reservationBusinessId");
+      }
+
       ({ profile, settings, branding } =
         await store.getReservationProvisioningRecords(business.id));
       if (!profile) missing.push("business_profile");
@@ -74,6 +93,7 @@ export async function getReservationsProvisioningHealth({
   return {
     healthy: missing.length === 0 && mismatches.length === 0,
     companySlug,
+    companyBusinessId,
     chatbotSlug,
     missing,
     mismatches,
