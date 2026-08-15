@@ -18,6 +18,13 @@ const normalizeBaseUrl = (value) => {
 };
 
 export default async function ensureReservationsRegistry() {
+  if (process.env.RESERVATION_APP_URL_ACTIVE !== "true") {
+    console.log(
+      "Reservations registry reconciliation is paused until the canonical domain is verified live.",
+    );
+    return { updated: false, reason: "canonical-domain-not-active" };
+  }
+
   const canonicalUrl = normalizeBaseUrl(process.env.RESERVATION_APP_BASE_URL);
 
   if (!canonicalUrl) {
