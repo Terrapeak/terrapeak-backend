@@ -8,6 +8,14 @@ const CANONICAL_RESERVATIONS_ROLES = new Set([
   "viewer",
 ]);
 
+const RESERVATIONS_COMPATIBILITY_ROLE_BY_PLATFORM_ROLE = Object.freeze({
+  owner: "owner",
+  admin: "manager",
+  manager: "manager",
+  staff: "staff",
+  viewer: "viewer",
+});
+
 const getSupabaseAdmin = () => {
   const url = String(process.env.SUPABASE_URL || "").trim();
   const serviceRoleKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
@@ -57,6 +65,8 @@ export async function createReservationsSessionBootstrap({
   }
 
   const normalizedRole = normalizeCompanyRole(companyRole);
+  const compatibilityRole =
+    RESERVATIONS_COMPATIBILITY_ROLE_BY_PLATFORM_ROLE[normalizedRole];
   const supabase = getSupabaseAdmin();
 
   // GenerateLink creates the Supabase Auth user when needed but does not send
@@ -87,7 +97,8 @@ export async function createReservationsSessionBootstrap({
       {
         business_id: Number(company.reservationBusinessId),
         user_id: linkData.user.id,
-        role: normalizedRole,
+        role: compatibilityRole,
+        platform_role: normalizedRole,
       },
       { onConflict: "business_id,user_id" },
     );
@@ -106,6 +117,7 @@ export async function createReservationsSessionBootstrap({
     businessSlug: company.reservationBusinessSlug || "",
     companyId: String(company._id),
     companyRole: normalizedRole,
+    reservationsCompatibilityRole: compatibilityRole,
     supabaseUserId: linkData.user.id,
   };
 }
