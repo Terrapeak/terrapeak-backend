@@ -66,6 +66,10 @@ const RESERVATIONS_CAPABILITIES_BY_ROLE = Object.freeze({
   },
 });
 
+const getReservationsCapabilities = (companyRole) =>
+  RESERVATIONS_CAPABILITIES_BY_ROLE[companyRole] ||
+  RESERVATIONS_CAPABILITIES_BY_ROLE.viewer;
+
 const getReservationsServiceBaseUrl = () =>
   String(process.env.RESERVATION_APP_BASE_URL || "")
     .trim()
@@ -150,10 +154,7 @@ export const getMyCompanyApps = asyncHandler(async (req, res) => {
         ? company.reservationBusinessSlug || ""
         : "",
       companyRole: isReservations ? companyRole : null,
-      capabilities: isReservations
-        ? RESERVATIONS_CAPABILITIES_BY_ROLE[companyRole] ||
-          RESERVATIONS_CAPABILITIES_BY_ROLE.viewer
-        : null,
+      capabilities: isReservations ? getReservationsCapabilities(companyRole) : null,
       isCore: app.isCore,
       isComingSoon: app.isComingSoon,
       installed: Boolean(installation?.enabled),
@@ -200,7 +201,10 @@ export const createReservationsSession = asyncHandler(async (req, res) => {
 
   return res.json({
     success: true,
-    bootstrap,
+    bootstrap: {
+      ...bootstrap,
+      capabilities: getReservationsCapabilities(companyRole),
+    },
   });
 });
 
