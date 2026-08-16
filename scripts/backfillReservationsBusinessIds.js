@@ -7,29 +7,25 @@ dotenv.config();
 
 const parseArguments = (args) => {
   const apply = args.includes("--apply");
+  const repair = args.includes("--repair");
   const positional = args.filter((argument) => !argument.startsWith("--"));
   const unknownFlags = args.filter(
-    (argument) => argument.startsWith("--") && argument !== "--apply",
+    (argument) =>
+      argument.startsWith("--") &&
+      !["--apply", "--repair"].includes(argument),
   );
 
-  if (unknownFlags.length || positional.length > 1) {
+  if (unknownFlags.length || positional.length > 1 || (repair && !apply)) {
     throw new Error(
-      "Usage: node scripts/backfillReservationsBusinessIds.js [company-slug-or-id] [--apply]",
+      "Usage: node scripts/backfillReservationsBusinessIds.js [company-slug-or-id] [--apply] [--repair]",
     );
   }
 
-  return { apply, target: positional[0] || "" };
+  return { apply, repair, target: positional[0] || "" };
 };
 
 const buildCompanyFilter = (target) => {
-  const base = {
-    installedApps: "reservations",
-    reservationBusinessSlug: { $nin: [null, ""] },
-    $or: [
-      { reservationBusinessId: null },
-      { reservationBusinessId: { $exists: false } },
-    ],
-  };
+  const base = { installedApps: "reservations" };
 
   if (!target) return base;
 
@@ -40,10 +36,15 @@ const buildCompanyFilter = (target) => {
   return { ...base, slug: String(target).trim().toLowerCase() };
 };
 
+const finitePositiveId = (value) => {
+  const id = Number(value);
+  return Number.isFinite(id) && id > 0 ? id : null;
+};
+
 export async function backfillReservationsBusinessIds(
   args = process.argv.slice(2),
 ) {
-  const { apply, target } = parseArguments(args);
+  const { apply, repair, target } = parseArguments(args);
   await mongoose.connect(process.env.MONGO_URI);
 
   try {
@@ -54,33 +55,69 @@ export async function backfillReservationsBusinessIds(
     const results = [];
 
     for (const company of companies) {
-      const business = await findReservationBusinessBySlug(
-        company.reservationBusinessSlug,
+      const storedId = finitePositiveId(company.reservationBusinessId);
+      const storedSlug = String(company.reservationBusinessSlug || "").trim();
+
+      if (!storedSlug) {
+        results.push({
+          companyId: company._id.toString(),
+          companySlug: company.slug,
+          reservationBusinessSlug: "",
+          storedReservationBusinessId: storedId,
+          canonicalReservationBusinessId: null,
+          status: "missing_slug",
+          changed: false,
+        });
+        continue;
+      }
+
+      const business = await findReservationBusinessBySlug(storedSlug);
+      const canonicalId = finitePositiveId(business?.id);
+
+      let status;
+      if (!canonicalId) {
+        status = "not_found";
+      } else if (!storedId) {
+        status = apply ? "updated" : "ready";
+      } else if (storedId === canonicalId) {
+        status = "consistent";
+      } else {
+        status = repair ? "repaired" : "mismatch";
+      }
+
+      const shouldBackfill = Boolean(canonicalId && !storedId && apply);
+      const shouldRepair = Boolean(
+        canonicalId && storedId && storedId !== canonicalId && apply && repair,
       );
-      const businessId = Number(business?.id);
-      const mapped = Number.isFinite(businessId);
+      const changed = shouldBackfill || shouldRepair;
 
-      const result = {
-        companyId: company._id.toString(),
-        companySlug: company.slug,
-        reservationBusinessSlug: company.reservationBusinessSlug,
-        reservationBusinessId: mapped ? businessId : null,
-        status: mapped ? (apply ? "updated" : "ready") : "not_found",
-      };
-
-      if (mapped && apply) {
-        company.reservationBusinessId = businessId;
+      if (changed) {
+        company.reservationBusinessId = canonicalId;
         await company.save();
       }
 
-      results.push(result);
+      results.push({
+        companyId: company._id.toString(),
+        companySlug: company.slug,
+        reservationBusinessSlug: storedSlug,
+        storedReservationBusinessId: storedId,
+        canonicalReservationBusinessId: canonicalId,
+        status,
+        changed,
+      });
     }
 
     const summary = {
       dryRun: !apply,
+      repairMode: repair,
       scanned: companies.length,
-      mapped: results.filter((result) => result.reservationBusinessId).length,
-      missing: results.filter((result) => !result.reservationBusinessId).length,
+      consistent: results.filter((result) => result.status === "consistent").length,
+      ready: results.filter((result) => result.status === "ready").length,
+      updated: results.filter((result) => result.status === "updated").length,
+      mismatch: results.filter((result) => result.status === "mismatch").length,
+      repaired: results.filter((result) => result.status === "repaired").length,
+      missingSlug: results.filter((result) => result.status === "missing_slug").length,
+      notFound: results.filter((result) => result.status === "not_found").length,
       results,
     };
 
