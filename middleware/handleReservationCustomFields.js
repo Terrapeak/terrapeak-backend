@@ -1,9 +1,10 @@
 import ChatbotSettings from "../models/chatbotSettings.js";
 import Session from "../models/sessionModel.js";
+import Company from "../models/company.js";
+import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import {
   checkReservationAvailability,
   createReservation,
-  getBusinessBySlug,
 } from "../utils/reservationService.js";
 import {
   buildCustomFieldPrompt,
@@ -11,6 +12,7 @@ import {
   normalizeCustomFieldOptions,
   validateCustomFieldAnswer,
 } from "../utils/reservationCustomFieldService.js";
+import { restaurantFieldsOnly } from "../utils/reservationFieldScope.js";
 
 const appendChatExchange = (session, message, reply) => {
   session.chatLogs.push(
@@ -97,7 +99,7 @@ export default async function handleReservationCustomFields(req, res, next) {
     }
 
     const settings = await ChatbotSettings.findOne({ apiKey }).select(
-      "_id reservationBusinessSlug",
+      "_id companyId reservationEnabled",
     );
 
     if (!settings || String(settings._id) !== String(chatbotId)) {
@@ -134,8 +136,30 @@ export default async function handleReservationCustomFields(req, res, next) {
       return next();
     }
 
-    const businessSlug = String(settings.reservationBusinessSlug || "").trim();
-    if (!businessSlug) {
+    const [company, installation] = settings.companyId
+      ? await Promise.all([
+          Company.findById(settings.companyId)
+            .select("reservationBusinessId isActive")
+            .lean(),
+          CompanyAppInstallation.findOne({
+            companyId: settings.companyId,
+            appSlug: "reservations",
+            enabled: true,
+            status: "active",
+          })
+            .select("_id")
+            .lean(),
+        ])
+      : [null, null];
+
+    const businessId = Number(company?.reservationBusinessId);
+    if (
+      settings.reservationEnabled === false ||
+      company?.isActive === false ||
+      !installation ||
+      !Number.isFinite(businessId) ||
+      businessId < 1
+    ) {
       clearReservationDraft(session);
       return sendReply({
         res,
@@ -146,8 +170,6 @@ export default async function handleReservationCustomFields(req, res, next) {
         code: "RESERVATIONS_NOT_CONFIGURED",
       });
     }
-
-    const business = await getBusinessBySlug(businessSlug);
 
     if (session.reservationStep === "askPhone") {
       const phone = String(message).trim();
@@ -161,7 +183,9 @@ export default async function handleReservationCustomFields(req, res, next) {
         });
       }
 
-      const fields = await getActiveBookingCustomFields(business.id);
+      const fields = restaurantFieldsOnly(
+        await getActiveBookingCustomFields(businessId),
+      );
       session.reservationPhone = phone;
       session.reservationCustomFields = fields;
       session.reservationCustomFieldIndex = 0;
@@ -249,7 +273,9 @@ export default async function handleReservationCustomFields(req, res, next) {
         ? ""
         : String(message).trim();
 
-    const latestFields = await getActiveBookingCustomFields(business.id);
+    const latestFields = restaurantFieldsOnly(
+      await getActiveBookingCustomFields(businessId),
+    );
     const latestByLabel = new Map(
       latestFields.map((field) => [field.field_label, field]),
     );
@@ -285,7 +311,7 @@ export default async function handleReservationCustomFields(req, res, next) {
     });
 
     const available = await checkReservationAvailability({
-      businessId: business.id,
+      businessId,
       reservationDate: session.reservationDate,
       reservationTime: session.reservationTime,
       partySize: session.reservationPartySize,
@@ -303,7 +329,7 @@ export default async function handleReservationCustomFields(req, res, next) {
     }
 
     const reservation = await createReservation({
-      businessId: business.id,
+      businessId,
       customerName: session.reservationName,
       phone: session.reservationPhone,
       reservationDate: session.reservationDate,
@@ -316,6 +342,8 @@ export default async function handleReservationCustomFields(req, res, next) {
     const customSummary = formatCustomData(customData);
     const reply = `✅ Reservation confirmed!\n\n**Reference:** ${reservation.reservation_reference}  \n**Name:** ${reservation.customer_name}  \n**Date:** ${reservation.reservation_date}  \n**Time:** ${reservation.reservation_time}  \n**Party size:** ${reservation.party_size}${customSummary ? `  \n${customSummary}` : ""}\n\nYour reservation has been added to the reservation dashboard.`;
 
+    session.lastReservationReference = reservation.reservation_reference;
+    session.lastReservationPhone = reservation.phone;
     clearReservationDraft(session);
     return sendReply({ res, session, message, reply });
   } catch (error) {

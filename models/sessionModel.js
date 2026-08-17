@@ -70,6 +70,9 @@ const sessionSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: {},
     },
+    reservationLookupStep: String,
+    lastReservationReference: String,
+    lastReservationPhone: String,
 
     reservationRescheduleStep: String,
     rescheduleReservationId: String,

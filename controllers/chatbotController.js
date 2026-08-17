@@ -22,6 +22,11 @@ import {
   cancelReservationById,
   updateReservationById,
 } from "../utils/reservationService.js";
+import {
+  extractReservationReference,
+  isBareRescheduleMessage,
+  isReservationLookupMessage,
+} from "../utils/reservationIntentService.js";
 
 // List of all fields allowed to be updated
 const ALLOWED_FIELDS = [
@@ -452,7 +457,6 @@ const isAppointmentCancelRequest =
   );
 
 const isAppointmentRescheduleRequest =
-  lowerMsg === "reschedule" ||
   lowerMsg.includes("reschedule appointment") ||
   lowerMsg.includes("reschedule my appointment") ||
   lowerMsg.includes("reschedule meeting") ||
@@ -464,6 +468,7 @@ const isAppointmentRescheduleRequest =
   lowerMsg.includes("move appointment");
 
 const isReservationRescheduleRequest =
+  (isBareRescheduleMessage(lowerMsg) && Boolean(session.lastReservationReference)) ||
   lowerMsg.includes("reschedule reservation") ||
   lowerMsg.includes("reschedule my reservation") ||
   lowerMsg.includes("change reservation") ||
@@ -490,7 +495,30 @@ const isInsideBookingFlow =
   session.rescheduleAppointmentId != null ||
 
   session.reservationRescheduleStep != null ||
+  session.reservationLookupStep != null ||
   session.rescheduleReservationId != null;
+
+const findReservationsForLookup = async (lookupValue) => {
+  const business = getConfiguredReservationBusiness();
+  const reference = extractReservationReference(lookupValue);
+
+  if (reference) {
+    return findActiveReservationsByReference({
+      businessId: business.id,
+      reservationReference: reference,
+    });
+  }
+
+  return findActiveReservationsByPhone({
+    businessId: business.id,
+    phone: String(lookupValue || "").trim(),
+  });
+};
+
+const rememberReservation = (reservation) => {
+  session.lastReservationReference = reservation.reservation_reference;
+  session.lastReservationPhone = reservation.phone;
+};
 
 if (!botReply && isSimpleCancel && isInsideBookingFlow) {
   resetBookingSession(session);
@@ -535,6 +563,67 @@ if (
   "<b>1)</b> Appointment<br>" +
   "<b>2)</b> Reservation<br><br>" +
   "Please reply with 1 or 2.";
+}
+
+if (!botReply && session.reservationLookupStep === "askLookup") {
+  try {
+    const reservations = await findReservationsForLookup(message);
+
+    if (!reservations.length) {
+      botReply =
+        "I could not find an active reservation with that reference or phone number.";
+    } else if (reservations.length === 1) {
+      rememberReservation(reservations[0]);
+      botReply = `I found this reservation:\n\n${formatReservationForChat(
+        reservations[0],
+      )}\n\nYou can ask me to reschedule or cancel it.`;
+    } else {
+      botReply = `I found multiple active reservations:\n\n${reservations
+        .map(
+          (reservation, index) =>
+            `**${index + 1}.** ${formatReservationShortForChat(reservation)}`,
+        )
+        .join("\n")}\n\nPlease provide the BK reference for the reservation you want.`;
+    }
+  } catch (err) {
+    console.error("Reservation lookup error:", err);
+    botReply =
+      "Sorry, I could not look up your reservation right now. Please try again later.";
+  }
+
+  session.reservationLookupStep = null;
+}
+
+if (
+  !botReply &&
+  reservationEnabled &&
+  isReservationLookupMessage(message) &&
+  !isReservationCancelRequest &&
+  !isReservationRescheduleRequest
+) {
+  const reference = extractReservationReference(message);
+
+  if (!reference) {
+    session.reservationLookupStep = "askLookup";
+    botReply =
+      "Please provide your BK reservation reference or the phone number used for the reservation.";
+  } else {
+    try {
+      const reservations = await findReservationsForLookup(reference);
+      if (!reservations.length) {
+        botReply = "I could not find an active reservation with that reference.";
+      } else {
+        rememberReservation(reservations[0]);
+        botReply = `I found this reservation:\n\n${formatReservationForChat(
+          reservations[0],
+        )}\n\nYou can ask me to reschedule or cancel it.`;
+      }
+    } catch (err) {
+      console.error("Reservation reference lookup error:", err);
+      botReply =
+        "Sorry, I could not look up your reservation right now. Please try again later.";
+    }
+  }
 }
 
 if (!botReply && session.reservationRescheduleStep === "askLookup") {
@@ -1107,13 +1196,40 @@ if (!botReply && !reservationEnabled && isReservationRescheduleRequest) {
 }
 
 if (!botReply && reservationEnabled && isReservationRescheduleRequest) {
-  session.reservationRescheduleStep = "askLookup";
-  session.rescheduleReservationId = null;
-  session.rescheduleReservationOptions = [];
-  session.rescheduleReservationData = {};
+  const lookupValue =
+    extractReservationReference(message) || session.lastReservationReference;
 
-  botReply =
-    "Sure. Please provide your reservation reference number or the phone number used for the reservation.";
+  if (lookupValue) {
+    try {
+      const reservations = await findReservationsForLookup(lookupValue);
+      if (reservations.length === 1) {
+        const reservation = reservations[0];
+        rememberReservation(reservation);
+        session.reservationRescheduleStep = "askDate";
+        session.rescheduleReservationId = reservation.id.toString();
+        session.rescheduleReservationOptions = [];
+        session.rescheduleReservationData = reservation;
+        botReply = `I found this reservation:\n\n${formatReservationForChat(
+          reservation,
+        )}\n\nWhat new date would you like? Reply with YYYY-MM-DD, or type **same** to keep the current date.`;
+      } else {
+        session.reservationRescheduleStep = "askLookup";
+        botReply =
+          "Please provide your BK reservation reference or the phone number used for the reservation.";
+      }
+    } catch (err) {
+      console.error("Reservation reschedule start error:", err);
+      botReply =
+        "Sorry, I could not look up your reservation right now. Please try again later.";
+    }
+  } else {
+    session.reservationRescheduleStep = "askLookup";
+    session.rescheduleReservationId = null;
+    session.rescheduleReservationOptions = [];
+    session.rescheduleReservationData = {};
+    botReply =
+      "Sure. Please provide your BK reservation reference or the phone number used for the reservation.";
+  }
 }
 
 if (!botReply && !reservationEnabled && isReservationCancelRequest) {
@@ -1121,10 +1237,36 @@ if (!botReply && !reservationEnabled && isReservationCancelRequest) {
 }
 
 if (!botReply && reservationEnabled && isReservationCancelRequest) {
-  session.cancelReservationStep = "askLookup";
+  const lookupValue =
+    extractReservationReference(message) || session.lastReservationReference;
 
-  botReply =
-    "Sure. Please provide your reservation reference number or the phone number used for the reservation.";
+  if (lookupValue) {
+    try {
+      const reservations = await findReservationsForLookup(lookupValue);
+      if (reservations.length === 1) {
+        const reservation = reservations[0];
+        rememberReservation(reservation);
+        session.cancelReservationStep = "confirmCancel";
+        session.cancelReservationId = reservation.id.toString();
+        session.cancelReservationOptions = [];
+        botReply = `I found this reservation:\n\n${formatReservationForChat(
+          reservation,
+        )}\n\nAre you sure you want to cancel it? Please reply **yes** or **no**.`;
+      } else {
+        session.cancelReservationStep = "askLookup";
+        botReply =
+          "Please provide your BK reservation reference or the phone number used for the reservation.";
+      }
+    } catch (err) {
+      console.error("Reservation cancellation start error:", err);
+      botReply =
+        "Sorry, I could not look up your reservation right now. Please try again later.";
+    }
+  } else {
+    session.cancelReservationStep = "askLookup";
+    botReply =
+      "Sure. Please provide your BK reservation reference or the phone number used for the reservation.";
+  }
 }
 
 if (!botReply && session.rescheduleStep === "askPhone") {
@@ -1710,6 +1852,8 @@ case "askSeatingPreference":
 
 Your reservation has been added to the reservation dashboard.`;
 
+        session.lastReservationReference = reservation.reservation_reference;
+        session.lastReservationPhone = reservation.phone;
         resetBookingSession(session);
       } catch (err) {
         console.error("Reservation booking error:", err);
