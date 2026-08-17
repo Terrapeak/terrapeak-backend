@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import ChatbotSettings from "../models/chatbotSettings.js";
 import Company from "../models/company.js";
 import CompanyAppInstallation from "../models/companyAppInstallation.js";
@@ -23,6 +23,7 @@ const createCompany = (overrides = {}) => ({
   name: "Terrapeak",
   displayName: "Terrapeak",
   slug: "terrapeak",
+  reservationBusinessId: 10,
   reservationBusinessSlug: "terrapeak",
   referencePrefix: "TP",
   ownerUserId: OWNER_ID,
@@ -39,9 +40,10 @@ const createMemoryStore = (initial = {}) => {
     business: initial.business || null,
     profile: initial.profile || null,
     settings: initial.settings || null,
+    service: initial.service || null,
     branding: initial.branding || null,
     alternateBusinesses: initial.alternateBusinesses || {},
-    creates: { business: 0, profile: 0, settings: 0, branding: 0 },
+    creates: { business: 0, profile: 0, settings: 0, service: 0, branding: 0 },
   };
 
   return {
@@ -55,13 +57,14 @@ const createMemoryStore = (initial = {}) => {
         profile: state.profile,
         settings: state.settings,
         branding: state.branding,
+        service: state.service,
       };
     },
     async createOrGetReservationBusiness({ businessName, businessSlug }) {
       if (!state.business) {
         state.creates.business += 1;
         state.business = {
-          id: "business-1",
+          id: 10,
           business_name: businessName,
           business_slug: businessSlug,
           business_type: "restaurant",
@@ -91,6 +94,22 @@ const createMemoryStore = (initial = {}) => {
         };
       }
       return state.settings;
+    },
+    async createOrUpdateCanonicalRestaurantService({ businessId }) {
+      if (!state.service) {
+        state.creates.service += 1;
+        state.service = {
+          id: "service-1",
+          business_id: businessId,
+          slug: "restaurant-reservation",
+          booking_type: "restaurant",
+        };
+      }
+      return state.service;
+    },
+    async activateCanonicalBookingModelIfEmpty() {
+      state.business.booking_model_version = 2;
+      return { activated: true, reason: "empty-tenant" };
     },
     async createOrUpdateRestaurantBranding({ businessId, restaurantName }) {
       if (!state.branding) {
@@ -131,15 +150,16 @@ test("repeat provisioning creates missing rows once and preserves existing rows"
   t.mock.method(ChatbotSettings, "findOne", async () => chatbot);
   const customProfile = {
     id: "profile-1",
-    business_id: "business-1",
+    business_id: 10,
     business_name: "Custom Restaurant Name",
     booking_label: "Table booking",
   };
   const store = createMemoryStore({
     business: {
-      id: "business-1",
+      id: 10,
       business_slug: "terrapeak",
       business_name: "Terrapeak",
+      booking_model_version: 2,
     },
     profile: customProfile,
   });
@@ -153,6 +173,7 @@ test("repeat provisioning creates missing rows once and preserves existing rows"
     business: 0,
     profile: 0,
     settings: 1,
+    service: 1,
     branding: 1,
   });
   assert.deepEqual(company.installedApps, ["reservations"]);
@@ -163,29 +184,31 @@ test("existing customized profile, settings, and branding are reused unchanged",
   t.mock.method(ChatbotSettings, "findOne", async () => null);
   const customProfile = {
     id: "profile-1",
-    business_id: "business-1",
+    business_id: 10,
     booking_label: "Private dining",
   };
   const customSettings = {
     id: "settings-1",
-    business_id: "business-1",
+    business_id: 10,
     opening_time: "06:30:00",
     max_guests_per_slot: 7,
   };
   const customBranding = {
     id: "branding-1",
-    business_id: "business-1",
+    business_id: 10,
     restaurant_name: "Terrapeak Custom",
     primary_color: "#123456",
   };
   const store = createMemoryStore({
     business: {
-      id: "business-1",
+      id: 10,
       business_slug: "terrapeak",
       business_name: "Terrapeak Custom",
+      booking_model_version: 2,
     },
     profile: customProfile,
     settings: customSettings,
+    service: { id: "service-1", business_id: 10 },
     branding: customBranding,
   });
 
@@ -202,6 +225,7 @@ test("existing customized profile, settings, and branding are reused unchanged",
     business: 0,
     profile: 0,
     settings: 0,
+    service: 0,
     branding: 0,
   });
 });
@@ -234,7 +258,7 @@ test("missing-field defaults do not overwrite customized values", () => {
       default_duration_minutes: 0,
     },
     {
-      business_id: "business-1",
+      business_id: 10,
       opening_time: "11:00:00",
       closing_time: "22:00:00",
       max_guests_per_slot: 20,
@@ -257,10 +281,11 @@ test("stale ChatbotSettings slug is repaired to the canonical company slug", asy
   };
   t.mock.method(ChatbotSettings, "findOne", async () => chatbot);
   const store = createMemoryStore({
-    business: { id: "business-1", business_slug: "terrapeak" },
+    business: { id: 10, business_slug: "terrapeak", booking_model_version: 2 },
     profile: { id: "profile-1" },
     settings: { id: "settings-1" },
     branding: { id: "branding-1" },
+    service: { id: "service-1" },
   });
 
   await installReservations({ company, user: { _id: OWNER_ID }, provisioningStore: store });
@@ -279,10 +304,11 @@ test("a different valid ChatbotSettings business link is preserved", async (t) =
   };
   t.mock.method(ChatbotSettings, "findOne", async () => chatbot);
   const store = createMemoryStore({
-    business: { id: "business-1", business_slug: "terrapeak" },
+    business: { id: 10, business_slug: "terrapeak", booking_model_version: 2 },
     profile: { id: "profile-1" },
     settings: { id: "settings-1" },
     branding: { id: "branding-1" },
+    service: { id: "service-1" },
     alternateBusinesses: {
       "valid-special-business": {
         id: "business-2",
@@ -324,9 +350,11 @@ test("platform provisioning repairs active Reservations and synchronizes legacy 
     reservationBusinessSlug: "terrapeak",
   }));
   const methods = [
-    ["createOrGetReservationBusiness", { id: "business-1", business_slug: "terrapeak" }],
+    ["createOrGetReservationBusiness", { id: 10, business_slug: "terrapeak" }],
     ["createOrUpdateBusinessProfile", { id: "profile-1" }],
     ["createOrUpdateRestaurantSettings", { id: "settings-1" }],
+    ["createOrUpdateCanonicalRestaurantService", { id: "service-1" }],
+    ["activateCanonicalBookingModelIfEmpty", { activated: true }],
     ["createOrUpdateRestaurantBranding", { id: "branding-1" }],
   ];
   for (const [method, result] of methods) {
@@ -347,14 +375,17 @@ test("platform provisioning repairs active Reservations and synchronizes legacy 
   assert.deepEqual(company.installedApps, ["reservations"]);
 });
 
-test("frontend error parser accepts the backend message field", () => {
-  const source = readFileSync(
-    new URL(
-      "../../../terrapeak-master/terrapeak-master/src/pages/chatbot/Embed.jsx",
-      import.meta.url
-    ),
-    "utf8"
+test("frontend error parser accepts the backend message field", (t) => {
+  const embedPath = new URL(
+    "../../../terrapeak-master/terrapeak-master/src/pages/chatbot/Embed.jsx",
+    import.meta.url
   );
+  if (!existsSync(embedPath)) {
+    t.skip("Dashboard frontend repository is not available in this checkout");
+    return;
+  }
+
+  const source = readFileSync(embedPath, "utf8");
 
   assert.match(
     source,

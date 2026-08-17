@@ -8,12 +8,13 @@ import Session from "../models/sessionModel.js";
 import Appointment from "../models/appointment.js";
 import { createGoogleMeet, deleteGoogleEvent } from "../utils/googleMeet.js";
 import User from "../models/user.js";
+import Company from "../models/company.js";
+import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import axios from "axios";
 import { DateTime } from "luxon";
 import { extractTextFromFile } from "../utils/extractTextFromFile.js";
 import { removeFile } from "../utils/upload.js";
 import {
-  getBusinessBySlug,
   checkReservationAvailability,
   createReservation,
   findActiveReservationsByReference,
@@ -313,10 +314,37 @@ export const askGemini = asyncHandler(async (req, res) => {
     });
   }
 
-  const reservationBusinessSlug =
-  settings.reservationBusinessSlug ||
-  process.env.RESERVATION_BUSINESS_SLUG ||
-  "dim-sum-dragon";
+  const [reservationCompany, reservationsInstallation] = settings.companyId
+    ? await Promise.all([
+        Company.findById(settings.companyId)
+          .select("reservationBusinessId reservationBusinessSlug isActive")
+          .lean(),
+        CompanyAppInstallation.findOne({
+          companyId: settings.companyId,
+          appSlug: "reservations",
+          enabled: true,
+          status: "active",
+        })
+          .select("_id")
+          .lean(),
+      ])
+    : [null, null];
+
+  const reservationBusinessId = Number(
+    reservationCompany?.reservationBusinessId,
+  );
+  const reservationsConfigured = Boolean(
+    reservationCompany?.isActive !== false &&
+      reservationsInstallation &&
+      Number.isFinite(reservationBusinessId) &&
+      reservationBusinessId > 0,
+  );
+  const getConfiguredReservationBusiness = () => {
+    if (!reservationsConfigured) {
+      throw new Error("Reservations are not configured for this business.");
+    }
+    return { id: reservationBusinessId };
+  };
 
   /* ===============================
      SESSION HANDLING
@@ -379,7 +407,24 @@ if (!session.rescheduleReservationData) {
      MESSAGE + CANCEL HANDLING
   ================================ */
   const lowerMsg = message.toLowerCase().trim();
+  const reservationEnabled =
+    settings.reservationEnabled !== false && reservationsConfigured;
   let botReply = null;
+
+  const hasActiveReservationFlow = Boolean(
+    session.bookingType === "reservation" ||
+      session.reservationStep ||
+      session.reservationRescheduleStep ||
+      session.cancelReservationStep ||
+      session.reservationCancelStep,
+  );
+  if (!reservationEnabled && hasActiveReservationFlow) {
+    resetBookingSession(session);
+    session.reservationRescheduleStep = null;
+    session.cancelReservationStep = null;
+    session.reservationCancelStep = null;
+    botReply = "Reservations are not configured for this business.";
+  }
 
    // ✅ Cancel current flow or existing appointment
   const isSimpleCancel =
@@ -496,9 +541,7 @@ if (!botReply && session.reservationRescheduleStep === "askLookup") {
   const lookupValue = message.trim();
 
   try {
-    const businessSlug = reservationBusinessSlug;
-
-    const business = await getBusinessBySlug(businessSlug);
+    const business = getConfiguredReservationBusiness();
 
     let reservations = [];
 
@@ -570,9 +613,7 @@ if (!botReply && session.cancelReservationStep === "askLookup") {
   const lookupValue = message.trim();
 
   try {
-    const businessSlug = reservationBusinessSlug;
-
-    const business = await getBusinessBySlug(businessSlug);
+    const business = getConfiguredReservationBusiness();
 
     let reservations = [];
 
@@ -670,9 +711,7 @@ if (!botReply && session.reservationRescheduleStep === "selectReservationToResch
       "Please reply with a valid reservation number from the list.";
   } else {
     try {
-      const businessSlug = reservationBusinessSlug;
-
-      const business = await getBusinessBySlug(businessSlug);
+      const business = getConfiguredReservationBusiness();
 
       const reservations = await findActiveReservationsByPhone({
         businessId: business.id,
@@ -904,9 +943,7 @@ if (!botReply && session.reservationRescheduleStep === "askSpecialRequest") {
   };
 
   try {
-    const businessSlug = reservationBusinessSlug;
-
-    const business = await getBusinessBySlug(businessSlug);
+    const business = getConfiguredReservationBusiness();
 
     console.log("RESCHEDULE AVAILABILITY CHECK:", {
   businessId: business.id,
@@ -969,9 +1006,7 @@ Reply NO to cancel the reschedule request.`;
 if (!botReply && session.reservationRescheduleStep === "confirmUpdate") {
   if (lowerMsg === "yes" || lowerMsg === "y") {
     try {
-      const businessSlug = reservationBusinessSlug;
-
-      const business = await getBusinessBySlug(businessSlug);
+      const business = getConfiguredReservationBusiness();
 
       const updatedReservation = await updateReservationById({
         businessId: business.id,
@@ -1029,9 +1064,7 @@ Special Request: ${updatedReservation.special_request || "None"}`;
 if (!botReply && session.cancelReservationStep === "confirmCancel") {
   if (lowerMsg === "yes") {
     try {
-      const businessSlug = reservationBusinessSlug;
-
-      const business = await getBusinessBySlug(businessSlug);
+      const business = getConfiguredReservationBusiness();
 
       const reservation = await cancelReservationById({
         businessId: business.id,
@@ -1069,7 +1102,11 @@ if (!botReply && session.cancelReservationStep === "confirmCancel") {
   }
 }
 
-if (!botReply && isReservationRescheduleRequest) {
+if (!botReply && !reservationEnabled && isReservationRescheduleRequest) {
+  botReply = "Reservations are not configured for this business.";
+}
+
+if (!botReply && reservationEnabled && isReservationRescheduleRequest) {
   session.reservationRescheduleStep = "askLookup";
   session.rescheduleReservationId = null;
   session.rescheduleReservationOptions = [];
@@ -1079,7 +1116,11 @@ if (!botReply && isReservationRescheduleRequest) {
     "Sure. Please provide your reservation reference number or the phone number used for the reservation.";
 }
 
-if (!botReply && isReservationCancelRequest) {
+if (!botReply && !reservationEnabled && isReservationCancelRequest) {
+  botReply = "Reservations are not configured for this business.";
+}
+
+if (!botReply && reservationEnabled && isReservationCancelRequest) {
   session.cancelReservationStep = "askLookup";
 
   botReply =
@@ -1409,7 +1450,6 @@ Which appointment would you like to cancel? Please reply with the appointment nu
   /* ===============================
      APPOINTMENT FLOW TRIGGER
   ================================ */
-const reservationEnabled = settings.reservationEnabled !== false;
 const detectedBookingType = detectBookingIntent(lowerMsg);
 const freshAppointmentRequest =
   detectedBookingType === "appointment" &&
@@ -1430,6 +1470,14 @@ const inAppointmentFlow =
 const inReservationFlow =
   session.bookingType === "reservation" && session.reservationStep !== null;
 const inAnyBookingFlow = inAppointmentFlow || inReservationFlow;
+
+if (
+  !botReply &&
+  !reservationEnabled &&
+  detectedBookingType === "reservation"
+) {
+  botReply = "Reservations are not configured for this business.";
+}
 
 const cancelRequested = isSimpleCancel || isAppointmentCancelRequest;
 
@@ -1524,7 +1572,7 @@ if (
     case "askTime": {
   const normalizedTime = message.trim().replace(".", ":");
 
-  const business = await getBusinessBySlug(reservationBusinessSlug);
+  const business = getConfiguredReservationBusiness();
 
   const available = await checkReservationAvailability({
     businessId: business.id,
@@ -1552,7 +1600,7 @@ if (
   }
 
   const newPartySize = Number(message);
-  const business = await getBusinessBySlug(reservationBusinessSlug);
+  const business = getConfiguredReservationBusiness();
 
   const available = await checkReservationAvailability({
     businessId: business.id,
@@ -1615,9 +1663,7 @@ case "askSeatingPreference":
         lowerMsg === "none" ? "" : message.trim();
 
       try {
-        const businessSlug = reservationBusinessSlug;
-
-        const business = await getBusinessBySlug(businessSlug);
+        const business = getConfiguredReservationBusiness();
 
         const available = await checkReservationAvailability({
           businessId: business.id,

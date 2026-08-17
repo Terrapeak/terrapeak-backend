@@ -2,6 +2,8 @@ import {
   createOrGetReservationBusiness,
   createOrUpdateBusinessProfile,
   createOrUpdateRestaurantSettings,
+  createOrUpdateCanonicalRestaurantService,
+  activateCanonicalBookingModelIfEmpty,
   createOrUpdateRestaurantBranding,
   findReservationBusinessBySlug,
   getReservationProvisioningRecords,
@@ -12,6 +14,8 @@ export const reservationProvisioningStore = {
   createOrGetReservationBusiness,
   createOrUpdateBusinessProfile,
   createOrUpdateRestaurantSettings,
+  createOrUpdateCanonicalRestaurantService,
+  activateCanonicalBookingModelIfEmpty,
   createOrUpdateRestaurantBranding,
   findReservationBusinessBySlug,
   getReservationProvisioningRecords,
@@ -42,6 +46,7 @@ export async function getReservationsProvisioningHealth({
   let profile = null;
   let settings = null;
   let branding = null;
+  let service = null;
 
   if (!companyBusinessId) {
     missing.push("company.reservationBusinessId");
@@ -63,11 +68,15 @@ export async function getReservationsProvisioningHealth({
         mismatches.push("company.reservationBusinessId");
       }
 
-      ({ profile, settings, branding } =
+      ({ profile, settings, branding, service } =
         await store.getReservationProvisioningRecords(business.id));
       if (!profile) missing.push("business_profile");
       if (!settings) missing.push("restaurant_settings");
       if (!branding) missing.push("restaurant_branding");
+      if (!service) missing.push("services.restaurant");
+      if (Number(business.booking_model_version || 1) < 2) {
+        missing.push("businesses.booking_model_version");
+      }
     }
   }
 
@@ -156,6 +165,14 @@ export default async function provisionReservations({
     businessId: business.id,
   });
 
+  const service = await store.createOrUpdateCanonicalRestaurantService({
+    businessId: business.id,
+  });
+
+  const bookingModel = await store.activateCanonicalBookingModelIfEmpty({
+    businessId: business.id,
+  });
+
   const branding = await store.createOrUpdateRestaurantBranding({
     businessId: business.id,
     restaurantName: company.displayName || company.name,
@@ -172,6 +189,8 @@ export default async function provisionReservations({
     business,
     profile,
     settings,
+    service,
+    bookingModel,
     branding,
     chatbotLink,
   };
