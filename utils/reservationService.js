@@ -1,5 +1,7 @@
 import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
+import { DateTime } from "luxon";
+import { randomUUID } from "node:crypto";
 
 dotenv.config();
 
@@ -50,16 +52,63 @@ export async function findReservationBusinessBySlug(businessSlug) {
 
 export async function getReservationProvisioningRecords(businessId) {
   if (!businessId) {
-    return { profile: null, settings: null, branding: null };
+    return { profile: null, settings: null, branding: null, service: null };
   }
 
-  const [profile, settings, branding] = await Promise.all([
+  const [profile, settings, branding, serviceResult] = await Promise.all([
     findByBusinessId("business_profile", businessId),
     findByBusinessId("restaurant_settings", businessId),
     findByBusinessId("restaurant_branding", businessId),
+    supabase
+      .from("services")
+      .select("*")
+      .eq("business_id", businessId)
+      .eq("booking_type", "restaurant")
+      .eq("is_active", true)
+      .eq("is_published", true)
+      .order("id", { ascending: true })
+      .limit(1)
+      .maybeSingle(),
   ]);
 
-  return { profile, settings, branding };
+  if (serviceResult.error) {
+    throw new Error("Could not load canonical restaurant service");
+  }
+
+  return { profile, settings, branding, service: serviceResult.data || null };
+}
+
+export async function getCanonicalReservationsReadiness(businessId) {
+  const numericBusinessId = Number(businessId);
+  if (!Number.isFinite(numericBusinessId) || numericBusinessId <= 0) {
+    return { ready: false, reason: "missing-business-mapping" };
+  }
+
+  const [{ data: business, error: businessError }, records] = await Promise.all([
+    supabase
+      .from("businesses")
+      .select("id, booking_model_version")
+      .eq("id", numericBusinessId)
+      .maybeSingle(),
+    getReservationProvisioningRecords(numericBusinessId),
+  ]);
+
+  if (businessError) {
+    throw new Error("Could not verify canonical Reservations readiness");
+  }
+
+  if (!business) return { ready: false, reason: "business-not-found" };
+  if (Number(business.booking_model_version || 1) < 2) {
+    return { ready: false, reason: "canonical-model-not-active" };
+  }
+  if (!records.profile || !records.settings?.timezone || !records.branding) {
+    return { ready: false, reason: "provisioning-incomplete" };
+  }
+  if (!records.service) {
+    return { ready: false, reason: "canonical-service-missing" };
+  }
+
+  return { ready: true, reason: null };
 }
 
 export async function getBusinessBySlug(businessSlug) {
@@ -83,115 +132,99 @@ export async function checkReservationAvailability({
   partySize,
   excludeReservationId = null,
 }) {
-  const { data: settings, error: settingsError } = await supabase
-    .from("restaurant_settings")
-    .select("*")
-    .eq("business_id", businessId)
-    .single();
-
-  if (settingsError || !settings) {
-    console.error("Reservation settings error:", settingsError);
-    throw new Error("Could not load reservation settings");
-  }
-
-  const timeToMinutes = (time) => {
-    if (!time || typeof time !== "string") return null;
-
-    const cleanTime = time.slice(0, 5);
-    const [hours, minutes] = cleanTime.split(":").map(Number);
-
-    if (
-      Number.isNaN(hours) ||
-      Number.isNaN(minutes) ||
-      hours < 0 ||
-      hours > 23 ||
-      minutes < 0 ||
-      minutes > 59
-    ) {
-      return null;
-    }
-
-    return hours * 60 + minutes;
-  };
-
-  const requestedTime = timeToMinutes(reservationTime);
-  const openingTime = timeToMinutes(settings.opening_time);
-  const closingTime = timeToMinutes(settings.closing_time);
-
-  if (requestedTime === null || openingTime === null || closingTime === null) {
-    console.error("Invalid reservation/settings time:", {
-      reservationTime,
-      opening_time: settings.opening_time,
-      closing_time: settings.closing_time,
-    });
-
-    return false;
-  }
-
-  if (requestedTime < openingTime || requestedTime >= closingTime) {
-    return false;
-  }
-
-  let query = supabase
-    .from("reservations")
-    .select("*")
-    .eq("business_id", businessId)
-    .eq("reservation_date", reservationDate)
-    .eq("reservation_time", reservationTime)
-    .eq("status", "confirmed");
-
-  if (excludeReservationId) {
-    query = query.neq("id", String(excludeReservationId));
-  }
-
-  const { data: reservations, error } = await query;
+  const { data, error } = await supabase.rpc(
+    "check_canonical_restaurant_availability",
+    {
+      p_business_id: businessId,
+      p_local_date: reservationDate,
+      p_local_time: reservationTime,
+      p_quantity: Number(partySize),
+      p_exclude_booking_id: excludeReservationId || null,
+    },
+  );
 
   if (error) {
-    console.error("Reservation availability query error:", error);
+    console.error("Canonical reservation availability error:", error);
     throw new Error("Could not check reservation availability");
   }
 
-  const currentGuests = (reservations || []).reduce(
-    (total, reservation) => total + Number(reservation.party_size || 0),
-    0
-  );
-
-  return currentGuests + Number(partySize) <= Number(settings.max_guests_per_slot);
+  return data === true;
 }
 
 export async function generateReservationReference({
-  businessId,
-  reservationDate,
+  businessId: _businessId,
+  reservationDate: _reservationDate,
 }) {
-  const dateCode = reservationDate.replaceAll("-", "");
-
-  const { data: profile, error: profileError } = await supabase
-    .from("business_profile")
-    .select("reference_prefix")
-    .eq("business_id", businessId)
-    .single();
-
-  if (profileError) {
-    throw new Error("Could not load business profile");
-  }
-
-  const prefix = profile?.reference_prefix || "BOT";
-
-  const { data, error } = await supabase
-    .from("reservations")
-    .select("id")
-    .eq("business_id", businessId)
-    .eq("reservation_date", reservationDate);
-
-  if (error) {
-    throw new Error("Could not generate reservation reference");
-  }
-
-  const nextNumber = (data?.length || 0) + 1;
-  const paddedNumber = String(nextNumber).padStart(3, "0");
-
-  return `${prefix}-${dateCode}-${paddedNumber}`;
+  return `BK-${randomUUID().replaceAll("-", "").slice(0, 10).toUpperCase()}`;
 }
+
+const getCanonicalRestaurantContext = async (businessId) => {
+  const [
+    { data: business, error: businessError },
+    { data: settings, error: settingsError },
+    { data: service, error: serviceError },
+  ] = await Promise.all([
+      supabase
+        .from("businesses")
+        .select("id, business_slug, booking_model_version")
+        .eq("id", businessId)
+        .eq("booking_model_version", 2)
+        .maybeSingle(),
+      supabase
+        .from("restaurant_settings")
+        .select("timezone")
+        .eq("business_id", businessId)
+        .maybeSingle(),
+      supabase
+        .from("services")
+        .select("id")
+        .eq("business_id", businessId)
+        .eq("booking_type", "restaurant")
+        .eq("is_active", true)
+        .eq("is_published", true)
+        .order("id", { ascending: true })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+
+  if (businessError || settingsError || serviceError) {
+    console.error("Canonical restaurant context error:", {
+      businessError,
+      settingsError,
+      serviceError,
+    });
+    throw new Error("Could not load reservation configuration");
+  }
+
+  if (!business || !settings?.timezone || !service) {
+    throw new Error("Reservations are not configured for this business.");
+  }
+
+  return { ...business, timezone: settings.timezone, serviceId: service.id };
+};
+
+export const normalizeCanonicalRestaurantBooking = (booking, timezone) => {
+  if (!booking) return null;
+
+  const localStart = DateTime.fromISO(booking.starts_at, { setZone: true }).setZone(
+    timezone,
+  );
+
+  if (!localStart.isValid) {
+    throw new Error("Booking has an invalid start timestamp");
+  }
+
+  return {
+    ...booking,
+    reservation_reference: booking.reference,
+    phone: booking.customer_phone,
+    reservation_date: localStart.toISODate(),
+    reservation_time: localStart.toFormat("HH:mm:ss"),
+    party_size: Number(booking.quantity),
+    special_request: booking.notes || "",
+    is_archived: false,
+  };
+};
 
 export async function createReservation({
   businessId,
@@ -203,89 +236,88 @@ export async function createReservation({
   specialRequest = "",
   customData = {},
 }) {
-
-  const reservationReference = await generateReservationReference({
-    businessId,
-    reservationDate,
-  });
-
-  const { data, error } = await supabase
-    .from("reservations")
-    .insert([
-      {
-        business_id: businessId,
-        customer_name: customerName,
-        phone,
-        reservation_date: reservationDate,
-        reservation_time: reservationTime,
-        party_size: Number(partySize),
-        special_request: specialRequest,
-        reservation_reference: reservationReference,
-        status: "confirmed",
-        is_archived: false,
-        custom_data: customData,
-      },
-    ])
-    .select()
-    .single();
+  const context = await getCanonicalRestaurantContext(businessId);
+  const { data, error } = await supabase.rpc(
+    "create_canonical_restaurant_booking",
+    {
+      p_business_id: businessId,
+      p_customer_name: customerName,
+      p_customer_phone: phone,
+      p_local_date: reservationDate,
+      p_local_time: reservationTime,
+      p_quantity: Number(partySize),
+      p_notes: specialRequest || null,
+      p_custom_data: customData || {},
+      p_customer_email: null,
+    },
+  );
 
   if (error) {
+    console.error("Canonical reservation creation error:", error);
     throw new Error("Could not create reservation");
   }
 
-  return data;
+  return normalizeCanonicalRestaurantBooking(data, context.timezone);
 }
 
 export async function findActiveReservationsByReference({
   businessId,
   reservationReference,
 }) {
+  const context = await getCanonicalRestaurantContext(businessId);
   const { data, error } = await supabase
-    .from("reservations")
+    .from("bookings")
     .select("*")
     .eq("business_id", businessId)
-    .eq("reservation_reference", reservationReference)
-    .eq("status", "confirmed")
-    .order("reservation_date", { ascending: true })
-    .order("reservation_time", { ascending: true });
+    .eq("service_id", context.serviceId)
+    .eq("reference", reservationReference)
+    .in("status", ["pending", "confirmed"])
+    .order("starts_at", { ascending: true });
 
   if (error) {
     throw new Error("Could not search reservation by reference");
   }
 
-  return data || [];
+  return (data || []).map((booking) =>
+    normalizeCanonicalRestaurantBooking(booking, context.timezone),
+  );
 }
 
 export async function findActiveReservationsByPhone({
   businessId,
   phone,
 }) {
+  const context = await getCanonicalRestaurantContext(businessId);
   const { data, error } = await supabase
-    .from("reservations")
+    .from("bookings")
     .select("*")
     .eq("business_id", businessId)
-    .eq("phone", phone)
-    .eq("status", "confirmed")
-    .order("reservation_date", { ascending: true })
-    .order("reservation_time", { ascending: true });
+    .eq("service_id", context.serviceId)
+    .eq("customer_phone", phone)
+    .in("status", ["pending", "confirmed"])
+    .order("starts_at", { ascending: true });
 
   if (error) {
     throw new Error("Could not search reservations by phone");
   }
 
-  return data || [];
+  return (data || []).map((booking) =>
+    normalizeCanonicalRestaurantBooking(booking, context.timezone),
+  );
 }
 
 export async function cancelReservationById({
   businessId,
   reservationId,
 }) {
+  const context = await getCanonicalRestaurantContext(businessId);
   const { data, error } = await supabase
-    .from("reservations")
+    .from("bookings")
     .update({ status: "cancelled" })
     .eq("business_id", businessId)
+    .eq("service_id", context.serviceId)
     .eq("id", reservationId)
-    .eq("status", "confirmed")
+    .in("status", ["pending", "confirmed"])
     .select()
     .single();
 
@@ -293,7 +325,7 @@ export async function cancelReservationById({
     throw new Error("Could not cancel reservation");
   }
 
-  return data;
+  return normalizeCanonicalRestaurantBooking(data, context.timezone);
 }
 
 export async function updateReservationById({
@@ -305,27 +337,25 @@ export async function updateReservationById({
   specialRequest,
   customData = {},
 }) {
-
-  const { data, error } = await supabase
-    .from("reservations")
-    .update({
-  reservation_date: reservationDate,
-  reservation_time: reservationTime,
-  party_size: Number(partySize),
-  special_request: specialRequest,
-  custom_data: customData,
-})
-    .eq("business_id", businessId)
-    .eq("id", reservationId)
-    .eq("status", "confirmed")
-    .select()
-    .single();
+  const context = await getCanonicalRestaurantContext(businessId);
+  const { data, error } = await supabase.rpc(
+    "update_canonical_restaurant_booking",
+    {
+      p_business_id: businessId,
+      p_booking_id: reservationId,
+      p_local_date: reservationDate,
+      p_local_time: reservationTime,
+      p_quantity: Number(partySize),
+      p_notes: specialRequest || null,
+      p_custom_data: customData || {},
+    },
+  );
 
   if (error) {
     throw new Error("Could not update reservation");
   }
 
-  return data;
+  return normalizeCanonicalRestaurantBooking(data, context.timezone);
 }
 
 export async function createOrGetReservationBusiness({
@@ -480,6 +510,96 @@ export async function createOrUpdateRestaurantSettings({ businessId }) {
   }
 
   return data;
+}
+
+export async function createOrUpdateCanonicalRestaurantService({ businessId }) {
+  const settings = await findByBusinessId("restaurant_settings", businessId);
+  if (!settings) {
+    throw new Error("Restaurant settings must exist before the booking service");
+  }
+
+  const serviceData = {
+    business_id: businessId,
+    name: "Restaurant Reservation",
+    slug: "restaurant-reservation",
+    description: "Customer-facing restaurant reservations.",
+    booking_type: "restaurant",
+    duration_minutes: Number(settings.default_duration_minutes),
+    slot_interval_minutes: 30,
+    capacity: Number(settings.max_guests_per_slot),
+    is_active: true,
+    is_published: true,
+  };
+
+  const { data: existing, error: findError } = await supabase
+    .from("services")
+    .select("*")
+    .eq("business_id", businessId)
+    .eq("slug", serviceData.slug)
+    .maybeSingle();
+
+  if (findError) {
+    throw new Error("Could not load canonical restaurant service");
+  }
+
+  if (existing) {
+    const missingValues = getMissingReservationFieldValues(existing, serviceData);
+    if (!Object.keys(missingValues).length) return existing;
+
+    const { data, error } = await supabase
+      .from("services")
+      .update(missingValues)
+      .eq("id", existing.id)
+      .eq("business_id", businessId)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error("Could not repair canonical restaurant service");
+    }
+
+    return data;
+  }
+
+  const { data, error } = await supabase
+    .from("services")
+    .insert([serviceData])
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error("Could not create canonical restaurant service");
+  }
+
+  return data;
+}
+
+export async function activateCanonicalBookingModelIfEmpty({ businessId }) {
+  const { count, error: countError } = await supabase
+    .from("reservations")
+    .select("id", { count: "exact", head: true })
+    .eq("business_id", businessId);
+
+  if (countError) {
+    throw new Error("Could not verify legacy reservation history");
+  }
+
+  if (Number(count || 0) > 0) {
+    return { activated: false, reason: "legacy-history-requires-migration" };
+  }
+
+  const { data, error } = await supabase
+    .from("businesses")
+    .update({ booking_model_version: 2 })
+    .eq("id", businessId)
+    .select("id, booking_model_version")
+    .single();
+
+  if (error) {
+    throw new Error("Could not activate the canonical booking model");
+  }
+
+  return { activated: true, reason: "empty-tenant", business: data };
 }
 
 export async function createOrUpdateRestaurantBranding({

@@ -4,7 +4,10 @@ import App from "../models/app.js";
 import CompanyMembership from "../models/companyMembership.js";
 import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import { createReservationsSessionBootstrap } from "../services/reservationsSessionService.js";
-import { findReservationBusinessBySlug } from "../utils/reservationService.js";
+import {
+  findReservationBusinessBySlug,
+  getCanonicalReservationsReadiness,
+} from "../utils/reservationService.js";
 
 const RESERVATIONS_CUSTOMER_ROUTE = "/dashboard/reservations";
 
@@ -128,6 +131,11 @@ export const getMyCompanyApps = asyncHandler(async (req, res) => {
     ])
   );
 
+  const reservationsInstallation = installedMap.get("reservations");
+  const reservationsReadiness = reservationsInstallation?.enabled
+    ? await getCanonicalReservationsReadiness(company.reservationBusinessId)
+    : { ready: false };
+
   const result = apps.map((app) => {
     const installation = installedMap.get(app.slug);
     const manifest = getAppManifest(app.slug);
@@ -145,7 +153,9 @@ export const getMyCompanyApps = asyncHandler(async (req, res) => {
       launchUrl: isReservations ? RESERVATIONS_CUSTOMER_ROUTE : app.launchUrl,
       customerRoute: isReservations ? RESERVATIONS_CUSTOMER_ROUTE : app.launchUrl,
       serviceUrl: isReservations
-        ? buildReservationsServiceUrl(company, installation)
+        ? reservationsReadiness.ready
+          ? buildReservationsServiceUrl(company, installation)
+          : ""
         : "",
       reservationBusinessId: isReservations
         ? company.reservationBusinessId || null
@@ -161,7 +171,11 @@ export const getMyCompanyApps = asyncHandler(async (req, res) => {
       status: installation?.status || "locked",
       locked: !installation?.enabled,
       configurationReady: isReservations
-        ? Boolean(installation?.enabled && reservationsMapped)
+        ? Boolean(
+            installation?.enabled &&
+              reservationsMapped &&
+              reservationsReadiness.ready
+          )
         : Boolean(installation?.enabled),
     };
   });
@@ -189,6 +203,17 @@ export const createReservationsSession = asyncHandler(async (req, res) => {
       success: false,
       code: "RESERVATIONS_NOT_ENTITLED",
       message: "Reservations is not enabled for this company.",
+    });
+  }
+
+  const readiness = await getCanonicalReservationsReadiness(
+    company.reservationBusinessId,
+  );
+  if (!readiness.ready) {
+    return res.status(409).json({
+      success: false,
+      code: "RESERVATIONS_NOT_CONFIGURED",
+      message: "Reservations are not configured for this business.",
     });
   }
 
