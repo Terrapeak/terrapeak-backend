@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 import { createClient } from "@supabase/supabase-js";
 import { DateTime } from "luxon";
 import { randomUUID } from "node:crypto";
+import { logReservationsOperation } from "./reservationsOperationalLog.js";
 
 dotenv.config();
 
@@ -256,6 +257,14 @@ export async function createReservation({
     console.error("Canonical reservation creation error:", error);
     throw new Error("Could not create reservation");
   }
+
+  logReservationsOperation("booking.created", {
+    businessId,
+    bookingId: data?.id,
+    reference: data?.reference,
+    serviceId: data?.service_id,
+    source: "ai_or_backend",
+  });
 
   return normalizeCanonicalRestaurantBooking(data, context.timezone);
 }

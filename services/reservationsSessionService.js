@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { logReservationsOperation } from "../utils/reservationsOperationalLog.js";
 
 const CANONICAL_RESERVATIONS_ROLES = new Set([
   "owner",
@@ -109,6 +110,13 @@ export async function createReservationsSessionBootstrap({
     error.cause = membershipError;
     throw error;
   }
+
+  logReservationsOperation("sso.bootstrap.created", {
+    companyId: company._id,
+    businessId: company.reservationBusinessId,
+    userId: terraPeakUserId,
+    companyRole: normalizedRole,
+  });
 
   return {
     tokenHash: linkData.properties.hashed_token,

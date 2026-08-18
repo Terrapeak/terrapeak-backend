@@ -8,6 +8,7 @@ import {
   findReservationBusinessBySlug,
   getReservationProvisioningRecords,
 } from "../utils/reservationService.js";
+import { logReservationsOperation } from "../utils/reservationsOperationalLog.js";
 import ChatbotSettings from "../models/chatbotSettings.js";
 
 export const reservationProvisioningStore = {
@@ -182,6 +183,13 @@ export default async function provisionReservations({
     company,
     business,
     store,
+  });
+
+  logReservationsOperation("provisioning.completed", {
+    companyId: company._id,
+    businessId: business.id,
+    businessSlug: business.business_slug,
+    bookingModelVersion: bookingModel?.business?.booking_model_version || 1,
   });
 
   return {
