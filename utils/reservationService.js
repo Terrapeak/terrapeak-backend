@@ -105,10 +105,6 @@ export async function getCanonicalReservationsReadiness(businessId) {
   if (!records.profile || !records.settings?.timezone || !records.branding) {
     return { ready: false, reason: "provisioning-incomplete" };
   }
-  if (!records.service) {
-    return { ready: false, reason: "canonical-service-missing" };
-  }
-
   return { ready: true, reason: null };
 }
 
