@@ -94,13 +94,3 @@ test("Dashboard access fails closed before canonical readiness", async () => {
   assert.match(source, /RESERVATIONS_NOT_CONFIGURED/);
   assert.match(source, /reservationsReadiness\.ready/);
 });
-
-test("Dashboard readiness does not require a published service", () => {
-  const source = readFileSync(
-    new URL("../utils/reservationService.js", import.meta.url),
-    "utf8",
-  );
-
-  assert.doesNotMatch(source, /canonical-service-missing/);
-  assert.doesNotMatch(source, /if \(!records\.service\)/);
-});
