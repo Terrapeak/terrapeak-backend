@@ -111,6 +111,45 @@ export async function createReservationsSessionBootstrap({
     throw error;
   }
 
+  // Administrators can pre-assign a Reservations staff profile by the same
+  // email the team member uses for TerraPeak. Linking happens here, after the
+  // TerraPeak identity has been verified, so no user can claim a profile from
+  // the public Reservations client.
+  const { data: matchingStaff, error: staffLookupError } = await supabase
+    .from("staff_members")
+    .select("id,user_id")
+    .eq("business_id", Number(company.reservationBusinessId))
+    .ilike("login_email", normalizedEmail)
+    .maybeSingle();
+
+  if (staffLookupError) {
+    const error = new Error("Could not check the Reservations staff profile link.");
+    error.code = "RESERVATIONS_STAFF_LINK_LOOKUP_FAILED";
+    error.cause = staffLookupError;
+    throw error;
+  }
+
+  if (matchingStaff?.user_id && matchingStaff.user_id !== linkData.user.id) {
+    const error = new Error("This Reservations staff profile is linked to another TerraPeak account.");
+    error.code = "RESERVATIONS_STAFF_ALREADY_LINKED";
+    throw error;
+  }
+
+  if (matchingStaff && !matchingStaff.user_id) {
+    const { error: staffLinkError } = await supabase
+      .from("staff_members")
+      .update({ user_id: linkData.user.id })
+      .eq("id", matchingStaff.id)
+      .is("user_id", null);
+
+    if (staffLinkError) {
+      const error = new Error("Could not link the Reservations staff profile.");
+      error.code = "RESERVATIONS_STAFF_LINK_FAILED";
+      error.cause = staffLinkError;
+      throw error;
+    }
+  }
+
   logReservationsOperation("sso.bootstrap.created", {
     companyId: company._id,
     businessId: company.reservationBusinessId,
