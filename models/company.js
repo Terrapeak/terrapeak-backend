@@ -8,6 +8,11 @@ const CompanySchema = new mongoose.Schema(
     slug: { type: String, required: true, unique: true, lowercase: true, trim: true },
     reservationBusinessId: { type: Number, default: null, index: true },
     reservationBusinessSlug: { type: String, default: "" },
+    reservationTemplate: {
+      type: String,
+      enum: ["general", "physiotherapy", "dental", "salon", "learning_centre", "restaurant"],
+      default: "general",
+    },
     country: { type: String, default: "PH", uppercase: true, trim: true },
     address: { type: String, default: "", trim: true },
     website: { type: String, default: "", trim: true },
