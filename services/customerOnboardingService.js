@@ -256,6 +256,7 @@ export async function onboardCustomerEnvironment({
       referencePrefix,
       reservationBusinessSlug:
         companyInput.reservationBusinessSlug || companySlug,
+      reservationTemplate: companyInput.reservationTemplate || "general",
       installedApps: [],
       plan: companyInput.plan || organization.plan || "starter",
       billingSource: billingMode,
