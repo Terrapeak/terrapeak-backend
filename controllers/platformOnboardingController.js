@@ -5,6 +5,11 @@ import Company from "../models/company.js";
 import Organization from "../models/organization.js";
 import User from "../models/user.js";
 import onboardCustomerEnvironment from "../services/customerOnboardingService.js";
+import {
+  DEFAULT_RESERVATIONS_TEMPLATE,
+  isReservationsTemplate,
+  listReservationsTemplates,
+} from "../config/reservationsTemplates.js";
 
 const slugify = (text = "") =>
   text
@@ -51,7 +56,9 @@ export const getPlatformOnboardingOptions = asyncHandler(async (req, res) => {
       maxUsers: 1,
       organizationMode: "create",
       billingMode: "company",
+      reservationTemplate: DEFAULT_RESERVATIONS_TEMPLATE,
     },
+    reservationsTemplates: listReservationsTemplates(),
     organizations: organizations.map((organization) => ({
       id: organization._id,
       name: organization.name,
@@ -78,6 +85,7 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
     companySlug,
     referencePrefix,
     reservationBusinessSlug,
+    reservationTemplate = DEFAULT_RESERVATIONS_TEMPLATE,
     companyAddress,
     companyWebsite,
     companyEmail,
@@ -117,6 +125,11 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
   if (organizationMode === "existing" && !organizationId) {
     res.status(400);
     throw new Error("Select an existing Organization.");
+  }
+
+  if (!isReservationsTemplate(reservationTemplate)) {
+    res.status(400);
+    throw new Error("Select a valid Reservations template.");
   }
 
   const normalizedOwnerEmail = ownerEmail.toLowerCase().trim();
@@ -199,6 +212,7 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
       slug: normalizedSlug,
       referencePrefix: normalizedPrefix,
       reservationBusinessSlug: normalizedReservationSlug,
+      reservationTemplate,
       plan,
       maxUsers: Number(maxUsers) || 1,
     },
@@ -237,6 +251,7 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
   result.company.website = companyWebsite?.trim() || "";
   result.company.email = companyEmail.toLowerCase().trim();
   result.company.phone = companyPhone.trim();
+  result.company.reservationTemplate = reservationTemplate;
   await result.company.save();
 
   res.status(201).json({
@@ -275,6 +290,7 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
       website: result.company.website,
       email: result.company.email,
       phone: result.company.phone,
+      reservationTemplate: result.company.reservationTemplate,
     },
     contract: result.contract
       ? {
