@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 import { getReservationsTemplate } from "../config/reservationsTemplates.js";
+import { applyReservationTemplateServiceDefaults } from "./reservationTemplateServiceDefaults.js";
 
 const getSupabase = () =>
   createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -46,10 +47,16 @@ export async function applyReservationsTemplate({ businessId, templateKey }) {
     if (error) throw new Error("Could not apply Customer Form template.");
   }
 
+  const serviceDefaults = await applyReservationTemplateServiceDefaults({
+    businessId,
+    templateKey,
+  });
+
   return {
     templateKey,
     businessType: template.businessType,
     addedFields: missing.length,
     preservedFields: existing.length,
+    service: serviceDefaults.service,
   };
 }
