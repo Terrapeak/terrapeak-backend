@@ -9,6 +9,7 @@ import {
   getReservationProvisioningRecords,
 } from "../utils/reservationService.js";
 import { logReservationsOperation } from "../utils/reservationsOperationalLog.js";
+import { applyReservationsTemplate } from "../utils/reservationTemplateService.js";
 import ChatbotSettings from "../models/chatbotSettings.js";
 
 export const reservationProvisioningStore = {
@@ -20,6 +21,7 @@ export const reservationProvisioningStore = {
   createOrUpdateRestaurantBranding,
   findReservationBusinessBySlug,
   getReservationProvisioningRecords,
+  applyReservationsTemplate,
 };
 
 const normalizeSlug = (value) =>
@@ -49,9 +51,7 @@ export async function getReservationsProvisioningHealth({
   let branding = null;
   let service = null;
 
-  if (!companyBusinessId) {
-    missing.push("company.reservationBusinessId");
-  }
+  if (!companyBusinessId) missing.push("company.reservationBusinessId");
 
   if (!companySlug) {
     missing.push("company.reservationBusinessSlug");
@@ -61,11 +61,7 @@ export async function getReservationsProvisioningHealth({
       missing.push("businesses");
     } else {
       const resolvedBusinessId = normalizeBusinessId(business.id);
-      if (
-        companyBusinessId &&
-        resolvedBusinessId &&
-        companyBusinessId !== resolvedBusinessId
-      ) {
+      if (companyBusinessId && resolvedBusinessId && companyBusinessId !== resolvedBusinessId) {
         mismatches.push("company.reservationBusinessId");
       }
 
@@ -89,12 +85,8 @@ export async function getReservationsProvisioningHealth({
     if (chatbotSlug === companySlug) {
       chatbotSlugResolves = Boolean(business);
     } else {
-      chatbotSlugResolves = Boolean(
-        await store.findReservationBusinessBySlug(chatbotSlug)
-      );
-      if (!chatbotSlugResolves) {
-        mismatches.push("chatbotSettings.reservationBusinessSlug");
-      }
+      chatbotSlugResolves = Boolean(await store.findReservationBusinessBySlug(chatbotSlug));
+      if (!chatbotSlugResolves) mismatches.push("chatbotSettings.reservationBusinessSlug");
     }
   } else if (chatbot) {
     mismatches.push("chatbotSettings.reservationBusinessSlug");
@@ -118,32 +110,23 @@ async function reconcileChatbotReservationSlug({ company, business, store }) {
 
   const canonicalSlug = normalizeSlug(company.reservationBusinessSlug);
   const currentSlug = getChatbotReservationSlug(chatbot);
-  if (currentSlug === canonicalSlug) {
-    return { changed: false, reason: "already-canonical" };
-  }
+  if (currentSlug === canonicalSlug) return { changed: false, reason: "already-canonical" };
 
   if (currentSlug) {
-    const existingLinkedBusiness =
-      await store.findReservationBusinessBySlug(currentSlug);
-    if (existingLinkedBusiness) {
-      return { changed: false, reason: "valid-existing-link" };
-    }
+    const existingLinkedBusiness = await store.findReservationBusinessBySlug(currentSlug);
+    if (existingLinkedBusiness) return { changed: false, reason: "valid-existing-link" };
   }
 
   if (!business || !canonicalSlug) {
     return { changed: false, reason: "canonical-business-unavailable" };
   }
 
-  if (
-    chatbot.reservationBusinessSlug !== undefined ||
-    chatbot.schema?.path?.("reservationBusinessSlug")
-  ) {
+  if (chatbot.reservationBusinessSlug !== undefined || chatbot.schema?.path?.("reservationBusinessSlug")) {
     chatbot.reservationBusinessSlug = canonicalSlug;
   } else {
     chatbot.reservationSlug = canonicalSlug;
   }
   await chatbot.save();
-
   return { changed: true, reason: "stale-link-repaired" };
 }
 
@@ -162,33 +145,25 @@ export default async function provisionReservations({
     referencePrefix: company.referencePrefix,
   });
 
-  const settings = await store.createOrUpdateRestaurantSettings({
-    businessId: business.id,
-  });
-
-  const service = await store.createOrUpdateCanonicalRestaurantService({
-    businessId: business.id,
-  });
-
-  const bookingModel = await store.activateCanonicalBookingModelIfEmpty({
-    businessId: business.id,
-  });
-
+  const settings = await store.createOrUpdateRestaurantSettings({ businessId: business.id });
+  const service = await store.createOrUpdateCanonicalRestaurantService({ businessId: business.id });
+  const bookingModel = await store.activateCanonicalBookingModelIfEmpty({ businessId: business.id });
   const branding = await store.createOrUpdateRestaurantBranding({
     businessId: business.id,
     restaurantName: company.displayName || company.name,
   });
-
-  const chatbotLink = await reconcileChatbotReservationSlug({
-    company,
-    business,
-    store,
+  const customerForm = await store.applyReservationsTemplate({
+    businessId: business.id,
+    templateKey: company.reservationTemplate || "general",
   });
+
+  const chatbotLink = await reconcileChatbotReservationSlug({ company, business, store });
 
   logReservationsOperation("provisioning.completed", {
     companyId: company._id,
     businessId: business.id,
     businessSlug: business.business_slug,
+    reservationTemplate: company.reservationTemplate || "general",
     bookingModelVersion: bookingModel?.business?.booking_model_version || 1,
   });
 
@@ -200,6 +175,7 @@ export default async function provisionReservations({
     service,
     bookingModel,
     branding,
+    customerForm,
     chatbotLink,
   };
 }
