@@ -1,0 +1,1 @@
+Non-restaurant templates currently reuse the proven canonical slot engine internally while presenting industry-appropriate business and service metadata externally. This avoids coupling Customer Form rollout to a scheduling-engine rewrite.
