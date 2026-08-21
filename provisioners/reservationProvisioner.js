@@ -9,6 +9,7 @@ import {
   getReservationProvisioningRecords,
 } from "../utils/reservationService.js";
 import { logReservationsOperation } from "../utils/reservationsOperationalLog.js";
+import { applyReservationsTemplate } from "../utils/reservationTemplateService.js";
 import ChatbotSettings from "../models/chatbotSettings.js";
 
 export const reservationProvisioningStore = {
@@ -20,6 +21,7 @@ export const reservationProvisioningStore = {
   createOrUpdateRestaurantBranding,
   findReservationBusinessBySlug,
   getReservationProvisioningRecords,
+  applyReservationsTemplate,
 };
 
 const normalizeSlug = (value) =>
@@ -179,6 +181,11 @@ export default async function provisionReservations({
     restaurantName: company.displayName || company.name,
   });
 
+  const customerForm = await store.applyReservationsTemplate({
+    businessId: business.id,
+    templateKey: company.reservationTemplate || "general",
+  });
+
   const chatbotLink = await reconcileChatbotReservationSlug({
     company,
     business,
@@ -189,6 +196,7 @@ export default async function provisionReservations({
     companyId: company._id,
     businessId: business.id,
     businessSlug: business.business_slug,
+    reservationTemplate: company.reservationTemplate || "general",
     bookingModelVersion: bookingModel?.business?.booking_model_version || 1,
   });
 
@@ -200,6 +208,7 @@ export default async function provisionReservations({
     service,
     bookingModel,
     branding,
+    customerForm,
     chatbotLink,
   };
 }
