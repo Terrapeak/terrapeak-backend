@@ -34,21 +34,46 @@ export async function applyReservationTemplateServiceDefaults({ businessId, temp
     .maybeSingle();
   if (profileError) throw new Error("Could not apply Reservations profile template");
 
-  const { data: service, error: serviceError } = await supabase
+  // A partially completed onboarding can be retried after the template has already
+  // changed the canonical service slug away from `restaurant-reservation`. Older
+  // provisioning code could then create a second active restaurant service. Never
+  // bulk-update all matching rows with maybeSingle(): resolve one canonical service
+  // deterministically and update it by id instead.
+  const { data: canonicalService, error: canonicalServiceError } = await supabase
     .from("services")
-    .update({
-      name: defaults.name,
-      slug: defaults.slug,
-      description: defaults.description,
-      duration_minutes: defaults.durationMinutes,
-      capacity: defaults.businessType === "restaurant" ? 20 : 1,
-    })
+    .select("id")
     .eq("business_id", businessId)
     .eq("booking_type", "restaurant")
     .eq("is_active", true)
-    .select()
+    .order("is_published", { ascending: false })
+    .order("id", { ascending: true })
+    .limit(1)
     .maybeSingle();
-  if (serviceError) throw new Error("Could not apply Reservations service template");
+
+  if (canonicalServiceError) {
+    throw new Error("Could not resolve Reservations service template");
+  }
+
+  let service = null;
+
+  if (canonicalService?.id) {
+    const { data: updatedService, error: serviceError } = await supabase
+      .from("services")
+      .update({
+        name: defaults.name,
+        slug: defaults.slug,
+        description: defaults.description,
+        duration_minutes: defaults.durationMinutes,
+        capacity: defaults.businessType === "restaurant" ? 20 : 1,
+      })
+      .eq("id", canonicalService.id)
+      .eq("business_id", businessId)
+      .select()
+      .single();
+
+    if (serviceError) throw new Error("Could not apply Reservations service template");
+    service = updatedService;
+  }
 
   return { business, profile, service };
 }
