@@ -79,6 +79,21 @@ test("chatbot booking tools fail closed on the canonical Company mapping", () =>
   );
 });
 
+test("chatbot treats Reservations as a concierge and links to the booking form", () => {
+  const source = readFileSync(
+    new URL("../controllers/chatbotController.js", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /buildReservationBookingUrl/);
+  assert.match(source, /reservationChoicesReply/);
+  assert.match(source, /request callback/);
+  assert.match(source, /buildReservationCallbackSummary/);
+  assert.doesNotMatch(source, /createReservation\(/);
+  assert.doesNotMatch(source, /cancelReservationById\(/);
+  assert.doesNotMatch(source, /updateReservationById\(/);
+});
+
 test("Dashboard access fails closed before canonical readiness", async () => {
   assert.deepEqual(await getCanonicalReservationsReadiness(null), {
     ready: false,

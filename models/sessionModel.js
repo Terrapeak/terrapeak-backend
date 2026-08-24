@@ -74,6 +74,16 @@ const sessionSchema = new mongoose.Schema(
     lastReservationReference: String,
     lastReservationPhone: String,
 
+    reservationCallbackStep: String,
+    reservationCallbackName: String,
+    reservationCallbackContact: String,
+    reservationCallbackPreferredTime: String,
+    reservationCallbackQuestion: String,
+    reservationCallbackServiceOrTeacher: String,
+    reservationCallbackSummary: String,
+    reservationCallbackBookingUrl: String,
+    reservationCallbackRequestedAt: Date,
+
     reservationRescheduleStep: String,
     rescheduleReservationId: String,
     rescheduleReservationOptions: {
