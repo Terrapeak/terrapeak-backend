@@ -18,6 +18,8 @@ import {
   checkReservationAvailability,
   findActiveReservationsByReference,
   findActiveReservationsByPhone,
+  cancelReservationById,
+  updateReservationById,
 } from "../utils/reservationService.js";
 import {
   extractReservationReference,
@@ -614,12 +616,7 @@ if (
   reservationEnabled &&
   (
     session.bookingType === "reservation" ||
-    session.reservationStep ||
-    session.reservationRescheduleStep ||
-    session.cancelReservationStep ||
-    session.reservationCancelStep ||
-    isReservationCancelRequest ||
-    isReservationRescheduleRequest
+    session.reservationStep
   )
 ) {
   resetBookingSession(session);
@@ -965,6 +962,326 @@ if (!botReply && session.cancelReservationStep === "selectReservationToCancel") 
 
     botReply =
       "Are you sure you want to cancel this reservation? Please reply **yes** or **no**.";
+  }
+}
+
+if (!botReply && session.reservationRescheduleStep === "askDate") {
+  const currentReservation = session.rescheduleReservationData || {};
+
+  session.rescheduleReservationData = {
+    ...currentReservation,
+    reservation_date:
+      lowerMsg === "same"
+        ? currentReservation.reservation_date
+        : message.trim(),
+  };
+
+  session.reservationRescheduleStep = "askTime";
+
+  botReply =
+    "What new time would you like? Reply with HH:MM, for example 19:00, or type **same** to keep the current time.";
+}
+
+if (!botReply && session.reservationRescheduleStep === "askTime") {
+  const currentReservation = session.rescheduleReservationData || {};
+
+  const normalizedTime =
+    lowerMsg === "same"
+      ? currentReservation.reservation_time
+      : message.trim().replace(".", ":");
+
+  const available = await checkReservationAvailability({
+    businessId: currentReservation.business_id,
+    reservationDate: currentReservation.reservation_date,
+    reservationTime: normalizedTime,
+    partySize: currentReservation.party_size,
+    excludeReservationId: session.rescheduleReservationId,
+  });
+
+  if (!available) {
+    botReply =
+      "Sorry, that time is outside opening hours or fully booked. Please choose another time in HH:MM format.";
+  } else {
+    session.rescheduleReservationData = {
+      ...currentReservation,
+      reservation_time: normalizedTime,
+    };
+
+    session.reservationRescheduleStep = "askPartySize";
+
+    botReply =
+      "How many people should the reservation be for? Type **same** to keep the current party size.";
+  }
+}
+
+if (!botReply && session.reservationRescheduleStep === "askPartySize") {
+  const currentReservation = session.rescheduleReservationData || {};
+
+  if (lowerMsg !== "same" && (isNaN(Number(message)) || Number(message) < 1)) {
+    botReply =
+      "Please enter a valid number of guests, or type **same** to keep the current party size.";
+  } else {
+    const newPartySize =
+      lowerMsg === "same"
+        ? Number(currentReservation.party_size)
+        : Number(message);
+
+    const available = await checkReservationAvailability({
+      businessId: currentReservation.business_id,
+      reservationDate: currentReservation.reservation_date,
+      reservationTime: currentReservation.reservation_time,
+      partySize: newPartySize,
+      excludeReservationId: session.rescheduleReservationId,
+    });
+
+    if (!available) {
+      botReply =
+        "Sorry, that party size is too large for the selected time slot. Please enter a smaller number of guests or choose another time.";
+    } else {
+      session.rescheduleReservationData = {
+        ...currentReservation,
+        party_size: newPartySize,
+      };
+
+      session.reservationRescheduleStep = "askOccasion";
+
+      botReply =
+        "What is the occasion? Type a new occasion, **same** to keep the current occasion, or **none** if there is none.";
+    }
+  }
+}
+
+if (!botReply && session.reservationRescheduleStep === "askOccasion") {
+  const currentReservation = session.rescheduleReservationData || {};
+  const currentCustomData = currentReservation.custom_data || {};
+
+  session.rescheduleReservationData = {
+    ...currentReservation,
+    custom_data: {
+      ...currentCustomData,
+      Occasion:
+        lowerMsg === "same"
+          ? currentCustomData.Occasion || ""
+          : lowerMsg === "none"
+          ? ""
+          : message.trim(),
+    },
+  };
+
+  session.reservationRescheduleStep = "askAllergies";
+
+  botReply =
+    "Any allergies? Type new allergy details, **same** to keep the current allergy info, or **none** if there are none.";
+}
+
+if (!botReply && session.reservationRescheduleStep === "askAllergies") {
+  const currentReservation = session.rescheduleReservationData || {};
+  const currentCustomData = currentReservation.custom_data || {};
+
+  session.rescheduleReservationData = {
+    ...currentReservation,
+    custom_data: {
+      ...currentCustomData,
+      Allergies:
+        lowerMsg === "same"
+          ? currentCustomData.Allergies || ""
+          : lowerMsg === "none"
+          ? ""
+          : message.trim(),
+    },
+  };
+
+  session.reservationRescheduleStep = "askSeatingPreference";
+
+  botReply =
+    "Any seating preference? Type a new preference, **same** to keep the current preference, or **none** if there is none.";
+}
+
+if (!botReply && session.reservationRescheduleStep === "askSeatingPreference") {
+  const currentReservation = session.rescheduleReservationData || {};
+  const currentCustomData = currentReservation.custom_data || {};
+
+  session.rescheduleReservationData = {
+    ...currentReservation,
+    custom_data: {
+      ...currentCustomData,
+      "Seating Preference":
+        lowerMsg === "same"
+          ? currentCustomData["Seating Preference"] || ""
+          : lowerMsg === "none"
+          ? ""
+          : message.trim(),
+    },
+  };
+
+  session.reservationRescheduleStep = "askSpecialRequest";
+
+  botReply =
+    "Any special requests? Type a new request, **same** to keep the current request, or **none** for no special requests.";
+}
+
+if (!botReply && session.reservationRescheduleStep === "askSpecialRequest") {
+  const currentReservation = session.rescheduleReservationData || {};
+
+  const newSpecialRequest =
+    lowerMsg === "same"
+      ? currentReservation.special_request || ""
+      : lowerMsg === "none"
+      ? ""
+      : message.trim();
+
+  session.rescheduleReservationData = {
+    ...currentReservation,
+    special_request: newSpecialRequest,
+  };
+
+  try {
+    const business = getConfiguredReservationBusiness();
+
+    const available = await checkReservationAvailability({
+      businessId: business.id,
+      reservationDate: session.rescheduleReservationData.reservation_date,
+      reservationTime: session.rescheduleReservationData.reservation_time,
+      partySize: session.rescheduleReservationData.party_size,
+      excludeReservationId: session.rescheduleReservationId,
+    });
+
+    if (!available) {
+      botReply =
+        "Sorry, that reservation slot is fully booked. Please choose another time.";
+
+      session.reservationRescheduleStep = "askTime";
+      return;
+    }
+
+    session.reservationRescheduleStep = "confirmUpdate";
+
+    const customData = session.rescheduleReservationData.custom_data || {};
+
+    botReply = `Please confirm the updated reservation details:
+
+Reference: ${session.rescheduleReservationData.reservation_reference}
+
+Date: ${session.rescheduleReservationData.reservation_date}
+Time: ${session.rescheduleReservationData.reservation_time}
+Party size: ${session.rescheduleReservationData.party_size}
+
+Occasion: ${customData.Occasion || "None"}
+Allergies: ${customData.Allergies || "None"}
+Seating Preference: ${customData["Seating Preference"] || "None"}
+Special Request: ${session.rescheduleReservationData.special_request || "None"}
+
+Reply YES to update the reservation.
+Reply NO to cancel the reschedule request.`;
+  } catch (err) {
+    console.error("Reservation reschedule update error:", err);
+
+    session.reservationRescheduleStep = null;
+    session.rescheduleReservationId = null;
+    session.rescheduleReservationOptions = [];
+    session.rescheduleReservationData = {};
+
+    botReply =
+      "Sorry, I could not update the reservation right now. Please try again or use the reservation form.";
+  }
+}
+
+if (!botReply && session.reservationRescheduleStep === "confirmUpdate") {
+  if (lowerMsg === "yes" || lowerMsg === "y") {
+    try {
+      const business = getConfiguredReservationBusiness();
+
+      const updatedReservation = await updateReservationById({
+        businessId: business.id,
+        reservationId: session.rescheduleReservationId,
+        reservationDate: session.rescheduleReservationData.reservation_date,
+        reservationTime: session.rescheduleReservationData.reservation_time,
+        partySize: session.rescheduleReservationData.party_size,
+        specialRequest: session.rescheduleReservationData.special_request,
+        customData: session.rescheduleReservationData.custom_data || {},
+      });
+
+      session.reservationRescheduleStep = null;
+      session.rescheduleReservationId = null;
+      session.rescheduleReservationOptions = [];
+      session.rescheduleReservationData = {};
+
+      const customData = updatedReservation.custom_data || {};
+
+      botReply = `✅ Your reservation has been updated successfully.
+
+Reference: ${updatedReservation.reservation_reference}
+
+Date: ${updatedReservation.reservation_date}
+Time: ${updatedReservation.reservation_time}
+Party size: ${updatedReservation.party_size}
+
+Occasion: ${customData.Occasion || "None"}
+Allergies: ${customData.Allergies || "None"}
+Seating Preference: ${customData["Seating Preference"] || "None"}
+Special Request: ${updatedReservation.special_request || "None"}`;
+    } catch (err) {
+      console.error("Reservation reschedule confirmation error:", err);
+
+      session.reservationRescheduleStep = null;
+      session.rescheduleReservationId = null;
+      session.rescheduleReservationOptions = [];
+      session.rescheduleReservationData = {};
+
+      botReply =
+        "Sorry, I could not update the reservation right now. Please try again or use the reservation form.";
+    }
+  } else if (lowerMsg === "no" || lowerMsg === "n") {
+    session.reservationRescheduleStep = null;
+    session.rescheduleReservationId = null;
+    session.rescheduleReservationOptions = [];
+    session.rescheduleReservationData = {};
+
+    botReply = "No problem. Your reservation was not changed.";
+  } else {
+    botReply =
+      "Please reply **yes** to update the reservation or **no** to cancel the reschedule request.";
+  }
+}
+
+if (!botReply && session.cancelReservationStep === "confirmCancel") {
+  if (lowerMsg === "yes") {
+    try {
+      const business = getConfiguredReservationBusiness();
+
+      const reservation = await cancelReservationById({
+        businessId: business.id,
+        reservationId: session.cancelReservationId,
+      });
+
+      session.cancelReservationStep = null;
+      session.cancelReservationId = null;
+      session.cancelReservationOptions = [];
+
+      botReply = `✅ Your reservation has been cancelled successfully.
+
+**Reference:** ${reservation.reservation_reference}  
+**Date:** ${reservation.reservation_date}  
+**Time:** ${reservation.reservation_time}`;
+    } catch (err) {
+      console.error("Reservation cancellation error:", err);
+
+      session.cancelReservationStep = null;
+      session.cancelReservationId = null;
+      session.cancelReservationOptions = [];
+
+      botReply =
+        "Sorry, I could not cancel the reservation right now. Please try again or use the reservation form.";
+    }
+  } else if (lowerMsg === "no") {
+    session.cancelReservationStep = null;
+    session.cancelReservationId = null;
+    session.cancelReservationOptions = [];
+
+    botReply = "No problem. Your reservation remains confirmed.";
+  } else {
+    botReply =
+      "Please reply **yes** to cancel the reservation or **no** to keep it.";
   }
 }
 
@@ -1738,8 +2055,9 @@ See you soon. 😊
 --- RESERVATIONS CONCIERGE RULES ---
 Reservations is installed for this customer.
 You may answer questions about services, programmes, dates, time slots, teachers, teacher background, languages, specialties, prices, duration, location, policies, prerequisites, and general enrolment.
-Do not create, confirm, cancel, or reschedule a Reservations booking in chat.
-When the customer is ready to book, send them ${reservationBookingUrl ? `this Reservations form link:\n${reservationBookingUrl}` : "to the Reservations form in the customer dashboard"}.
+Do not create or confirm a new Reservations booking in chat. New bookings must go through the Reservations form.
+You may help customers look up, cancel, or reschedule existing Reservations bookings when the existing booking verification flow is satisfied.
+When the customer is ready to create a new booking, send them ${reservationBookingUrl ? `this Reservations form link:\n${reservationBookingUrl}` : "to the Reservations form in the customer dashboard"}.
 For unusual, sensitive, unclear, or advice-heavy questions, offer a callback and ask them to reply "request callback".
 `
       : "";

@@ -79,7 +79,7 @@ test("chatbot booking tools fail closed on the canonical Company mapping", () =>
   );
 });
 
-test("chatbot treats Reservations as a concierge and links to the booking form", () => {
+test("chatbot sends new Reservations bookings to the form while preserving existing booking changes", () => {
   const source = readFileSync(
     new URL("../controllers/chatbotController.js", import.meta.url),
     "utf8",
@@ -89,9 +89,10 @@ test("chatbot treats Reservations as a concierge and links to the booking form",
   assert.match(source, /reservationChoicesReply/);
   assert.match(source, /request callback/);
   assert.match(source, /buildReservationCallbackSummary/);
+  assert.match(source, /Do not create or confirm a new Reservations booking/);
   assert.doesNotMatch(source, /createReservation\(/);
-  assert.doesNotMatch(source, /cancelReservationById\(/);
-  assert.doesNotMatch(source, /updateReservationById\(/);
+  assert.match(source, /cancelReservationById\(/);
+  assert.match(source, /updateReservationById\(/);
 });
 
 test("Dashboard access fails closed before canonical readiness", async () => {
