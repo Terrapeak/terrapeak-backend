@@ -3,6 +3,8 @@ import asyncHandler from "express-async-handler";
 import Company from "../models/company.js";
 import CompanyMembership from "../models/companyMembership.js";
 import User from "../models/user.js";
+import { isReservationsTemplate } from "../config/reservationsTemplates.js";
+import { applyReservationsTemplate } from "../utils/reservationTemplateService.js";
 
 const COMPANY_FIELDS = [
   "name",
@@ -15,6 +17,7 @@ const COMPANY_FIELDS = [
   "slug",
   "referencePrefix",
   "reservationBusinessSlug",
+  "reservationTemplate",
   "plan",
   "maxUsers",
   "isActive",
@@ -130,6 +133,25 @@ export const updatePlatformCompany = asyncHandler(async (req, res) => {
     updates.maxUsers = maxUsers;
   }
 
+  let templateApplication = null;
+  if (updates.reservationTemplate !== undefined) {
+    if (!isReservationsTemplate(updates.reservationTemplate)) {
+      return res.status(400).json({
+        success: false,
+        message: "Select a valid Reservations template.",
+      });
+    }
+
+    const templateChanged = updates.reservationTemplate !== company.reservationTemplate;
+    if (templateChanged && company.reservationBusinessId) {
+      templateApplication = await applyReservationsTemplate({
+        businessId: company.reservationBusinessId,
+        templateKey: updates.reservationTemplate,
+        preserveExistingCustomizations: true,
+      });
+    }
+  }
+
   Object.assign(company, updates);
   await company.save();
 
@@ -137,7 +159,15 @@ export const updatePlatformCompany = asyncHandler(async (req, res) => {
     companyId: company._id,
     title: "Company details updated",
     actor: req.platformUser,
-    metadata: { fields: Object.keys(updates) },
+    metadata: {
+      fields: Object.keys(updates),
+      ...(templateApplication
+        ? {
+            reservationTemplate: updates.reservationTemplate,
+            addedReservationFields: templateApplication.addedFields,
+          }
+        : {}),
+    },
   });
 
   res.json({ success: true, company });
@@ -374,3 +404,4 @@ export const removePlatformCompanyUser = asyncHandler(async (req, res) => {
 
   res.json({ success: true, membership });
 });
+

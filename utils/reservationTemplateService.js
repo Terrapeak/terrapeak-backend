@@ -6,16 +6,13 @@ import { applyReservationTemplateServiceDefaults } from "./reservationTemplateSe
 const getSupabase = () =>
   createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
-export async function applyReservationsTemplate({ businessId, templateKey }) {
-  const supabase = getSupabase();
+export const buildReservationsTemplateFieldPlan = ({
+  businessId,
+  existing = [],
+  templateKey,
+  preserveExistingCustomizations = false,
+}) => {
   const template = getReservationsTemplate(templateKey);
-  const { data: existing = [], error: loadError } = await supabase
-    .from("booking_custom_fields")
-    .select("id,field_label,system_key,is_active")
-    .eq("business_id", businessId);
-
-  if (loadError) throw new Error("Could not load Customer Form fields for template provisioning.");
-
   const systemFields = [
     { field_label: "Full name", field_type: "text", is_required: true, is_locked: true, system_key: "customer_name" },
     { field_label: "Phone", field_type: "text", is_required: true, is_locked: true, system_key: "customer_phone" },
@@ -44,14 +41,57 @@ export async function applyReservationsTemplate({ businessId, templateKey }) {
       is_active: true,
     }));
 
+  const desiredExistingIds = preserveExistingCustomizations
+    ? []
+    : existing
+        .filter((field) => desiredLabels.has(String(field.field_label || "").trim().toLowerCase()))
+        .map((field) => field.id);
+  const staleTemplateIds = preserveExistingCustomizations
+    ? []
+    : existing
+        .filter((field) => !field.system_key && !desiredLabels.has(String(field.field_label || "").trim().toLowerCase()))
+        .map((field) => field.id);
+
+  return {
+    template,
+    missing,
+    desiredExistingIds,
+    staleTemplateIds,
+    applyServiceDefaults: !preserveExistingCustomizations,
+  };
+};
+
+export async function applyReservationsTemplate({
+  businessId,
+  templateKey,
+  preserveExistingCustomizations = false,
+}) {
+  const supabase = getSupabase();
+  const { data: existing = [], error: loadError } = await supabase
+    .from("booking_custom_fields")
+    .select("id,field_label,system_key,is_active")
+    .eq("business_id", businessId);
+
+  if (loadError) throw new Error("Could not load Customer Form fields for template provisioning.");
+
+  const {
+    template,
+    missing,
+    desiredExistingIds,
+    staleTemplateIds,
+    applyServiceDefaults,
+  } = buildReservationsTemplateFieldPlan({
+    businessId,
+    existing,
+    templateKey,
+    preserveExistingCustomizations,
+  });
+
   if (missing.length) {
     const { error } = await supabase.from("booking_custom_fields").insert(missing);
     if (error) throw new Error("Could not apply Customer Form template.");
   }
 
-  const desiredExistingIds = existing
-    .filter((field) => desiredLabels.has(String(field.field_label || "").trim().toLowerCase()))
-    .map((field) => field.id);
   if (desiredExistingIds.length) {
     const { error } = await supabase
       .from("booking_custom_fields")
@@ -61,9 +101,6 @@ export async function applyReservationsTemplate({ businessId, templateKey }) {
     if (error) throw new Error("Could not activate Customer Form template fields.");
   }
 
-  const staleTemplateIds = existing
-    .filter((field) => !field.system_key && !desiredLabels.has(String(field.field_label || "").trim().toLowerCase()))
-    .map((field) => field.id);
   if (staleTemplateIds.length) {
     const { error } = await supabase
       .from("booking_custom_fields")
@@ -73,10 +110,9 @@ export async function applyReservationsTemplate({ businessId, templateKey }) {
     if (error) throw new Error("Could not retire stale Customer Form template fields.");
   }
 
-  const serviceDefaults = await applyReservationTemplateServiceDefaults({
-    businessId,
-    templateKey,
-  });
+  const serviceDefaults = applyServiceDefaults
+    ? await applyReservationTemplateServiceDefaults({ businessId, templateKey })
+    : { service: null };
 
   return {
     templateKey,
@@ -87,3 +123,4 @@ export async function applyReservationsTemplate({ businessId, templateKey }) {
     service: serviceDefaults.service,
   };
 }
+
