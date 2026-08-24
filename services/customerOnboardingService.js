@@ -322,6 +322,19 @@ export async function onboardCustomerEnvironment({
       companyChanged = true;
     }
 
+    const requestedReservationTemplate = companyInput.reservationTemplate || "general";
+    if (company.reservationTemplate !== requestedReservationTemplate) {
+      company.reservationTemplate = requestedReservationTemplate;
+      companyChanged = true;
+    }
+
+    const requestedReservationBusinessSlug =
+      companyInput.reservationBusinessSlug || companySlug;
+    if (company.reservationBusinessSlug !== requestedReservationBusinessSlug) {
+      company.reservationBusinessSlug = requestedReservationBusinessSlug;
+      companyChanged = true;
+    }
+
     if (companyChanged) {
       await company.save();
     }
