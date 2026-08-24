@@ -16,9 +16,6 @@ export async function applyReservationsTemplate({ businessId, templateKey }) {
 
   if (loadError) throw new Error("Could not load Customer Form fields for template provisioning.");
 
-  const existingLabels = new Set(
-    existing.map((field) => String(field.field_label || "").trim().toLowerCase()),
-  );
   const systemFields = [
     { field_label: "Full name", field_type: "text", is_required: true, is_locked: true, system_key: "customer_name" },
     { field_label: "Phone", field_type: "text", is_required: true, is_locked: true, system_key: "customer_phone" },
@@ -33,8 +30,13 @@ export async function applyReservationsTemplate({ businessId, templateKey }) {
     system_key: null,
   }));
   const defaults = [...systemFields, ...templateFields];
+  const desiredLabels = new Set(defaults.map((field) => field.field_label.toLowerCase()));
+  const existingByLabel = new Map(
+    existing.map((field) => [String(field.field_label || "").trim().toLowerCase(), field]),
+  );
+
   const missing = defaults
-    .filter((field) => !existingLabels.has(field.field_label.toLowerCase()))
+    .filter((field) => !existingByLabel.has(field.field_label.toLowerCase()))
     .map((field, index) => ({
       business_id: businessId,
       ...field,
@@ -47,6 +49,30 @@ export async function applyReservationsTemplate({ businessId, templateKey }) {
     if (error) throw new Error("Could not apply Customer Form template.");
   }
 
+  const desiredExistingIds = existing
+    .filter((field) => desiredLabels.has(String(field.field_label || "").trim().toLowerCase()))
+    .map((field) => field.id);
+  if (desiredExistingIds.length) {
+    const { error } = await supabase
+      .from("booking_custom_fields")
+      .update({ is_active: true })
+      .in("id", desiredExistingIds)
+      .eq("business_id", businessId);
+    if (error) throw new Error("Could not activate Customer Form template fields.");
+  }
+
+  const staleTemplateIds = existing
+    .filter((field) => !field.system_key && !desiredLabels.has(String(field.field_label || "").trim().toLowerCase()))
+    .map((field) => field.id);
+  if (staleTemplateIds.length) {
+    const { error } = await supabase
+      .from("booking_custom_fields")
+      .update({ is_active: false })
+      .in("id", staleTemplateIds)
+      .eq("business_id", businessId);
+    if (error) throw new Error("Could not retire stale Customer Form template fields.");
+  }
+
   const serviceDefaults = await applyReservationTemplateServiceDefaults({
     businessId,
     templateKey,
@@ -57,6 +83,7 @@ export async function applyReservationsTemplate({ businessId, templateKey }) {
     businessType: template.businessType,
     addedFields: missing.length,
     preservedFields: existing.length,
+    retiredFields: staleTemplateIds.length,
     service: serviceDefaults.service,
   };
 }
