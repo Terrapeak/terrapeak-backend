@@ -449,38 +449,49 @@ const isReservationCancelRequest =
   (
     lowerMsg.includes("reservation") ||
     lowerMsg.includes("table") ||
+    lowerMsg.includes("appointment") ||
     lowerMsg.includes("booking")
   );
 
 const isAppointmentCancelRequest =
   lowerMsg.includes("cancel") &&
   (
-    lowerMsg.includes("appointment") ||
     lowerMsg.includes("meeting") ||
     lowerMsg.includes("callback") ||
-    lowerMsg.includes("booking") ||
-    lowerMsg.includes("scheduled")
+    lowerMsg.includes("video call") ||
+    lowerMsg.includes("video meeting") ||
+    lowerMsg.includes("online meeting") ||
+    lowerMsg.includes("google meet") ||
+    lowerMsg.includes("zoom")
   );
 
 const isAppointmentRescheduleRequest =
-  lowerMsg.includes("reschedule appointment") ||
-  lowerMsg.includes("reschedule my appointment") ||
   lowerMsg.includes("reschedule meeting") ||
   lowerMsg.includes("reschedule my meeting") ||
   lowerMsg.includes("reschedule callback") ||
-  lowerMsg.includes("change my appointment") ||
-  lowerMsg.includes("change appointment") ||
-  lowerMsg.includes("move my appointment") ||
-  lowerMsg.includes("move appointment");
+  lowerMsg.includes("reschedule video call") ||
+  lowerMsg.includes("reschedule video meeting") ||
+  lowerMsg.includes("reschedule online meeting") ||
+  lowerMsg.includes("change my callback") ||
+  lowerMsg.includes("change callback") ||
+  lowerMsg.includes("move my callback") ||
+  lowerMsg.includes("move callback") ||
+  lowerMsg.includes("move meeting");
 
 const isReservationRescheduleRequest =
   (isBareRescheduleMessage(lowerMsg) && Boolean(session.lastReservationReference)) ||
   lowerMsg.includes("reschedule reservation") ||
   lowerMsg.includes("reschedule my reservation") ||
+  lowerMsg.includes("reschedule appointment") ||
+  lowerMsg.includes("reschedule my appointment") ||
   lowerMsg.includes("change reservation") ||
   lowerMsg.includes("change my reservation") ||
+  lowerMsg.includes("change appointment") ||
+  lowerMsg.includes("change my appointment") ||
   lowerMsg.includes("move reservation") ||
   lowerMsg.includes("move my reservation") ||
+  lowerMsg.includes("move appointment") ||
+  lowerMsg.includes("move my appointment") ||
   lowerMsg.includes("change table booking") ||
   lowerMsg.includes("reschedule table");
 
@@ -1025,7 +1036,22 @@ Which reservation would you like to cancel? Please reply with the reservation nu
 }
 
 if (!botReply && session.cancelTypeStep === "chooseCancelType") {
-  if (lowerMsg === "1" || lowerMsg.includes("appointment")) {
+  const choseCallbackMeeting =
+    lowerMsg === "1" ||
+    lowerMsg.includes("callback") ||
+    lowerMsg.includes("meeting") ||
+    lowerMsg.includes("video") ||
+    lowerMsg.includes("google meet") ||
+    lowerMsg.includes("zoom");
+  const choseServiceBooking =
+    lowerMsg === "2" ||
+    lowerMsg.includes("reservation") ||
+    lowerMsg.includes("booking") ||
+    lowerMsg.includes("service") ||
+    lowerMsg.includes("class") ||
+    lowerMsg.includes("appointment");
+
+  if (choseCallbackMeeting) {
   session.cancelTypeStep = null;
   session.cancelAppointmentLookupStep = "askPhone";
 
@@ -1033,7 +1059,7 @@ if (!botReply && session.cancelTypeStep === "chooseCancelType") {
     `Okay. Please provide the phone number used for the ${appointmentDisplayName}.`;
 }
 
-  else if (lowerMsg === "2" || lowerMsg.includes("reservation")) {
+  else if (choseServiceBooking) {
     session.cancelTypeStep = null;
 
     session.cancelReservationStep = "askLookup";
@@ -2564,6 +2590,7 @@ function detectBookingIntent(lowerMsg) {
   const reservationKeywords = [
     "reservation",
     "reserve",
+    "appointment",
     "book a table",
     "table",
     "restaurant",
@@ -2606,8 +2633,8 @@ function detectBookingIntent(lowerMsg) {
     lowerMsg.includes(word)
   );
 
-  if (hasReservationIntent) return "reservation";
   if (hasRemoteMeetingIntent) return "appointment";
+  if (hasReservationIntent) return "reservation";
   if (hasGeneralBookingIntent) return "unknown";
 
   return null;

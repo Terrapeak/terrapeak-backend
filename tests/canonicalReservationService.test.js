@@ -93,6 +93,9 @@ test("chatbot sends new Reservations bookings and reschedules to safe handoff pa
   assert.match(source, /Do not create or confirm a new Reservations booking/);
   assert.match(source, /type: "reschedule"/);
   assert.match(source, /Your current booking remains unchanged/);
+  assert.match(source, /"appointment",\s*\n\s*"book a table"/);
+  assert.doesNotMatch(source, /lowerMsg\.includes\("reschedule appointment"\)\s*\|\|\s*\n\s*lowerMsg\.includes\("reschedule my appointment"\)\s*\|\|\s*\n\s*lowerMsg\.includes\("reschedule meeting"\)/);
+  assert.doesNotMatch(source, /lowerMsg\.includes\("appointment"\)\s*\|\|\s*\n\s*lowerMsg\.includes\("meeting"\)/);
   assert.doesNotMatch(source, /createReservation\(/);
   assert.doesNotMatch(source, /updateReservationById\(/);
   assert.match(source, /cancelReservationById\(/);
