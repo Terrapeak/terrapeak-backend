@@ -155,6 +155,294 @@ export async function generateReservationReference({
   return `BK-${randomUUID().replaceAll("-", "").slice(0, 10).toUpperCase()}`;
 }
 
+const DAY_NAMES = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
+const formatReservationMoney = (amount, currency = "PHP") => {
+  if (amount === undefined || amount === null || amount === "") return null;
+  const numericAmount = Number(amount);
+  if (!Number.isFinite(numericAmount)) return null;
+
+  try {
+    return new Intl.NumberFormat("en", {
+      style: "currency",
+      currency: currency || "PHP",
+      maximumFractionDigits: numericAmount % 1 === 0 ? 0 : 2,
+    }).format(numericAmount);
+  } catch {
+    return `${currency || "PHP"} ${numericAmount}`;
+  }
+};
+
+const formatReservationDateTime = (isoValue, timezone = "UTC") => {
+  if (!isoValue) return null;
+  const dateTime = DateTime.fromISO(isoValue, { setZone: true }).setZone(
+    timezone || "UTC",
+  );
+  if (!dateTime.isValid) return null;
+  return dateTime.toFormat("ccc, LLL d, h:mm a");
+};
+
+const compactReservationText = (value, maxLength = 220) => {
+  if (!value) return null;
+  const text = String(value).replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+};
+
+const groupReservationRows = (rows, key) =>
+  rows.reduce((groups, row) => {
+    const groupKey = row?.[key];
+    if (!groupKey) return groups;
+    if (!groups.has(groupKey)) groups.set(groupKey, []);
+    groups.get(groupKey).push(row);
+    return groups;
+  }, new Map());
+
+export async function getReservationConciergeContext({
+  businessId,
+  businessSlug,
+  bookingUrl,
+} = {}) {
+  const numericBusinessId = Number(businessId);
+  if (!Number.isFinite(numericBusinessId) || numericBusinessId <= 0) return "";
+
+  try {
+    const nowIso = new Date().toISOString();
+    const [
+      servicesResult,
+      staffResult,
+      enrollmentsResult,
+      sessionsResult,
+      patternsResult,
+    ] = await Promise.all([
+      supabase
+        .from("services")
+        .select(
+          "id, name, slug, description, booking_type, duration_minutes, capacity, price, currency, price_session_count, package_validity_days, subject, enrollment_mode, scheduling_mode, is_active, is_published",
+        )
+        .eq("business_id", numericBusinessId)
+        .eq("is_active", true)
+        .eq("is_published", true)
+        .order("name")
+        .limit(30),
+      supabase
+        .from("staff_members")
+        .select("id, display_name, timezone, bio, is_published")
+        .eq("business_id", numericBusinessId)
+        .eq("is_active", true)
+        .eq("is_published", true)
+        .order("display_name")
+        .limit(30),
+      supabase
+        .from("class_enrollments")
+        .select("service_id, quantity, status")
+        .eq("business_id", numericBusinessId)
+        .in("status", ["pending", "confirmed"])
+        .limit(500),
+      supabase
+        .from("scheduled_sessions")
+        .select(
+          "id, service_id, staff_id, starts_at, ends_at, capacity, status, is_published",
+        )
+        .eq("business_id", numericBusinessId)
+        .eq("is_published", true)
+        .gte("ends_at", nowIso)
+        .order("starts_at")
+        .limit(80),
+      supabase
+        .from("service_schedule_patterns")
+        .select("id, service_id, staff_id, day_of_week, starts_at, ends_at")
+        .eq("business_id", numericBusinessId)
+        .eq("is_active", true)
+        .order("day_of_week")
+        .limit(120),
+    ]);
+
+    const queryErrors = [
+      servicesResult.error,
+      staffResult.error,
+      enrollmentsResult.error,
+      sessionsResult.error,
+      patternsResult.error,
+    ].filter(Boolean);
+
+    if (queryErrors.length) {
+      console.error("Reservation concierge context query error:", queryErrors[0]);
+      return "";
+    }
+
+    const services = servicesResult.data || [];
+    if (!services.length) return "";
+
+    const staff = staffResult.data || [];
+    const serviceIds = services.map((service) => service.id);
+    const staffIds = staff.map((person) => person.id);
+
+    const [assignmentsResult, subjectsResult] = await Promise.all([
+      serviceIds.length && staffIds.length
+        ? supabase
+            .from("staff_services")
+            .select(
+              "staff_id, service_id, custom_duration_minutes, custom_price, is_active",
+            )
+            .eq("is_active", true)
+            .in("service_id", serviceIds)
+            .in("staff_id", staffIds)
+            .limit(200)
+        : Promise.resolve({ data: [], error: null }),
+      staffIds.length
+        ? supabase
+            .from("staff_subjects")
+            .select("staff_id, subject")
+            .eq("business_id", numericBusinessId)
+            .in("staff_id", staffIds)
+            .limit(200)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+
+    if (assignmentsResult.error || subjectsResult.error) {
+      console.error("Reservation concierge context staff query error:", {
+        assignmentsError: assignmentsResult.error,
+        subjectsError: subjectsResult.error,
+      });
+      return "";
+    }
+
+    const staffById = new Map(staff.map((person) => [person.id, person]));
+    const assignmentsByService = groupReservationRows(
+      assignmentsResult.data || [],
+      "service_id",
+    );
+    const subjectsByStaff = groupReservationRows(
+      subjectsResult.data || [],
+      "staff_id",
+    );
+    const enrollmentsByService = groupReservationRows(
+      enrollmentsResult.data || [],
+      "service_id",
+    );
+    const sessionsByService = groupReservationRows(
+      sessionsResult.data || [],
+      "service_id",
+    );
+    const patternsByService = groupReservationRows(
+      patternsResult.data || [],
+      "service_id",
+    );
+
+    const serviceLines = services.slice(0, 12).map((service, index) => {
+      const price = formatReservationMoney(service.price, service.currency);
+      const priceParts = [];
+      if (price) priceParts.push(price);
+      if (service.price_session_count) {
+        priceParts.push(`for ${service.price_session_count} session(s)`);
+      }
+      if (service.package_validity_days) {
+        priceParts.push(`valid ${service.package_validity_days} day(s)`);
+      }
+
+      const enrolled = (enrollmentsByService.get(service.id) || []).reduce(
+        (total, item) => total + Number(item.quantity || 1),
+        0,
+      );
+      const capacity = Number(service.capacity || 0);
+      const places =
+        capacity > 0 ? Math.max(capacity - enrolled, 0) : null;
+
+      const servicePatterns = (patternsByService.get(service.id) || [])
+        .slice(0, 8)
+        .map((pattern) => {
+          const teacher = staffById.get(pattern.staff_id)?.display_name;
+          const dayName =
+            DAY_NAMES[Number(pattern.day_of_week)] || `Day ${pattern.day_of_week}`;
+          return `${dayName} ${String(pattern.starts_at || "").slice(0, 5)}-${String(
+            pattern.ends_at || "",
+          ).slice(0, 5)}${teacher ? ` with ${teacher}` : ""}`;
+        });
+
+      const serviceSessions = (sessionsByService.get(service.id) || [])
+        .slice(0, 5)
+        .map((session) => {
+          const teacher = staffById.get(session.staff_id);
+          const label = formatReservationDateTime(
+            session.starts_at,
+            teacher?.timezone,
+          );
+          return label
+            ? `${label}${teacher?.display_name ? ` with ${teacher.display_name}` : ""}`
+            : null;
+        })
+        .filter(Boolean);
+
+      const assignedStaff = (assignmentsByService.get(service.id) || [])
+        .slice(0, 6)
+        .map((assignment) => {
+          const person = staffById.get(assignment.staff_id);
+          if (!person) return null;
+          const subjects = (subjectsByStaff.get(person.id) || [])
+            .map((item) => item.subject)
+            .filter(Boolean)
+            .slice(0, 4);
+          const bio = compactReservationText(person.bio, 120);
+          const details = [
+            subjects.length ? `subjects: ${subjects.join(", ")}` : null,
+            bio ? `background: ${bio}` : null,
+          ].filter(Boolean);
+          return `${person.display_name}${
+            details.length ? ` (${details.join("; ")})` : ""
+          }`;
+        })
+        .filter(Boolean);
+
+      return [
+        `${index + 1}. ${service.name}`,
+        service.booking_type ? `type: ${service.booking_type}` : null,
+        service.subject ? `subject: ${service.subject}` : null,
+        service.duration_minutes
+          ? `duration: ${service.duration_minutes} minutes`
+          : null,
+        priceParts.length ? `price: ${priceParts.join(" ")}` : null,
+        capacity > 0
+          ? `capacity: ${capacity}; active enrolments/bookings: ${enrolled}; approximate places left: ${places}`
+          : null,
+        compactReservationText(service.description)
+          ? `description: ${compactReservationText(service.description)}`
+          : null,
+        servicePatterns.length
+          ? `weekly timetable: ${servicePatterns.join("; ")}`
+          : "weekly timetable: not published in the service catalogue context",
+        serviceSessions.length
+          ? `upcoming published sessions: ${serviceSessions.join("; ")}`
+          : "upcoming published sessions: none listed in the service catalogue context",
+        assignedStaff.length ? `staff: ${assignedStaff.join("; ")}` : null,
+      ]
+        .filter(Boolean)
+        .join("; ");
+    });
+
+    return `
+--- LIVE RESERVATIONS SERVICE CATALOGUE ---
+This is read-only Reservations data for the current business${
+      businessSlug ? ` (${businessSlug})` : ""
+    }. Use it when customers ask about services, courses, classes, programmes, prices, dates, times, capacity, staff, teachers, or enrolment advice. Do not mention draft, unpublished, archived, or internal services because they are intentionally excluded here. Final availability and new booking creation still happen only through the Reservations form${
+      bookingUrl ? `: ${bookingUrl}` : ""
+    }.
+${serviceLines.join("\n")}
+`;
+  } catch (error) {
+    console.error("Reservation concierge context error:", error);
+    return "";
+  }
+}
+
 const getCanonicalRestaurantContext = async (businessId) => {
   const [
     { data: business, error: businessError },

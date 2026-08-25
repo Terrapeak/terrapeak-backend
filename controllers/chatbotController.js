@@ -19,6 +19,7 @@ import {
   findActiveReservationsByReference,
   findActiveReservationsByPhone,
   cancelReservationById,
+  getReservationConciergeContext,
 } from "../utils/reservationService.js";
 import {
   extractReservationReference,
@@ -2099,11 +2100,21 @@ See you soon. 😊
 
   if (!botReply) {
     const trimmedHistory = formatGeminiHistory(chatHistory);
+    const reservationConciergeContext = reservationEnabled
+      ? await getReservationConciergeContext({
+          businessId: reservationBusinessId,
+          businessSlug:
+            reservationCompany?.reservationBusinessSlug ||
+            settings.reservationBusinessSlug,
+          bookingUrl: reservationBookingUrl,
+        })
+      : "";
     const reservationConciergeInstruction = reservationEnabled
       ? `
 --- RESERVATIONS CONCIERGE RULES ---
 Reservations is installed for this customer.
-You may answer questions about services, programmes, dates, time slots, teachers, teacher background, languages, specialties, prices, duration, location, policies, prerequisites, and general enrolment when that information is available in the provided business context.
+Use the live Reservations service catalogue above as the primary source for services, programmes, classes, dates, time slots, teachers, teacher background, languages, specialties, prices, duration, capacity, policies, prerequisites, and general enrolment advice.
+If the live catalogue has no exact day, time, capacity, or staff detail for a question, say that clearly and offer the Reservations form or a callback instead of guessing.
 Do not create or confirm a new Reservations booking in chat. New bookings must go through the Reservations form.
 You may help customers look up or cancel existing Reservations bookings when the existing booking verification flow is satisfied. Reschedule requests must be collected and sent to staff for confirmation; do not directly update a booking in chat.
 When the customer is ready to create a new booking, send them ${reservationBookingUrl ? `this Reservations form link:\n${reservationBookingUrl}` : "to the Reservations form in the customer dashboard"}.
@@ -2122,6 +2133,7 @@ ${settings.systemInstructionFileText2?.setFile ? settings.systemInstructionFileT
 
 --- INSTRUCTION ---
 Use the above file contexts (File Context 1 and File Context 2) as supporting information while generating responses. If both are provided, consider and integrate insights from both contexts appropriately.
+${reservationConciergeContext}
 ${reservationConciergeInstruction}
 `;
 

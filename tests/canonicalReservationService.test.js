@@ -84,7 +84,17 @@ test("chatbot sends new Reservations bookings and reschedules to safe handoff pa
     new URL("../controllers/chatbotController.js", import.meta.url),
     "utf8",
   );
+  const serviceSource = readFileSync(
+    new URL("../utils/reservationService.js", import.meta.url),
+    "utf8",
+  );
 
+  assert.match(source, /getReservationConciergeContext/);
+  assert.match(serviceSource, /LIVE RESERVATIONS SERVICE CATALOGUE/);
+  assert.match(serviceSource, /\.from\(["']services["']\)/);
+  assert.match(serviceSource, /\.from\(["']service_schedule_patterns["']\)/);
+  assert.match(serviceSource, /\.eq\(["']is_published["'], true\)/);
+  assert.match(source, /live Reservations service catalogue above/);
   assert.match(source, /buildReservationBookingUrl/);
   assert.match(source, /reservationChoicesReply/);
   assert.match(source, /request callback/);
