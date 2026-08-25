@@ -79,6 +79,25 @@ test("chatbot booking tools fail closed on the canonical Company mapping", () =>
   );
 });
 
+test("chatbot sends new Reservations bookings and reschedules to safe handoff paths", () => {
+  const source = readFileSync(
+    new URL("../controllers/chatbotController.js", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /buildReservationBookingUrl/);
+  assert.match(source, /reservationChoicesReply/);
+  assert.match(source, /request callback/);
+  assert.match(source, /buildReservationCallbackSummary/);
+  assert.match(source, /ReservationStaffRequest/);
+  assert.match(source, /Do not create or confirm a new Reservations booking/);
+  assert.match(source, /type: "reschedule"/);
+  assert.match(source, /Your current booking remains unchanged/);
+  assert.doesNotMatch(source, /createReservation\(/);
+  assert.doesNotMatch(source, /updateReservationById\(/);
+  assert.match(source, /cancelReservationById\(/);
+});
+
 test("Dashboard access fails closed before canonical readiness", async () => {
   assert.deepEqual(await getCanonicalReservationsReadiness(null), {
     ready: false,

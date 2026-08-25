@@ -74,6 +74,16 @@ const sessionSchema = new mongoose.Schema(
     lastReservationReference: String,
     lastReservationPhone: String,
 
+    reservationCallbackStep: String,
+    reservationCallbackName: String,
+    reservationCallbackContact: String,
+    reservationCallbackPreferredTime: String,
+    reservationCallbackQuestion: String,
+    reservationCallbackServiceOrTeacher: String,
+    reservationCallbackSummary: String,
+    reservationCallbackBookingUrl: String,
+    reservationCallbackRequestedAt: Date,
+
     reservationRescheduleStep: String,
     rescheduleReservationId: String,
     rescheduleReservationOptions: {
@@ -84,6 +94,10 @@ const sessionSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: {},
     },
+    rescheduleReservationRequest: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
 
     cancelReservationStep: String,
     cancelReservationId: String,
@@ -91,6 +105,19 @@ const sessionSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    cancelReservationData: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+    cancelReservationOptionDetails: {
+      type: [mongoose.Schema.Types.Mixed],
+      default: [],
+    },
+    cancelReservationRequiresStaffApproval: {
+      type: Boolean,
+      default: false,
+    },
+    cancelReservationPolicyWarning: String,
 
     appointmentStep: String,
     appointmentDate: String,
