@@ -7,6 +7,7 @@ import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import App from "../models/app.js";
 import ChatbotSettings from "../models/chatbotSettings.js";
 import Session from "../models/sessionModel.js";
+import ReservationStaffRequest from "../models/reservationStaffRequest.js";
 import { canEnableCompanyApp } from "../services/companyAppAccessService.js";
 import installApps, { hasAppInstaller } from "../installers/installApps.js";
 
@@ -19,6 +20,13 @@ const APP_ACTIVITY_ACTION_LABELS = {
   disabled: "disabled",
   updated: "updated",
 };
+
+const RESERVATION_STAFF_REQUEST_STATUSES = new Set([
+  "pending",
+  "reviewing",
+  "completed",
+  "dismissed",
+]);
 
 const buildCompanyAppActivity = ({ eventType, app, actor, metadata = {} }) => {
   const appName = app.name || app.slug;
@@ -427,6 +435,14 @@ const billingSummary =
   companyId: company._id,
   }).lean();
 
+  const reservationStaffRequests = await ReservationStaffRequest.find({
+    companyId: company._id,
+    status: { $in: ["pending", "reviewing"] },
+  })
+    .sort({ createdAt: -1 })
+    .limit(25)
+    .lean();
+
 
 const aiUsageWithBilling = {
   ...aiUsage,
@@ -454,11 +470,55 @@ const healthSummary = getCompanyHealthSummary({
     apps: installations,
     availableApps,
     activityEvents: getCompanyActivityEvents(company),
+    reservationStaffRequests,
     billingSummary,
     aiUsage: aiUsageWithBilling,
 healthSummary,
   });
 });
+
+export const updatePlatformReservationStaffRequest = asyncHandler(
+  async (req, res) => {
+    const { companyId, requestId } = req.params;
+    const { status } = req.body;
+
+    if (!RESERVATION_STAFF_REQUEST_STATUSES.has(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Select a valid request status.",
+      });
+    }
+
+    const request = await ReservationStaffRequest.findOneAndUpdate(
+      { _id: requestId, companyId },
+      { status },
+      { new: true },
+    );
+
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: "Reservation staff request not found.",
+      });
+    }
+
+    await appendCompanyActivity({
+      companyId,
+      event: buildCompanyAppActivity({
+        eventType: "updated",
+        app: { slug: "reservations", name: "Reservations" },
+        actor: req.platformUser,
+        metadata: {
+          requestId: request._id,
+          requestType: request.type,
+          requestStatus: request.status,
+        },
+      }),
+    });
+
+    res.json({ success: true, request });
+  },
+);
 
 export const toggleCompanyApp = asyncHandler(async (req, res) => {
   const { companyId, appId } = req.params;

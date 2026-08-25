@@ -6,6 +6,7 @@ import isPlatformAdmin from "../middleware/isPlatformAdmin.js";
 import {
   searchPlatformCompanies,
   getPlatformCompanyDetail,
+  updatePlatformReservationStaffRequest,
   toggleCompanyApp,
   getPlatformApps,
   updatePlatformApp,
@@ -62,6 +63,7 @@ router.get("/companies/:companyId/users", isPlatformAuthenticated, isPlatformAdm
 router.get("/companies/:companyId/effective-billing", isPlatformAuthenticated, isPlatformAdmin, getPlatformCompanyEffectiveBilling);
 router.patch("/companies/:companyId", isPlatformAuthenticated, isPlatformAdmin, updatePlatformCompany);
 router.patch("/companies/:companyId/commercial", isPlatformAuthenticated, isPlatformAdmin, updatePlatformCommercialSettings);
+router.patch("/companies/:companyId/reservation-requests/:requestId", isPlatformAuthenticated, isPlatformAdmin, updatePlatformReservationStaffRequest);
 router.get("/companies/:companyId/ai-config", isPlatformAuthenticated, isPlatformAdmin, getPlatformAIConfig);
 router.patch("/companies/:companyId/ai-config", isPlatformAuthenticated, isPlatformAdmin, updatePlatformAIConfig);
 router.post("/companies/:companyId/ai-config/test", isPlatformAuthenticated, isPlatformAdmin, testPlatformAIConfig);

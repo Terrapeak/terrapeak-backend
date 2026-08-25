@@ -18,6 +18,12 @@ const CompanySchema = new mongoose.Schema(
     website: { type: String, default: "", trim: true },
     email: { type: String, default: "", lowercase: true, trim: true },
     phone: { type: String, default: "", trim: true },
+    reservationCancellationPolicyHours: { type: Number, default: 0 },
+    reservationCancellationPolicyText: { type: String, default: "", trim: true },
+    reservationCancellationRequiresStaffApprovalWithinWindow: {
+      type: Boolean,
+      default: false,
+    },
     installedApps: { type: [String], default: ["ai-assistant"] },
     plan: {
       type: String,

@@ -18,6 +18,9 @@ const COMPANY_FIELDS = [
   "referencePrefix",
   "reservationBusinessSlug",
   "reservationTemplate",
+  "reservationCancellationPolicyHours",
+  "reservationCancellationPolicyText",
+  "reservationCancellationRequiresStaffApprovalWithinWindow",
   "plan",
   "maxUsers",
   "isActive",
@@ -131,6 +134,33 @@ export const updatePlatformCompany = asyncHandler(async (req, res) => {
     }
 
     updates.maxUsers = maxUsers;
+  }
+
+  if (updates.reservationCancellationPolicyHours !== undefined) {
+    const policyHours = Number(updates.reservationCancellationPolicyHours);
+    if (!Number.isFinite(policyHours) || policyHours < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Cancellation policy hours must be zero or greater.",
+      });
+    }
+
+    updates.reservationCancellationPolicyHours = policyHours;
+  }
+
+  if (updates.reservationCancellationPolicyText !== undefined) {
+    updates.reservationCancellationPolicyText = String(
+      updates.reservationCancellationPolicyText || "",
+    ).trim();
+  }
+
+  if (
+    updates.reservationCancellationRequiresStaffApprovalWithinWindow !==
+    undefined
+  ) {
+    updates.reservationCancellationRequiresStaffApprovalWithinWindow = Boolean(
+      updates.reservationCancellationRequiresStaffApprovalWithinWindow,
+    );
   }
 
   let templateApplication = null;
