@@ -16,9 +16,15 @@ const DigitalCloneVisualAssetSchema = new mongoose.Schema(
       default: "reference",
       index: true,
     },
+    primaryScopeKey: {
+      type: String,
+      default: undefined,
+      select: false,
+      maxlength: 64,
+    },
     lookName: { type: String, default: "", trim: true, maxlength: 120 },
     notes: { type: String, default: "", trim: true, maxlength: 1000 },
-    approvedForCloneUse: { type: Boolean, default: true, index: true },
+    approvedForCloneUse: { type: Boolean, default: false, index: true },
     status: {
       type: String,
       enum: ["active", "revoked", "deleted"],
@@ -32,5 +38,15 @@ const DigitalCloneVisualAssetSchema = new mongoose.Schema(
 );
 
 DigitalCloneVisualAssetSchema.index({ companyId: 1, userId: 1, createdAt: -1 });
+DigitalCloneVisualAssetSchema.index({
+  companyId: 1,
+  userId: 1,
+  status: 1,
+  approvedForCloneUse: 1,
+});
+DigitalCloneVisualAssetSchema.index(
+  { primaryScopeKey: 1 },
+  { unique: true, sparse: true, name: "unique_active_primary_per_clone" },
+);
 
 export default mongoose.model("DigitalCloneVisualAsset", DigitalCloneVisualAssetSchema);

@@ -62,6 +62,7 @@ const mapGeminiError = (status, payload, model) => {
 
 export const generateWithGemini = async ({
   prompt,
+  systemInstruction,
   temperature = 0.7,
   maxOutputTokens = 4096,
   apiKey,
@@ -89,6 +90,9 @@ export const generateWithGemini = async ({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        ...(systemInstruction
+          ? { systemInstruction: { parts: [{ text: systemInstruction }] } }
+          : {}),
         contents: [
           {
             role: "user",
@@ -116,6 +120,7 @@ export const generateWithGemini = async ({
       ) {
         return generateWithGemini({
           prompt,
+          systemInstruction,
           temperature,
           maxOutputTokens,
           apiKey,
