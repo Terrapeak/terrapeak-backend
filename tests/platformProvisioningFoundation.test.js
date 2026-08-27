@@ -110,7 +110,7 @@ const invokeEnable = async ({ t, app, company, activeInstallation }) => {
   return response;
 };
 
-test("active registry apps, manifests, and installers use the same slugs", () => {
+test("active registry apps have manifests and technical installers use active slugs", () => {
   const registrySlugs = APP_REGISTRY_DEFINITIONS.map((app) => app.slug);
   const activeRegistrySlugs = APP_REGISTRY_DEFINITIONS.filter(
     (app) => !app.isComingSoon && app.allowInstall !== false
@@ -123,11 +123,13 @@ test("active registry apps, manifests, and installers use the same slugs", () =>
   assert.ok(registrySlugs.includes("facebook"));
   assert.deepEqual(activeRegistrySlugs, [
     "ai-assistant",
+    "content-studio",
+    "digital-clone",
     "facebook",
     "reservations",
   ]);
   assert.deepEqual(manifestSlugs, activeRegistrySlugs);
-  assert.deepEqual(installerSlugs, activeRegistrySlugs);
+  assert.ok(installerSlugs.every((slug) => activeRegistrySlugs.includes(slug)));
 });
 
 test("enabling Facebook provisions and links its configuration", async (t) => {

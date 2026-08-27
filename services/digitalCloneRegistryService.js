@@ -10,22 +10,20 @@ const DIGITAL_CLONE_APP = {
   standalone: true,
   requiresAIAssistant: true,
   launchUrl: "/dashboard/digital-clone",
-  isVisible: false,
+  isVisible: true,
   isComingSoon: false,
-  allowInstall: false,
+  allowInstall: true,
   minimumPlan: "starter",
   dependencies: ["ai-assistant"],
   sortOrder: 4,
 };
 
 export default async function ensureDigitalCloneRegistry() {
-  const existingApp = await App.findOne({ slug: DIGITAL_CLONE_APP.slug }).select("_id");
-
-  if (!existingApp) {
-    await App.create(DIGITAL_CLONE_APP);
-    console.log("Digital Clone registry created");
-    return;
-  }
+  await App.findOneAndUpdate(
+    { slug: DIGITAL_CLONE_APP.slug },
+    { $set: DIGITAL_CLONE_APP },
+    { upsert: true, new: true, runValidators: true },
+  );
 
   console.log("Digital Clone registry ready");
 }
