@@ -4,11 +4,19 @@ import resolveCompanyContext from "../middleware/resolveCompanyContext.js";
 import requireCompanyWriteAccess from "../middleware/requireCompanyWriteAccess.js";
 import requireCompanyApp from "../middleware/requireCompanyApp.js";
 import requireDigitalCloneMediaConsent from "../middleware/requireDigitalCloneMediaConsent.js";
+import requireDigitalCloneVoiceConsent from "../middleware/requireDigitalCloneVoiceConsent.js";
 import { digitalCloneGenerationRateLimit } from "../middleware/digitalCloneGenerationRateLimit.js";
 import {
   digitalCloneImageRateLimit,
   digitalCloneImageUpload,
 } from "../middleware/digitalCloneImageUpload.js";
+import { digitalCloneVoiceUpload } from "../middleware/digitalCloneVoiceUpload.js";
+import {
+  digitalCloneVoiceCreationRateLimit,
+  digitalCloneVoicePreviewRateLimit,
+  digitalCloneVoiceUploadConcurrencyLimit,
+  digitalCloneVoiceUploadRateLimit,
+} from "../middleware/digitalCloneVoiceRateLimit.js";
 import {
   acceptDigitalCloneConsent,
   approveDigitalCloneGeneration,
@@ -30,6 +38,20 @@ import {
   updateDigitalCloneGeneration,
   uploadDigitalCloneIdentityImages,
 } from "../controllers/digitalCloneController.js";
+import {
+  acceptDigitalCloneVoiceConsent,
+  approveDigitalCloneVoice,
+  createDigitalCloneVoice,
+  deleteDigitalCloneVoiceSample,
+  deliverDigitalCloneVoicePreview,
+  deliverDigitalCloneVoiceSample,
+  generateDigitalCloneVoicePreview,
+  getDigitalCloneVoice,
+  listDigitalCloneVoiceSamples,
+  revokeDigitalCloneVoice,
+  updateDigitalCloneVoiceSettings,
+  uploadDigitalCloneVoiceSamples,
+} from "../controllers/digitalCloneVoiceController.js";
 
 const router = express.Router();
 
@@ -47,6 +69,48 @@ router.get("/brain", getDigitalBrainProfile);
 router.put("/brain", saveDigitalBrainProfile);
 router.patch("/brain", saveDigitalBrainProfile);
 router.get("/brain/readiness", getDigitalBrainReadiness);
+
+router.get("/voice", getDigitalCloneVoice);
+router.post("/voice/consent", acceptDigitalCloneVoiceConsent);
+router.get("/voice/samples", requireDigitalCloneVoiceConsent, listDigitalCloneVoiceSamples);
+router.post(
+  "/voice/samples/upload",
+  requireDigitalCloneVoiceConsent,
+  digitalCloneVoiceUploadRateLimit,
+  digitalCloneVoiceUploadConcurrencyLimit,
+  digitalCloneVoiceUpload,
+  uploadDigitalCloneVoiceSamples,
+);
+router.get(
+  "/voice/samples/:sampleId/delivery",
+  requireDigitalCloneVoiceConsent,
+  deliverDigitalCloneVoiceSample,
+);
+router.delete("/voice/samples/:sampleId", requireDigitalCloneVoiceConsent, deleteDigitalCloneVoiceSample);
+router.patch("/voice/settings", requireDigitalCloneVoiceConsent, updateDigitalCloneVoiceSettings);
+router.post(
+  "/voice/create",
+  requireDigitalCloneVoiceConsent,
+  digitalCloneVoiceCreationRateLimit,
+  createDigitalCloneVoice,
+);
+router.post(
+  "/voice/previews",
+  requireDigitalCloneVoiceConsent,
+  digitalCloneVoicePreviewRateLimit,
+  generateDigitalCloneVoicePreview,
+);
+router.get(
+  "/voice/previews/:previewId/delivery",
+  requireDigitalCloneVoiceConsent,
+  deliverDigitalCloneVoicePreview,
+);
+router.post(
+  "/voice/previews/:previewId/approve",
+  requireDigitalCloneVoiceConsent,
+  approveDigitalCloneVoice,
+);
+router.post("/voice/revoke", revokeDigitalCloneVoice);
 
 router.post("/generate", digitalCloneGenerationRateLimit, generateDigitalCloneContent);
 router.get("/drafts", listDigitalCloneGenerations);
