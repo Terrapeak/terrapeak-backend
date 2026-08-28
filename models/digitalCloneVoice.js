@@ -8,7 +8,7 @@ const DigitalCloneVoiceSchema = new mongoose.Schema(
     providerVoiceId: { type: String, default: "", trim: true, maxlength: 500, select: false },
     status: {
       type: String,
-      enum: ["not_started", "samples_uploaded", "processing", "ready", "failed", "revoked"],
+      enum: ["not_started", "samples_uploaded", "processing", "verification_required", "ready", "failed", "revoked"],
       default: "not_started",
       index: true,
     },

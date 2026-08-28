@@ -349,6 +349,33 @@ test("voice creation uses the provider abstraction and is idempotent", async () 
   assert.equal(serializeVoice(first).providerVoiceId, undefined);
 });
 
+test("verification-required creation remains private, not ready, and does not trigger duplicate paid creation", async () => {
+  await authorizeVoice();
+  await uploadOneSample();
+  const provider = new MockVoiceProvider({ initialStatus: "verification_required" });
+  const first = await createVoiceClone({
+    companyId: COMPANY_ID,
+    userId: USER_ID,
+    provider,
+    readSample: async () => wavBuffer(),
+  });
+  const second = await createVoiceClone({
+    companyId: COMPANY_ID,
+    userId: USER_ID,
+    provider,
+    readSample: async () => wavBuffer(),
+  });
+  assert.equal(first.status, "verification_required");
+  assert.equal(second.status, "verification_required");
+  assert.equal(provider.calls.create, 1);
+  assert.equal(serializeVoice(first).providerVoiceId, undefined);
+  assert.equal(calculateVoiceReadiness(first).ready, false);
+  await assert.rejects(
+    generateVoicePreview({ companyId: COMPANY_ID, userId: USER_ID, body: { text: "blocked" }, provider }),
+    (error) => error.code === "VOICE_NOT_READY",
+  );
+});
+
 test("concurrent create requests acquire one provider creation lock", async () => {
   await authorizeVoice();
   await uploadOneSample();
@@ -372,6 +399,31 @@ test("concurrent create requests acquire one provider creation lock", async () =
   releaseCreation();
   assert.equal((await first).status, "ready");
   assert.equal(provider.calls.create, 1);
+});
+
+test("sample deletion cannot race an in-flight provider creation", async () => {
+  await authorizeVoice();
+  const [sample] = await uploadOneSample();
+  let releaseCreation;
+  let signalStarted;
+  const started = new Promise((resolve) => { signalStarted = resolve; });
+  const gate = new Promise((resolve) => { releaseCreation = resolve; });
+  const provider = new MockVoiceProvider();
+  provider.createVoice = async () => {
+    provider.calls.create += 1;
+    signalStarted();
+    await gate;
+    return { voiceId: "sample-lock-voice", status: "ready" };
+  };
+  const creation = createVoiceClone({ companyId: COMPANY_ID, userId: USER_ID, provider, readSample: async () => wavBuffer() });
+  await started;
+  await assert.rejects(
+    deleteVoiceSample({ companyId: COMPANY_ID, userId: USER_ID, sampleId: sample._id, destroyAudio: async () => {} }),
+    (error) => error.code === "VOICE_CREATION_IN_PROGRESS",
+  );
+  assert.equal((await DigitalCloneVoiceSample.findById(sample._id)).status, "active");
+  releaseCreation();
+  assert.equal((await creation).status, "ready");
 });
 
 test("revocation during provider creation cannot be overwritten by stale completion", async () => {
@@ -399,6 +451,34 @@ test("revocation during provider creation cannot be overwritten by stale complet
   assert.equal(provider.calls.delete, 1);
 });
 
+test("failed cleanup after in-flight revocation retains the private reconciliation reference", async () => {
+  await authorizeVoice();
+  await uploadOneSample();
+  let releaseCreation;
+  let signalStarted;
+  const started = new Promise((resolve) => { signalStarted = resolve; });
+  const gate = new Promise((resolve) => { releaseCreation = resolve; });
+  const provider = new MockVoiceProvider({ failDelete: true });
+  provider.createVoice = async () => {
+    provider.calls.create += 1;
+    signalStarted();
+    await gate;
+    return { voiceId: "revoked-orphan-voice", status: "ready" };
+  };
+  const creation = createVoiceClone({ companyId: COMPANY_ID, userId: USER_ID, provider, readSample: async () => wavBuffer() });
+  await started;
+  await revokeVoice({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  releaseCreation();
+  await assert.rejects(creation, (error) => error.code === "VOICE_PROVIDER_UNAVAILABLE");
+  const stored = await DigitalCloneVoice.findOne({ companyId: COMPANY_ID, userId: USER_ID })
+    .select("+providerVoiceId +providerDeletionStatus +pendingProviderDeletionId");
+  assert.equal(stored.status, "revoked");
+  assert.equal(stored.providerVoiceId, "");
+  assert.equal(stored.providerDeletionStatus, "failed");
+  assert.equal(stored.pendingProviderDeletionId, "revoked-orphan-voice");
+  assert.equal(calculateVoiceReadiness(stored).ready, false);
+});
+
 test("malformed provider creation responses are cleaned up and retryable", async () => {
   await authorizeVoice();
   await uploadOneSample();
@@ -406,7 +486,7 @@ test("malformed provider creation responses are cleaned up and retryable", async
   provider.createVoice = async () => ({ voiceId: "orphan-provider-voice", status: "unexpected" });
   await assert.rejects(
     createVoiceClone({ companyId: COMPANY_ID, userId: USER_ID, provider, readSample: async () => wavBuffer() }),
-    (error) => error.code === "VOICE_PROVIDER_UNAVAILABLE",
+    (error) => error.code === "VOICE_PROVIDER_INVALID_RESPONSE",
   );
   assert.equal(provider.calls.delete, 1);
   assert.equal((await DigitalCloneVoice.findOne({ companyId: COMPANY_ID, userId: USER_ID })).status, "failed");

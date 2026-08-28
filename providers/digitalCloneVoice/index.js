@@ -1,8 +1,10 @@
 import ChatterboxVoiceProvider from "./chatterboxVoiceProvider.js";
+import ElevenLabsVoiceProvider from "./elevenLabsVoiceProvider.js";
 import MockVoiceProvider from "./mockVoiceProvider.js";
 
 const factories = new Map([
   ["chatterbox", () => new ChatterboxVoiceProvider()],
+  ["elevenlabs", () => new ElevenLabsVoiceProvider()],
 ]);
 
 const notConfigured = () => {
@@ -17,11 +19,11 @@ export const registerVoiceProvider = (name, factory) => {
   factories.set(name, factory);
 };
 
-export const resolveVoiceProvider = (name = process.env.DIGITAL_CLONE_VOICE_PROVIDER || "chatterbox") => {
+export const resolveVoiceProvider = (name = process.env.DIGITAL_CLONE_VOICE_PROVIDER || "") => {
   if (name === "mock") throw notConfigured();
   const factory = factories.get(name);
   if (!factory) throw notConfigured();
   return factory();
 };
 
-export { ChatterboxVoiceProvider, MockVoiceProvider };
+export { ChatterboxVoiceProvider, ElevenLabsVoiceProvider, MockVoiceProvider };

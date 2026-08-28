@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import mongoose from "mongoose";
 import DigitalCloneProfile from "../models/digitalCloneProfile.js";
 import DigitalCloneVoice from "../models/digitalCloneVoice.js";
@@ -14,6 +15,7 @@ import {
 
 const VOICE_CONSENT_VERSION = "1.0";
 const VOICE_PROVIDER_DISPLAY_NAME = "TerraPeak Voice";
+const MAX_PROVIDER_TRAINING_BYTES = 75 * 1024 * 1024;
 const ALLOWED_SETTINGS_FIELDS = new Set(["speakingPace", "expressiveness", "language", "displayName"]);
 const REQUIRED_VOICE_AFFIRMATIONS = [
   "voiceOwnershipOrAuthorization",
@@ -406,6 +408,14 @@ export const deleteVoiceSample = async ({ companyId, userId, sampleId, destroyAu
     { new: true, runValidators: true },
   ).select("+storagePublicId");
   if (!sample) throw voiceError("Voice recording not found.", 404, "VOICE_SAMPLE_NOT_FOUND");
+  const creationInProgress = await DigitalCloneVoice.exists({ companyId, userId, status: "processing" });
+  if (creationInProgress) {
+    await DigitalCloneVoiceSample.updateOne(
+      { _id: sample._id, companyId, userId, status: "deleting" },
+      { $set: { status: "active" } },
+    );
+    throw voiceError("Voice creation is already in progress.", 409, "VOICE_CREATION_IN_PROGRESS");
+  }
   try {
     await destroyAudio(sample.storagePublicId);
   } catch (error) {
@@ -474,17 +484,30 @@ export const updateVoiceSettings = async ({ companyId, userId, body }) => {
   );
 };
 
-const providerFailure = () => voiceError(
-  "TerraPeak Voice could not complete the request.",
-  502,
-  "VOICE_PROVIDER_UNAVAILABLE",
-);
-
 const providerNotConfigured = () => voiceError(
   "TerraPeak Voice is not available yet.",
   503,
   "VOICE_PROVIDER_NOT_CONFIGURED",
 );
+
+const PROVIDER_ERROR_RESPONSES = Object.freeze({
+  VOICE_PROVIDER_AUTH_FAILED: ["TerraPeak Voice authentication failed.", 502],
+  VOICE_PROVIDER_QUOTA_EXCEEDED: ["TerraPeak Voice usage capacity has been reached.", 502],
+  VOICE_PROVIDER_RATE_LIMITED: ["TerraPeak Voice is receiving too many requests.", 429],
+  VOICE_SAMPLE_REJECTED: ["One or more voice recordings could not be accepted.", 400],
+  VOICE_SAMPLE_PROVIDER_LIMIT: ["Active voice recordings exceed the provider training limit.", 400],
+  VOICE_VERIFICATION_REQUIRED: ["Additional voice verification is required before this voice can be used.", 409],
+  VOICE_NOT_FOUND: ["The TerraPeak Voice resource could not be found.", 404],
+  VOICE_PROVIDER_TIMEOUT: ["TerraPeak Voice timed out.", 504],
+  VOICE_PROVIDER_INVALID_RESPONSE: ["TerraPeak Voice returned an invalid response.", 502],
+  VOICE_PROVIDER_UNAVAILABLE: ["TerraPeak Voice could not complete the request.", 502],
+});
+
+const sanitizedProviderError = (error) => {
+  if (error?.code === "VOICE_PROVIDER_NOT_CONFIGURED") return providerNotConfigured();
+  const [message, statusCode] = PROVIDER_ERROR_RESPONSES[error?.code] || PROVIDER_ERROR_RESPONSES.VOICE_PROVIDER_UNAVAILABLE;
+  return voiceError(message, statusCode, PROVIDER_ERROR_RESPONSES[error?.code] ? error.code : "VOICE_PROVIDER_UNAVAILABLE");
+};
 
 const assertProviderConfigured = (provider) => {
   provider?.assertConfigured?.();
@@ -511,19 +534,19 @@ export const createVoiceClone = async ({
 }) => {
   await assertVoiceConsent({ companyId, userId });
   const current = await DigitalCloneVoice.findOne(ownedFilter({ companyId, userId })).select("+providerVoiceId +provider");
-  if (current?.status === "ready" && current.providerVoiceId) return current;
+  if (["ready", "verification_required"].includes(current?.status) && current.providerVoiceId) return current;
   if (current?.status === "processing") {
     throw voiceError("Voice creation is already in progress.", 409, "VOICE_CREATION_IN_PROGRESS");
   }
-  const samples = await DigitalCloneVoiceSample.find({ companyId, userId, status: "active" }).select("+storagePublicId").sort({ createdAt: 1 });
-  if (!samples.length) throw voiceError("Upload at least one valid voice recording first.", 409, "VOICE_SAMPLES_REQUIRED");
+  const activeSampleCount = await DigitalCloneVoiceSample.countDocuments({ companyId, userId, status: "active" });
+  if (!activeSampleCount) throw voiceError("Upload at least one valid voice recording first.", 409, "VOICE_SAMPLES_REQUIRED");
 
   const startedAt = new Date();
   const locked = await DigitalCloneVoice.findOneAndUpdate(
     {
       companyId,
       userId,
-      status: { $nin: ["processing", "ready"] },
+      status: { $nin: ["processing", "verification_required", "ready"] },
       "consent.acceptedAt": { $ne: null },
       "consent.revokedAt": null,
     },
@@ -533,36 +556,64 @@ export const createVoiceClone = async ({
         creationStartedAt: startedAt,
         approvedAt: null,
         approvedPreviewId: null,
-        trainingSampleIds: samples.map((sample) => sample._id),
       },
     },
     { new: true, runValidators: true },
   ).select("+providerVoiceId +provider");
   if (!locked) {
     const latest = await DigitalCloneVoice.findOne(ownedFilter({ companyId, userId })).select("+providerVoiceId +provider");
-    if (latest?.status === "ready" && latest.providerVoiceId) return latest;
+    if (["ready", "verification_required"].includes(latest?.status) && latest.providerVoiceId) return latest;
     throw voiceError("Voice creation is already in progress.", 409, "VOICE_CREATION_IN_PROGRESS");
   }
+
+  const samples = await DigitalCloneVoiceSample.find({ companyId, userId, status: "active" })
+    .select("+storagePublicId")
+    .sort({ createdAt: 1 });
+  const totalSampleBytes = samples.reduce((total, sample) => total + Number(sample.bytes || 0), 0);
+  if (!samples.length || totalSampleBytes > MAX_PROVIDER_TRAINING_BYTES) {
+    await DigitalCloneVoice.updateOne(
+      { _id: locked._id, companyId, userId, status: "processing", creationStartedAt: startedAt },
+      { $set: { status: "samples_uploaded", creationStartedAt: null } },
+    );
+    if (!samples.length) {
+      throw voiceError("Upload at least one valid voice recording first.", 409, "VOICE_SAMPLES_REQUIRED");
+    }
+    throw voiceError("Active voice recordings exceed the provider training limit.", 400, "VOICE_SAMPLE_PROVIDER_LIMIT");
+  }
+  await DigitalCloneVoice.updateOne(
+    { _id: locked._id, companyId, userId, status: "processing", creationStartedAt: startedAt },
+    { $set: { trainingSampleIds: samples.map((sample) => sample._id) } },
+  );
 
   let provider;
   let createdProviderVoiceId = "";
   try {
     provider = assertProviderConfigured(injectedProvider || resolveVoiceProvider());
     const providerSamples = [];
+    let providerSampleBytes = 0;
     for (const sample of samples) {
+      const buffer = await readSample({ storagePublicId: sample.storagePublicId });
+      if (!Buffer.isBuffer(buffer) || !buffer.length || buffer.length > DIGITAL_CLONE_VOICE_UPLOAD_LIMITS.maxFileBytes) {
+        throw voiceError("A stored voice recording is invalid.", 400, "VOICE_SAMPLE_REJECTED");
+      }
+      providerSampleBytes += buffer.length;
+      if (providerSampleBytes > MAX_PROVIDER_TRAINING_BYTES) {
+        throw voiceError("Active voice recordings exceed the provider training limit.", 400, "VOICE_SAMPLE_PROVIDER_LIMIT");
+      }
       providerSamples.push({
         filename: sample.filename,
         mimeType: sample.mimeType,
-        buffer: await readSample({ storagePublicId: sample.storagePublicId }),
+        buffer,
       });
     }
     const result = await provider.createVoice({
       samples: providerSamples,
+      name: `TerraPeak Voice ${createHash("sha256").update(`${companyId}:${userId}`).digest("hex").slice(0, 16)}`,
       language: locked.language,
       settings: locked.voiceSettings,
     });
     createdProviderVoiceId = String(result?.voiceId || "").trim();
-    if (!createdProviderVoiceId || !["processing", "ready"].includes(result.status)) {
+    if (!createdProviderVoiceId || !["processing", "verification_required", "ready"].includes(result.status)) {
       throw voiceError("TerraPeak Voice returned an invalid response.", 502, "VOICE_PROVIDER_INVALID_RESPONSE");
     }
     await assertVoiceConsent({ companyId, userId });
@@ -579,7 +630,7 @@ export const createVoiceClone = async ({
         $set: {
           provider: provider.name,
           providerVoiceId: createdProviderVoiceId,
-          status: result.status === "processing" ? "processing" : "ready",
+          status: result.status,
         },
       },
       { new: true, runValidators: true },
@@ -599,16 +650,24 @@ export const createVoiceClone = async ({
       { companyId, userId, status: "processing", creationStartedAt: startedAt },
       {
         $set: {
-          status: error?.code === "VOICE_PROVIDER_NOT_CONFIGURED" ? "samples_uploaded" : "failed",
-          ...(cleanupFailed ? {
-            providerDeletionStatus: "failed",
-            pendingProviderDeletionId: createdProviderVoiceId,
-          } : {}),
+          status: error?.code === "VOICE_PROVIDER_NOT_CONFIGURED" || error?.code?.startsWith?.("VOICE_SAMPLE_")
+            ? "samples_uploaded"
+            : "failed",
         },
       },
     );
-    if (error?.code === "VOICE_PROVIDER_NOT_CONFIGURED") throw providerNotConfigured();
-    throw providerFailure();
+    if (cleanupFailed) {
+      await DigitalCloneVoice.updateOne(
+        { _id: locked._id, companyId, userId, creationStartedAt: startedAt },
+        {
+          $set: {
+            providerDeletionStatus: "failed",
+            pendingProviderDeletionId: createdProviderVoiceId,
+          },
+        },
+      );
+    }
+    throw sanitizedProviderError(error);
   }
 };
 
@@ -629,8 +688,7 @@ export const refreshVoiceStatus = async ({ companyId, userId, provider: injected
     }
     return voice;
   } catch (error) {
-    if (error?.code === "VOICE_PROVIDER_NOT_CONFIGURED") throw providerNotConfigured();
-    throw providerFailure();
+    throw sanitizedProviderError(error);
   }
 };
 
@@ -670,8 +728,7 @@ export const generateVoicePreview = async ({
       settings: voice.voiceSettings,
     });
   } catch (error) {
-    if (error?.code === "VOICE_PROVIDER_NOT_CONFIGURED") throw providerNotConfigured();
-    throw providerFailure();
+    throw sanitizedProviderError(error);
   }
   await assertVoiceConsent({ companyId, userId });
   const currentVoice = await DigitalCloneVoice.exists({
