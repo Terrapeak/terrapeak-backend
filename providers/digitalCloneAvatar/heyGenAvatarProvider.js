@@ -37,7 +37,7 @@ const normalizeLook = (group, look) => {
   const readinessReasons = [];
   if (!group) readinessReasons.push("MISSING_AVATAR_GROUP");
   else {
-    if (group.status !== "completed") readinessReasons.push(group.status == null ? "MISSING_GROUP_STATUS" : "GROUP_TRAINING_NOT_READY");
+    if (group.status !== null && group.status !== "completed") readinessReasons.push(group.status === undefined ? "MISSING_GROUP_STATUS" : "GROUP_TRAINING_NOT_READY");
     if (group.consent_status !== null && group.consent_status !== "approved") readinessReasons.push(group.consent_status === undefined ? "MISSING_CONSENT_STATE" : "CONSENT_NOT_APPROVED");
   }
   if (look?.status !== "completed") readinessReasons.push(look?.status == null ? "MISSING_LOOK_STATUS" : "LOOK_TRAINING_NOT_READY");

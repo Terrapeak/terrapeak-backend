@@ -71,12 +71,17 @@ test("discovery deduplicates repeated provider looks without merging distinct lo
 test("existing production-style candidate and ten rediscoveries remain one updated candidate", async () => {
   await authorize(); const provider = new MockAvatarProvider(); const value = provider.avatars[0];
   const providerKeyHash = createHash("sha256").update(`${provider.name}:${value.groupRef}:${value.lookRef}`).digest("hex");
-  const existing = await DigitalCloneAvatarCandidate.create({ companyId: COMPANY_ID, userId: USER_ID, provider: provider.name, providerKeyHash, providerAvatarGroupRef: value.groupRef, providerAvatarLookRef: value.lookRef, providerDefaultVoiceRef: value.defaultVoiceRef, previewImageUrl: value.previewImageUrl, displayName: "Existing candidate", avatarType: value.avatarType, orientation: value.orientation, supportedCapabilities: value.supportedCapabilities, providerReady: true, status: "discovered", lastDiscoveredAt: new Date("2025-01-01") });
+  const existing = await DigitalCloneAvatarCandidate.create({ companyId: COMPANY_ID, userId: USER_ID, provider: provider.name, providerKeyHash, providerAvatarGroupRef: value.groupRef, providerAvatarLookRef: value.lookRef, providerDefaultVoiceRef: "", previewImageUrl: "", displayName: "Existing candidate", avatarType: "unknown", orientation: "unknown", supportedCapabilities: [], providerReady: false, status: "unavailable", lastDiscoveredAt: new Date("2025-01-01") });
   for (let attempt = 0; attempt < 10; attempt += 1) await discoverAvatars({ companyId: COMPANY_ID, userId: USER_ID, provider });
   const candidates = await DigitalCloneAvatarCandidate.find({ companyId: COMPANY_ID, userId: USER_ID });
   assert.equal(candidates.length, 1);
   assert.equal(String(candidates[0]._id), String(existing._id));
   assert.equal(candidates[0].displayName, "Private Test Avatar");
+  assert.equal(candidates[0].providerReady, true);
+  assert.equal(candidates[0].status, "discovered");
+  assert.equal(candidates[0].avatarType, value.avatarType);
+  assert.equal(candidates[0].orientation, value.orientation);
+  assert.deepEqual(candidates[0].supportedCapabilities, value.supportedCapabilities);
 });
 
 test("concurrent discovery reconciles one canonical candidate without duplicate-key failure", async () => {

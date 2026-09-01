@@ -35,24 +35,44 @@ test("HeyGen discovery uses private v3 groups and looks and filters readiness", 
   assert.equal(avatars[3].avatarType, "photo-avatar");
 });
 
+test("HeyGen treats nullable group status as look-authoritative for live photo and digital twin shapes", async () => {
+  const groups = [
+    { id: "tim-group", name: "Tim", status: null, consent_status: null, looks_count: 1 },
+    { id: "ray-group", name: "Ray", status: null, consent_status: null },
+  ];
+  const looks = [
+    { id: "tim-photo", group_id: "tim-group", name: "Tim", avatar_type: "photo_avatar", status: "completed", supported_api_engines: ["avatar_v", "avatar_iv", "avatar_iii"], default_voice_id: null },
+    { id: "ray-twin", group_id: "ray-group", name: "Ray Digital Twin", avatar_type: "digital_twin", status: "completed", supported_api_engines: ["avatar_v", "avatar_iv", "avatar_iii"], default_voice_id: "voice-ray" },
+  ];
+  const client = { async get(url) { return { data: { data: url.endsWith("/v3/avatars") ? groups : looks, has_more: false } }; } };
+  const avatars = await new HeyGenAvatarProvider({ apiKey: "test-key", client }).listAvatars();
+  assert.deepEqual(avatars.map(({ ready }) => ready), [true, true]);
+  assert.deepEqual(avatars.map(({ avatarType }) => avatarType), ["photo-avatar", "digital-twin"]);
+  assert.deepEqual(avatars.map(({ readinessReasons }) => readinessReasons), [[], []]);
+  assert.equal(avatars[0].defaultVoiceRef, "");
+  assert.equal(avatars[1].defaultVoiceRef, "voice-ray");
+});
+
 test("HeyGen avatar readiness fails closed for training, engine, group, and malformed fields", async () => {
   const groups = [
     { id: "pending", status: "processing", consent_status: "approved" },
     { id: "failed", status: "failed", consent_status: "approved" },
     { id: "unsupported", status: "completed", consent_status: "approved" },
     { id: "missing-consent", status: "completed" },
+    { id: "missing-status", consent_status: "approved" },
   ];
   const looks = [
     { id: "pending-look", group_id: "pending", status: "completed", supported_api_engines: ["avatar_v"] },
     { id: "failed-look", group_id: "failed", status: "completed", supported_api_engines: ["avatar_v"] },
     { id: "unsupported-look", group_id: "unsupported", status: "completed", supported_api_engines: ["avatar_iii"] },
     { id: "missing-consent-look", group_id: "missing-consent", status: "completed", supported_api_engines: ["avatar_iv"] },
+    { id: "missing-status-look", group_id: "missing-status", status: "completed", supported_api_engines: ["avatar_iv"] },
     { id: "orphan-look", group_id: "orphan", status: "completed", supported_api_engines: ["avatar_iv"] },
   ];
   const client = { async get(url) { return { data: { data: url.endsWith("/v3/avatars") ? groups : looks, has_more: false } }; } };
   const avatars = await new HeyGenAvatarProvider({ apiKey: "test-key", client }).listAvatars();
-  assert.deepEqual(avatars.map((avatar) => avatar.ready), [false, false, false, false, false]);
-  assert.deepEqual(avatars.map((avatar) => avatar.readinessReasons[0]), ["GROUP_TRAINING_NOT_READY", "GROUP_TRAINING_NOT_READY", "UNSUPPORTED_ENGINE", "MISSING_CONSENT_STATE", "MISSING_AVATAR_GROUP"]);
+  assert.deepEqual(avatars.map((avatar) => avatar.ready), [false, false, false, false, false, false]);
+  assert.deepEqual(avatars.map((avatar) => avatar.readinessReasons[0]), ["GROUP_TRAINING_NOT_READY", "GROUP_TRAINING_NOT_READY", "UNSUPPORTED_ENGINE", "MISSING_CONSENT_STATE", "MISSING_GROUP_STATUS", "MISSING_AVATAR_GROUP"]);
 });
 
 test("HeyGen voice discovery uses v3 public and private lists and normalizes without URLs", async () => {
