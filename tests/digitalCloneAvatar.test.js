@@ -10,6 +10,7 @@ import DigitalCloneAvatar from "../models/digitalCloneAvatar.js";
 import DigitalCloneAvatarCandidate from "../models/digitalCloneAvatarCandidate.js";
 import DigitalCloneAvatarProviderVoice from "../models/digitalCloneAvatarProviderVoice.js";
 import DigitalCloneAvatarVideo from "../models/digitalCloneAvatarVideo.js";
+import HeyGenAvatarProvider from "../providers/digitalCloneAvatar/heyGenAvatarProvider.js";
 import MockAvatarProvider from "../providers/digitalCloneAvatar/mockAvatarProvider.js";
 import { DIGITAL_CLONE_AVATAR_RATE_LIMITS } from "../middleware/digitalCloneAvatarRateLimit.js";
 import { assertHeyGenMediaUrl, copyProviderVideoToPrivateStorage, readBoundedResponse, streamHeyGenPreview } from "../services/digitalCloneAvatarStorageService.js";
@@ -56,6 +57,46 @@ test("discovery stores private provider references but returns safe candidates",
   assert.match(state.availableAvatars[0].previewPath, /^\/digital-clone\/avatar\/available\//);
   for (let attempt = 0; attempt < 10; attempt += 1) await discoverAvatars({ companyId: COMPANY_ID, userId: USER_ID, provider });
   assert.equal((await DigitalCloneAvatarCandidate.findById(candidate._id)).status, "selected");
+});
+
+test("live HeyGen items envelopes stay ready through persistence and safe serialization", async () => {
+  await authorize();
+  const groups = [
+    { id: "tim-group", name: "Tim", status: null, consent_status: null },
+    { id: "ray-group", name: "Ray", status: null, consent_status: null },
+  ];
+  const looks = [
+    { id: "tim-look", group_id: "tim-group", name: "Tim", avatar_type: "photo_avatar", status: "completed", supported_api_engines: ["avatar_v", "avatar_iv", "avatar_iii"], default_voice_id: null },
+    { id: "ray-look", group_id: "ray-group", name: "Ray Digital Twin", avatar_type: "digital_twin", status: "completed", supported_api_engines: ["avatar_v", "avatar_iv", "avatar_iii"], default_voice_id: "provider-default" },
+    { id: "unsupported-look", group_id: "ray-group", name: "Unsupported", avatar_type: "photo_avatar", status: "completed", supported_api_engines: ["avatar_iii"], preview_image_url: "https://files.heygen.ai/private.jpg" },
+  ];
+  const client = { async get(url, options) {
+    if (url.endsWith("/v3/avatars")) return { data: { items: groups, has_more: false } };
+    if (url.endsWith("/v3/avatars/looks")) return { data: { items: looks, has_more: false } };
+    return { data: { items: [{ voice_id: `${options.params.type}-voice`, name: `${options.params.type} narrator`, language: "English", gender: "female", type: options.params.type }], has_more: false } };
+  } };
+  const diagnostics = []; const provider = new HeyGenAvatarProvider({ apiKey: "test-key", client, logger: { info: (event) => diagnostics.push(event) } });
+  const candidates = await discoverAvatars({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  assert.equal(candidates.filter(({ providerReady }) => providerReady).length, 2);
+  assert.equal(candidates.find(({ displayName }) => displayName === "Unsupported").status, "unavailable");
+  assert.equal(diagnostics.length, 1);
+  assert.deepEqual(diagnostics[0], {
+    event: "digital_clone_avatar_discovery_diagnostic", diagnosticVersion: "avatar-live-contract-v1", provider: "heygen",
+    groupPageCount: 1, groupCount: 2, lookPageCount: 1, lookCount: 3, readyCount: 2, notReadyCount: 1,
+    readinessReasonCounts: { GROUP_NOT_FOUND: 0, GROUP_STATUS_MISSING: 0, GROUP_STATUS_INVALID: 0, CONSENT_INVALID: 0, LOOK_STATUS_MISSING: 0, LOOK_STATUS_INVALID: 0, SUPPORTED_ENGINES_MISSING: 0, UNSUPPORTED_ENGINE: 1 },
+    groupTopLevelKeys: ["items", "has_more"], lookTopLevelKeys: ["items", "has_more"],
+    groupItemFieldPresence: { id: true, status: true, consent_status: true },
+    lookItemFieldPresence: { id: true, group_id: true, status: true, supported_api_engines: true, avatar_type: true, default_voice_id: true, preferred_orientation: false },
+  });
+  const diagnosticText = JSON.stringify(diagnostics[0]);
+  for (const sensitive of ["tim-group", "ray-group", "tim-look", "ray-look", "unsupported-look", "provider-default", "public-voice", "private-voice", "https://files.heygen.ai", "test-key", "Tim", "Ray", "providerKeyHash", String(COMPANY_ID), String(USER_ID)]) assert.doesNotMatch(diagnosticText, new RegExp(sensitive, "i"));
+  const voices = await discoverAvatarProviderVoices({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  assert.equal(voices.length, 2);
+  assert.ok(voices.every(({ providerReady, status }) => providerReady && status === "discovered"));
+  const state = await getAvatarState({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  assert.equal(state.availableAvatars.filter(({ providerReady, status }) => providerReady && status === "discovered").length, 2);
+  assert.ok(state.availableProviderVoices.every((voice) => !("providerVoiceRef" in voice) && !("providerKeyHash" in voice)));
+  assert.ok(state.availableAvatars.every((avatar) => !("providerAvatarLookRef" in avatar) && !("previewImageUrl" in avatar)));
 });
 
 test("discovery deduplicates repeated provider looks without merging distinct looks", async () => {
@@ -140,7 +181,7 @@ test("provider voice discovery deduplicates, preserves selection, and marks unav
   assert.equal(voices.length, 2);
   const selected = voices.find((voice) => voice.displayName === "Latest duplicate");
   await selectAvatarProviderVoice({ companyId: COMPANY_ID, userId: USER_ID, voiceId: selected._id, provider });
-  for (let attempt = 0; attempt < 5; attempt += 1) await discoverAvatarProviderVoices({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  for (let attempt = 0; attempt < 10; attempt += 1) await discoverAvatarProviderVoices({ companyId: COMPANY_ID, userId: USER_ID, provider });
   assert.equal((await DigitalCloneAvatarProviderVoice.findById(selected._id)).status, "selected");
   const safeState = await getAvatarProviderVoiceState({ companyId: COMPANY_ID, userId: USER_ID });
   assert.equal(safeState.availableProviderVoices.length, 2);
