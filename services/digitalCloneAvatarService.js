@@ -10,6 +10,7 @@ import { copyProviderVideoToPrivateStorage, deletePrivateAvatarVideo, streamHeyG
 
 const CONSENT_VERSION = "1.0";
 const MAX_SCRIPT_CHARACTERS = 1200;
+const CANDIDATE_IDENTITY_INDEX_FIELDS = ["companyId", "providerKeyHash", "userId"];
 const CONSENT_FIELDS = new Set(["appearanceOwnershipOrAuthorization", "avatarGenerationAuthorized", "providerProcessingAuthorized", "revocationUnderstood"]);
 const VIDEO_FIELDS = new Set(["sourceType", "draftId", "script", "aspectRatio", "resolution", "captions", "background"]);
 export const avatarServiceError = (code, message, statusCode = 400) => { const error = new Error(message); error.code = code; error.statusCode = statusCode; return error; };
@@ -21,6 +22,11 @@ const sanitizeProviderError = (error) => {
   return avatarServiceError("AVATAR_PROVIDER_UNAVAILABLE", "TerraPeak Avatar is temporarily unavailable.", 503);
 };
 const providerAvailability = (injectedProvider) => { try { const provider = injectedProvider || resolveAvatarProvider(); return { available: true, provider }; } catch (error) { return { available: false, code: "AVATAR_PROVIDER_NOT_CONFIGURED", provider: null }; } };
+const isCandidateIdentityDuplicate = (error) => {
+  if (error?.code !== 11000) return false;
+  const fields = Object.keys(error.keyPattern || {}).sort();
+  return fields.length === CANDIDATE_IDENTITY_INDEX_FIELDS.length && fields.every((field, index) => field === CANDIDATE_IDENTITY_INDEX_FIELDS[index]);
+};
 const baseConsentValid = async ({ companyId, userId }) => {
   const profile = await DigitalCloneProfile.findOne({ companyId, userId }).select("status consent").lean(); const consent = profile?.consent;
   return Boolean(["consented", "setup"].includes(profile?.status) && consent?.acceptedAt && consent.identityConfirmed && consent.mediaRightsConfirmed && consent.aiRepresentationConsent);
@@ -55,16 +61,25 @@ export const discoverAvatars = async ({ companyId, userId, provider: injectedPro
   await assertAvatarConsent({ companyId, userId }); const provider = injectedProvider || resolveAvatarProvider(); let values;
   try { values = await provider.listAvatars(); } catch (error) { throw sanitizeProviderError(error); }
   if (!Array.isArray(values)) throw avatarServiceError("AVATAR_PROVIDER_INVALID_RESPONSE", "TerraPeak Avatar returned an invalid response.", 502);
-  const now = new Date(); const seen = [];
+  const normalized = new Map();
   for (const value of values.slice(0, 200)) {
-    if (!value?.groupRef || !value?.lookRef) continue; const hash = createHash("sha256").update(`${provider.name}:${value.groupRef}:${value.lookRef}`).digest("hex"); seen.push(hash);
+    const groupRef = String(value?.groupRef || ""); const lookRef = String(value?.lookRef || "");
+    if (!groupRef || !lookRef) continue;
+    const identity = `${provider.name}:${groupRef}:${lookRef}`;
+    normalized.set(identity, { value, groupRef, lookRef, hash: createHash("sha256").update(identity).digest("hex") });
+  }
+  const now = new Date(); const seen = [...normalized.values()].map(({ hash }) => hash);
+  for (const { value, groupRef, lookRef, hash } of normalized.values()) {
     const avatarType = ["photo-avatar", "digital-twin", "studio-avatar"].includes(value.avatarType) ? value.avatarType : "unknown";
     const orientation = ["portrait", "landscape", "square"].includes(value.orientation) ? value.orientation : "unknown";
-    await DigitalCloneAvatarCandidate.findOneAndUpdate(
-      { companyId, userId, providerKeyHash: hash },
-      [{ $set: { companyId, userId, provider: provider.name, providerKeyHash: hash, providerAvatarGroupRef: String(value.groupRef).slice(0, 500), providerAvatarLookRef: String(value.lookRef).slice(0, 500), providerDefaultVoiceRef: String(value.defaultVoiceRef || "").slice(0, 500), previewImageUrl: String(value.previewImageUrl || "").slice(0, 2000), displayName: String(value.displayName || "TerraPeak Avatar").slice(0, 200), avatarType, orientation, supportedCapabilities: (value.supportedCapabilities || []).filter((item) => ["avatar_v", "avatar_iv"].includes(item)), providerReady: Boolean(value.ready), status: { $cond: [{ $and: [{ $eq: ["$status", "selected"] }, Boolean(value.ready)] }, "selected", value.ready ? "discovered" : "unavailable"] }, lastDiscoveredAt: now, revokedAt: null, createdAt: { $ifNull: ["$createdAt", now] }, updatedAt: now } }],
-      { upsert: true, new: true },
-    );
+    const filter = { companyId, userId, providerKeyHash: hash };
+    const update = [{ $set: { provider: provider.name, providerAvatarGroupRef: groupRef.slice(0, 500), providerAvatarLookRef: lookRef.slice(0, 500), providerDefaultVoiceRef: String(value.defaultVoiceRef || "").slice(0, 500), previewImageUrl: String(value.previewImageUrl || "").slice(0, 2000), displayName: String(value.displayName || "TerraPeak Avatar").slice(0, 200), avatarType, orientation, supportedCapabilities: (value.supportedCapabilities || []).filter((item) => ["avatar_v", "avatar_iv"].includes(item)), providerReady: Boolean(value.ready), status: { $cond: [{ $and: [{ $eq: ["$status", "selected"] }, Boolean(value.ready)] }, "selected", value.ready ? "discovered" : "unavailable"] }, lastDiscoveredAt: now, revokedAt: null, createdAt: { $ifNull: ["$createdAt", now] }, updatedAt: now } }];
+    try { await DigitalCloneAvatarCandidate.findOneAndUpdate(filter, update, { upsert: true, new: true }); }
+    catch (error) {
+      if (!isCandidateIdentityDuplicate(error)) throw error;
+      const reconciled = await DigitalCloneAvatarCandidate.findOneAndUpdate(filter, update, { new: true });
+      if (!reconciled) throw error;
+    }
   }
   await DigitalCloneAvatarCandidate.updateMany({ companyId, userId, provider: provider.name, providerKeyHash: { $nin: seen }, status: { $ne: "revoked" } }, { $set: { status: "unavailable", providerReady: false } });
   return DigitalCloneAvatarCandidate.find({ companyId, userId, status: { $ne: "revoked" } }).sort({ providerReady: -1, displayName: 1 });

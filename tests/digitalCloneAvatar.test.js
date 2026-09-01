@@ -1,5 +1,6 @@
 import test, { after, before, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import mongoose from "mongoose";
 import { MongoMemoryServer } from "mongodb-memory-server";
@@ -52,8 +53,67 @@ test("discovery stores private provider references but returns safe candidates",
   assert.equal(state.availableAvatars[0].displayName, "Private Test Avatar");
   assert.equal("providerAvatarLookRef" in state.availableAvatars[0], false);
   assert.match(state.availableAvatars[0].previewPath, /^\/digital-clone\/avatar\/available\//);
-  await discoverAvatars({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  for (let attempt = 0; attempt < 10; attempt += 1) await discoverAvatars({ companyId: COMPANY_ID, userId: USER_ID, provider });
   assert.equal((await DigitalCloneAvatarCandidate.findById(candidate._id)).status, "selected");
+});
+
+test("discovery deduplicates repeated provider looks without merging distinct looks", async () => {
+  await authorize();
+  const shared = { groupRef: "group-one", lookRef: "look-one", defaultVoiceRef: "voice-one", displayName: "First", avatarType: "photo-avatar", orientation: "portrait", supportedCapabilities: ["avatar_v"], previewImageUrl: "https://files.heygen.ai/one.jpg", ready: true };
+  const provider = new MockAvatarProvider({ avatars: [shared, { ...shared, displayName: "Latest duplicate" }, { ...shared, lookRef: "look-two", displayName: "Distinct look" }] });
+  const candidates = await discoverAvatars({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  assert.equal(candidates.length, 2);
+  assert.deepEqual(new Set(candidates.map((candidate) => candidate.displayName)), new Set(["Latest duplicate", "Distinct look"]));
+  assert.equal(await DigitalCloneAvatarCandidate.countDocuments({ companyId: COMPANY_ID, userId: USER_ID }), 2);
+});
+
+test("existing production-style candidate and ten rediscoveries remain one updated candidate", async () => {
+  await authorize(); const provider = new MockAvatarProvider(); const value = provider.avatars[0];
+  const providerKeyHash = createHash("sha256").update(`${provider.name}:${value.groupRef}:${value.lookRef}`).digest("hex");
+  const existing = await DigitalCloneAvatarCandidate.create({ companyId: COMPANY_ID, userId: USER_ID, provider: provider.name, providerKeyHash, providerAvatarGroupRef: value.groupRef, providerAvatarLookRef: value.lookRef, providerDefaultVoiceRef: value.defaultVoiceRef, previewImageUrl: value.previewImageUrl, displayName: "Existing candidate", avatarType: value.avatarType, orientation: value.orientation, supportedCapabilities: value.supportedCapabilities, providerReady: true, status: "discovered", lastDiscoveredAt: new Date("2025-01-01") });
+  for (let attempt = 0; attempt < 10; attempt += 1) await discoverAvatars({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  const candidates = await DigitalCloneAvatarCandidate.find({ companyId: COMPANY_ID, userId: USER_ID });
+  assert.equal(candidates.length, 1);
+  assert.equal(String(candidates[0]._id), String(existing._id));
+  assert.equal(candidates[0].displayName, "Private Test Avatar");
+});
+
+test("concurrent discovery reconciles one canonical candidate without duplicate-key failure", async () => {
+  await authorize(); const provider = new MockAvatarProvider();
+  const results = await Promise.all(Array.from({ length: 10 }, () => discoverAvatars({ companyId: COMPANY_ID, userId: USER_ID, provider })));
+  assert.ok(results.every((candidates) => candidates.length === 1));
+  assert.equal(await DigitalCloneAvatarCandidate.countDocuments({ companyId: COMPANY_ID, userId: USER_ID }), 1);
+});
+
+test("canonical unique-index race re-reads the existing candidate without exposing E11000", async () => {
+  await authorize(); const provider = new MockAvatarProvider();
+  await discoverAvatars({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  const original = DigitalCloneAvatarCandidate.findOneAndUpdate; let injected = false;
+  DigitalCloneAvatarCandidate.findOneAndUpdate = function findOneAndUpdate(filter, update, options) {
+    if (options?.upsert && !injected) {
+      injected = true; const error = new Error("duplicate identity"); error.code = 11000; error.keyPattern = { companyId: 1, userId: 1, providerKeyHash: 1 };
+      return Promise.reject(error);
+    }
+    return original.call(this, filter, update, options);
+  };
+  try {
+    const candidates = await discoverAvatars({ companyId: COMPANY_ID, userId: USER_ID, provider });
+    assert.equal(candidates.length, 1);
+    assert.equal(await DigitalCloneAvatarCandidate.countDocuments({ companyId: COMPANY_ID, userId: USER_ID }), 1);
+  } finally { DigitalCloneAvatarCandidate.findOneAndUpdate = original; }
+});
+
+test("discovery identity remains isolated by both company and user", async () => {
+  const provider = new MockAvatarProvider();
+  await authorize(); await authorize({ companyId: COMPANY_ID, userId: OTHER_USER_ID }); await authorize({ companyId: OTHER_COMPANY_ID, userId: USER_ID });
+  await Promise.all([
+    discoverAvatars({ companyId: COMPANY_ID, userId: USER_ID, provider }),
+    discoverAvatars({ companyId: COMPANY_ID, userId: OTHER_USER_ID, provider }),
+    discoverAvatars({ companyId: OTHER_COMPANY_ID, userId: USER_ID, provider }),
+  ]);
+  assert.equal(await DigitalCloneAvatarCandidate.countDocuments({ companyId: COMPANY_ID, userId: USER_ID }), 1);
+  assert.equal(await DigitalCloneAvatarCandidate.countDocuments({ companyId: COMPANY_ID, userId: OTHER_USER_ID }), 1);
+  assert.equal(await DigitalCloneAvatarCandidate.countDocuments({ companyId: OTHER_COMPANY_ID, userId: USER_ID }), 1);
 });
 
 test("not-ready avatars and arbitrary or cross-tenant IDs cannot be selected", async () => {
