@@ -6,6 +6,7 @@ const DigitalCloneAvatarSchema = new mongoose.Schema({
   provider: { type: String, default: "", trim: true, maxlength: 80, select: false },
   status: { type: String, enum: ["not_started", "selected", "ready", "failed", "revoked"], default: "not_started", index: true },
   selectedAvatarId: { type: mongoose.Schema.Types.ObjectId, ref: "DigitalCloneAvatarCandidate", default: null },
+  selectedProviderVoiceId: { type: mongoose.Schema.Types.ObjectId, ref: "DigitalCloneAvatarProviderVoice", default: null },
   preferredOrientation: { type: String, enum: ["9:16", "16:9"], default: "9:16" },
   consent: {
     appearanceOwnershipOrAuthorization: { type: Boolean, default: false },

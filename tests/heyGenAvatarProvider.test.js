@@ -12,11 +12,12 @@ test("HeyGen discovery uses private v3 groups and looks and filters readiness", 
   const requests = [];
   const client = { async get(url, options) {
     requests.push({ url, options });
-    if (url.endsWith("/v3/avatars")) return { data: { data: [{ id: "group-1", name: "Private User", status: "completed", consent_status: "approved" }], has_more: false } };
+    if (url.endsWith("/v3/avatars")) return { data: { data: [{ id: "group-1", name: "Private User", status: "completed", consent_status: null }], has_more: false } };
     return { data: { data: [
       { id: "look-ready", group_id: "group-1", name: "Portrait", status: "completed", avatar_type: "photo_avatar", preferred_orientation: "portrait", default_voice_id: "voice-1", image_width: 720, image_height: 1280, supported_api_engines: ["avatar_v"] },
       { id: "look-training", group_id: "group-1", name: "Training", status: "training", supported_api_engines: ["avatar_v"] },
       { id: "look-no-voice", group_id: "group-1", name: "No voice", status: "completed", avatar_type: "digital_twin", supported_api_engines: ["avatar_v"] },
+      { id: "photo-no-voice", group_id: "group-1", name: "Photo no voice", status: "completed", avatar_type: "photo_avatar", supported_api_engines: ["avatar_iv"] },
     ], has_more: false } };
   } };
   const provider = new HeyGenAvatarProvider({ apiKey: "test-key", client });
@@ -27,15 +28,49 @@ test("HeyGen discovery uses private v3 groups and looks and filters readiness", 
   assert.equal(avatars[0].avatarType, "photo-avatar");
   assert.equal(avatars[0].orientation, "portrait");
   assert.equal(avatars[1].ready, false);
-  assert.equal(avatars[2].ready, false);
+  assert.equal(avatars[2].ready, true);
   assert.equal(avatars[2].avatarType, "digital-twin");
+  assert.deepEqual(avatars[2].readinessReasons, []);
+  assert.equal(avatars[3].ready, true);
+  assert.equal(avatars[3].avatarType, "photo-avatar");
 });
 
-test("HeyGen video creation uses v3, default provider voice, and no callback or audio URL", async () => {
+test("HeyGen avatar readiness fails closed for training, engine, group, and malformed fields", async () => {
+  const groups = [
+    { id: "pending", status: "processing", consent_status: "approved" },
+    { id: "failed", status: "failed", consent_status: "approved" },
+    { id: "unsupported", status: "completed", consent_status: "approved" },
+    { id: "missing-consent", status: "completed" },
+  ];
+  const looks = [
+    { id: "pending-look", group_id: "pending", status: "completed", supported_api_engines: ["avatar_v"] },
+    { id: "failed-look", group_id: "failed", status: "completed", supported_api_engines: ["avatar_v"] },
+    { id: "unsupported-look", group_id: "unsupported", status: "completed", supported_api_engines: ["avatar_iii"] },
+    { id: "missing-consent-look", group_id: "missing-consent", status: "completed", supported_api_engines: ["avatar_iv"] },
+    { id: "orphan-look", group_id: "orphan", status: "completed", supported_api_engines: ["avatar_iv"] },
+  ];
+  const client = { async get(url) { return { data: { data: url.endsWith("/v3/avatars") ? groups : looks, has_more: false } }; } };
+  const avatars = await new HeyGenAvatarProvider({ apiKey: "test-key", client }).listAvatars();
+  assert.deepEqual(avatars.map((avatar) => avatar.ready), [false, false, false, false, false]);
+  assert.deepEqual(avatars.map((avatar) => avatar.readinessReasons[0]), ["GROUP_TRAINING_NOT_READY", "GROUP_TRAINING_NOT_READY", "UNSUPPORTED_ENGINE", "MISSING_CONSENT_STATE", "MISSING_AVATAR_GROUP"]);
+});
+
+test("HeyGen voice discovery uses v3 public and private lists and normalizes without URLs", async () => {
+  const requests = [];
+  const client = { async get(url, options) { requests.push({ url, options }); return { data: { data: [{ voice_id: options.params.type === "private" ? "private-voice" : "public-voice", name: options.params.type === "private" ? "Private narrator" : "Public narrator", language: "English", gender: "female", type: options.params.type, preview_audio_url: "https://files.heygen.ai/private.mp3" }], has_more: false } }; } };
+  const provider = new HeyGenAvatarProvider({ apiKey: "test-key", client });
+  const voices = await provider.listVoices();
+  assert.deepEqual(requests.map(({ url }) => url), ["https://api.heygen.com/v3/voices", "https://api.heygen.com/v3/voices"]);
+  assert.deepEqual(requests.map(({ options }) => options.params.type), ["public", "private"]);
+  assert.equal(voices.length, 2);
+  assert.ok(voices.every((voice) => voice.ready && !("previewAudioUrl" in voice)));
+});
+
+test("HeyGen video creation uses explicit selected voice and no callback or audio URL", async () => {
   let request;
   const client = { async post(url, body, options) { request = { url, body, options }; return { data: { data: { video_id: "video-1" } } }; } };
   const provider = new HeyGenAvatarProvider({ apiKey: "test-key", client });
-  const result = await provider.createVideo({ avatar: { lookRef: "look-1", supportedCapabilities: ["avatar_v"] }, script: "Approved words", aspectRatio: "9:16", resolution: "720p", captions: true, background: "dark", idempotencyKey: "request-1" });
+  const result = await provider.createVideo({ avatar: { lookRef: "look-1", supportedCapabilities: ["avatar_v"] }, voice: { voiceRef: "voice-1" }, script: "Approved words", aspectRatio: "9:16", resolution: "720p", captions: true, background: "dark", idempotencyKey: "request-1" });
   assert.deepEqual(result, { jobRef: "video-1", status: "processing" });
   assert.equal(request.url, "https://api.heygen.com/v3/videos");
   assert.equal(request.body.avatar_id, "look-1");
@@ -43,7 +78,7 @@ test("HeyGen video creation uses v3, default provider voice, and no callback or 
   assert.equal(request.body.engine.type, "avatar_v");
   assert.deepEqual(request.body.caption, { file_format: "srt", style: "default" });
   assert.equal(request.body.audio_url, undefined);
-  assert.equal(request.body.voice_id, undefined);
+  assert.equal(request.body.voice_id, "voice-1");
   assert.equal(request.body.callback_url, undefined);
   assert.equal(request.options.headers["Idempotency-Key"], "request-1");
 });
@@ -53,7 +88,7 @@ test("HeyGen video generation uses the look ID, never the group ID, for photo av
   const client = { async post(url, body) { requests.push({ url, body }); return { data: { data: { video_id: `video-${requests.length}` } } }; } };
   const provider = new HeyGenAvatarProvider({ apiKey: "test-key", client });
   for (const [avatarType, groupRef, lookRef] of [["photo-avatar", "photo-group", "photo-look"], ["digital-twin", "twin-group", "twin-look"]]) {
-    await provider.createVideo({ avatar: { avatarType, groupRef, lookRef, supportedCapabilities: ["avatar_v"] }, script: "Approved words", aspectRatio: "16:9", resolution: "1080p", captions: false, background: "default", idempotencyKey: `${avatarType}-request` });
+    await provider.createVideo({ avatar: { avatarType, groupRef, lookRef, supportedCapabilities: ["avatar_v"] }, voice: { voiceRef: "voice-1" }, script: "Approved words", aspectRatio: "16:9", resolution: "1080p", captions: false, background: "default", idempotencyKey: `${avatarType}-request` });
   }
   assert.deepEqual(requests.map(({ body }) => body.avatar_id), ["photo-look", "twin-look"]);
   assert.ok(requests.every(({ body }) => !Object.values(body).includes("photo-group") && !Object.values(body).includes("twin-group")));

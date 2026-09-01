@@ -6,7 +6,7 @@ import requireCompanyApp from "../middleware/requireCompanyApp.js";
 import requireDigitalCloneMediaConsent from "../middleware/requireDigitalCloneMediaConsent.js";
 import requireDigitalCloneVoiceConsent from "../middleware/requireDigitalCloneVoiceConsent.js";
 import requireDigitalCloneAvatarConsent from "../middleware/requireDigitalCloneAvatarConsent.js";
-import { digitalCloneAvatarDiscoveryRateLimit, digitalCloneAvatarGenerationRateLimit, digitalCloneAvatarStatusRateLimit } from "../middleware/digitalCloneAvatarRateLimit.js";
+import { digitalCloneAvatarDiscoveryRateLimit, digitalCloneAvatarGenerationRateLimit, digitalCloneAvatarStatusRateLimit, digitalCloneAvatarVoiceDiscoveryRateLimit } from "../middleware/digitalCloneAvatarRateLimit.js";
 import { digitalCloneGenerationRateLimit } from "../middleware/digitalCloneGenerationRateLimit.js";
 import {
   digitalCloneImageRateLimit,
@@ -56,9 +56,9 @@ import {
 } from "../controllers/digitalCloneVoiceController.js";
 import {
   acceptDigitalCloneAvatarConsent, approveDigitalCloneAvatarVideo, createDigitalCloneAvatarVideo,
-  deliverDigitalCloneAvatarPreview, deliverDigitalCloneAvatarVideo, discoverDigitalCloneAvatars,
-  getDigitalCloneAvatar, getDigitalCloneAvatarVideoStatus, rejectDigitalCloneAvatarVideo,
-  revokeDigitalCloneAvatar, selectDigitalCloneAvatar,
+  deliverDigitalCloneAvatarPreview, deliverDigitalCloneAvatarVideo, discoverDigitalCloneAvatarProviderVoices, discoverDigitalCloneAvatars,
+  getDigitalCloneAvatar, getDigitalCloneAvatarProviderVoices, getDigitalCloneAvatarVideoStatus, rejectDigitalCloneAvatarVideo,
+  revokeDigitalCloneAvatar, selectDigitalCloneAvatar, selectDigitalCloneAvatarProviderVoice,
 } from "../controllers/digitalCloneAvatarController.js";
 
 const router = express.Router();
@@ -125,6 +125,9 @@ router.post("/avatar/consent", acceptDigitalCloneAvatarConsent);
 router.post("/avatar/discover", requireDigitalCloneAvatarConsent, digitalCloneAvatarDiscoveryRateLimit, discoverDigitalCloneAvatars);
 router.get("/avatar/available/:candidateId/preview", requireDigitalCloneAvatarConsent, deliverDigitalCloneAvatarPreview);
 router.post("/avatar/available/:candidateId/select", requireDigitalCloneAvatarConsent, selectDigitalCloneAvatar);
+router.get("/avatar/provider-voices", requireDigitalCloneAvatarConsent, getDigitalCloneAvatarProviderVoices);
+router.post("/avatar/provider-voices/discover", requireDigitalCloneAvatarConsent, digitalCloneAvatarVoiceDiscoveryRateLimit, discoverDigitalCloneAvatarProviderVoices);
+router.post("/avatar/provider-voices/:voiceId/select", requireDigitalCloneAvatarConsent, digitalCloneAvatarVoiceDiscoveryRateLimit, selectDigitalCloneAvatarProviderVoice);
 router.post("/avatar/videos", requireDigitalCloneAvatarConsent, digitalCloneAvatarGenerationRateLimit, createDigitalCloneAvatarVideo);
 router.get("/avatar/videos/:videoId/status", requireDigitalCloneAvatarConsent, digitalCloneAvatarStatusRateLimit, getDigitalCloneAvatarVideoStatus);
 router.get("/avatar/videos/:videoId/delivery", requireDigitalCloneAvatarConsent, deliverDigitalCloneAvatarVideo);

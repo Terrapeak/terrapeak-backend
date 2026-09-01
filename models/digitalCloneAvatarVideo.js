@@ -4,6 +4,7 @@ const DigitalCloneAvatarVideoSchema = new mongoose.Schema({
   companyId: { type: mongoose.Schema.Types.ObjectId, ref: "Company", required: true, index: true },
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
   avatarId: { type: mongoose.Schema.Types.ObjectId, ref: "DigitalCloneAvatarCandidate", required: true, index: true },
+  providerVoiceId: { type: mongoose.Schema.Types.ObjectId, ref: "DigitalCloneAvatarProviderVoice", default: null, index: true },
   sourceDraftId: { type: mongoose.Schema.Types.ObjectId, ref: "DigitalCloneGeneration", default: null },
   sourceType: { type: String, enum: ["approved-draft", "manual-test"], required: true },
   scriptSnapshot: { type: String, required: true, maxlength: 1200 },

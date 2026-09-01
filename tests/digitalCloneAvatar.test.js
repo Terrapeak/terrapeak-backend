@@ -8,14 +8,15 @@ import DigitalCloneProfile from "../models/digitalCloneProfile.js";
 import DigitalCloneGeneration from "../models/digitalCloneGeneration.js";
 import DigitalCloneAvatar from "../models/digitalCloneAvatar.js";
 import DigitalCloneAvatarCandidate from "../models/digitalCloneAvatarCandidate.js";
+import DigitalCloneAvatarProviderVoice from "../models/digitalCloneAvatarProviderVoice.js";
 import DigitalCloneAvatarVideo from "../models/digitalCloneAvatarVideo.js";
 import MockAvatarProvider from "../providers/digitalCloneAvatar/mockAvatarProvider.js";
 import { DIGITAL_CLONE_AVATAR_RATE_LIMITS } from "../middleware/digitalCloneAvatarRateLimit.js";
 import { assertHeyGenMediaUrl, copyProviderVideoToPrivateStorage, readBoundedResponse, streamHeyGenPreview } from "../services/digitalCloneAvatarStorageService.js";
 import {
-  acceptAvatarConsent, approveAvatarVideo, assertAvatarConsent, createAvatarVideo, discoverAvatars,
-  getAvatarPreviewDelivery, getAvatarState, getAvatarVideoDelivery, refreshAvatarVideo, rejectAvatarVideo,
-  revokeAvatar, selectAvatar,
+  acceptAvatarConsent, approveAvatarVideo, assertAvatarConsent, createAvatarVideo, discoverAvatarProviderVoices, discoverAvatars,
+  getAvatarPreviewDelivery, getAvatarProviderVoiceState, getAvatarState, getAvatarVideoDelivery, refreshAvatarVideo, rejectAvatarVideo,
+  revokeAvatar, selectAvatar, selectAvatarProviderVoice,
 } from "../services/digitalCloneAvatarService.js";
 
 const COMPANY_ID = new mongoose.Types.ObjectId();
@@ -27,12 +28,12 @@ let mongo;
 
 const createProfile = ({ companyId = COMPANY_ID, userId = USER_ID } = {}) => DigitalCloneProfile.create({ companyId, userId, status: "consented", consent: { identityConfirmed: true, mediaRightsConfirmed: true, aiRepresentationConsent: true, acceptedAt: new Date() } });
 const authorize = async (scope = {}) => { await createProfile(scope); return acceptAvatarConsent({ companyId: scope.companyId || COMPANY_ID, userId: scope.userId || USER_ID, body: consentBody, acceptedIp: "127.0.0.1" }); };
-const prepareSelection = async ({ companyId = COMPANY_ID, userId = USER_ID, provider = new MockAvatarProvider() } = {}) => { await authorize({ companyId, userId }); const candidates = await discoverAvatars({ companyId, userId, provider }); await selectAvatar({ companyId, userId, candidateId: candidates[0]._id, provider }); return { candidate: candidates[0], provider }; };
+const prepareSelection = async ({ companyId = COMPANY_ID, userId = USER_ID, provider = new MockAvatarProvider() } = {}) => { await authorize({ companyId, userId }); const candidates = await discoverAvatars({ companyId, userId, provider }); await selectAvatar({ companyId, userId, candidateId: candidates[0]._id, provider }); const voices = await discoverAvatarProviderVoices({ companyId, userId, provider }); await selectAvatarProviderVoice({ companyId, userId, voiceId: voices[0]._id, provider }); return { candidate: candidates[0], voice: voices[0], provider }; };
 const approvedDraft = () => DigitalCloneGeneration.create({ companyId: COMPANY_ID, userId: USER_ID, contentType: "short-video-script", topic: "Launch", length: "short", originalGeneratedText: "Original", currentText: "Approved script", finalApprovedText: "Approved script", status: "approved", approvedAt: new Date() });
 const mp4 = () => { const value = Buffer.alloc(24); value.writeUInt32BE(24, 0); value.write("ftyp", 4); value.write("mp42", 8); return value; };
 
-before(async () => { mongo = await MongoMemoryServer.create(); await mongoose.connect(mongo.getUri()); await Promise.all([DigitalCloneAvatar.syncIndexes(), DigitalCloneAvatarCandidate.syncIndexes(), DigitalCloneAvatarVideo.syncIndexes()]); });
-beforeEach(async () => { await Promise.all([DigitalCloneProfile.deleteMany({}), DigitalCloneGeneration.deleteMany({}), DigitalCloneAvatar.deleteMany({}), DigitalCloneAvatarCandidate.deleteMany({}), DigitalCloneAvatarVideo.deleteMany({})]); });
+before(async () => { mongo = await MongoMemoryServer.create(); await mongoose.connect(mongo.getUri()); await Promise.all([DigitalCloneAvatar.syncIndexes(), DigitalCloneAvatarCandidate.syncIndexes(), DigitalCloneAvatarProviderVoice.syncIndexes(), DigitalCloneAvatarVideo.syncIndexes()]); });
+beforeEach(async () => { await Promise.all([DigitalCloneProfile.deleteMany({}), DigitalCloneGeneration.deleteMany({}), DigitalCloneAvatar.deleteMany({}), DigitalCloneAvatarCandidate.deleteMany({}), DigitalCloneAvatarProviderVoice.deleteMany({}), DigitalCloneAvatarVideo.deleteMany({})]); });
 after(async () => { await mongoose.disconnect(); await mongo.stop(); });
 
 test("avatar authorization requires current base consent and all explicit affirmations", async () => {
@@ -124,6 +125,61 @@ test("not-ready avatars and arbitrary or cross-tenant IDs cannot be selected", a
   await authorize({ companyId: OTHER_COMPANY_ID, userId: OTHER_USER_ID });
   await assert.rejects(selectAvatar({ companyId: OTHER_COMPANY_ID, userId: OTHER_USER_ID, candidateId: candidate._id, provider }), (error) => error.code === "AVATAR_NOT_FOUND");
   await assert.rejects(selectAvatar({ companyId: COMPANY_ID, userId: USER_ID, candidateId: new mongoose.Types.ObjectId(), provider }), (error) => error.code === "AVATAR_NOT_FOUND");
+});
+
+test("provider voice discovery deduplicates, preserves selection, and marks unavailable voices not ready", async () => {
+  await authorize();
+  const shared = { voiceRef: "voice-one", displayName: "First", language: "English", gender: "female", voiceType: "public", ready: true };
+  const provider = new MockAvatarProvider({ voices: [shared, { ...shared, displayName: "Latest duplicate" }, { ...shared, voiceRef: "voice-two", displayName: "Distinct voice" }] });
+  const voices = await discoverAvatarProviderVoices({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  assert.equal(voices.length, 2);
+  const selected = voices.find((voice) => voice.displayName === "Latest duplicate");
+  await selectAvatarProviderVoice({ companyId: COMPANY_ID, userId: USER_ID, voiceId: selected._id, provider });
+  for (let attempt = 0; attempt < 5; attempt += 1) await discoverAvatarProviderVoices({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  assert.equal((await DigitalCloneAvatarProviderVoice.findById(selected._id)).status, "selected");
+  const safeState = await getAvatarProviderVoiceState({ companyId: COMPANY_ID, userId: USER_ID });
+  assert.equal(safeState.availableProviderVoices.length, 2);
+  assert.equal("providerVoiceRef" in safeState.availableProviderVoices[0], false);
+  assert.equal("providerKeyHash" in safeState.availableProviderVoices[0], false);
+  provider.voices = provider.voices.filter((voice) => voice.voiceRef !== "voice-one");
+  await discoverAvatarProviderVoices({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  const unavailable = await DigitalCloneAvatarProviderVoice.findById(selected._id);
+  assert.equal(unavailable.status, "unavailable");
+  assert.equal(unavailable.providerReady, false);
+});
+
+test("concurrent provider voice discovery reconciles canonical records without duplicates", async () => {
+  await authorize(); const provider = new MockAvatarProvider({ voices: [{ voiceRef: "voice-one", displayName: "One", ready: true }, { voiceRef: "voice-two", displayName: "Two", ready: true }] });
+  await Promise.all(Array.from({ length: 10 }, () => discoverAvatarProviderVoices({ companyId: COMPANY_ID, userId: USER_ID, provider })));
+  assert.equal(await DigitalCloneAvatarProviderVoice.countDocuments({ companyId: COMPANY_ID, userId: USER_ID }), 2);
+});
+
+test("provider voice records and selection are isolated by both company and user", async () => {
+  const provider = new MockAvatarProvider();
+  await authorize(); await authorize({ companyId: COMPANY_ID, userId: OTHER_USER_ID }); await authorize({ companyId: OTHER_COMPANY_ID, userId: USER_ID });
+  const [ownedVoices] = await Promise.all([
+    discoverAvatarProviderVoices({ companyId: COMPANY_ID, userId: USER_ID, provider }),
+    discoverAvatarProviderVoices({ companyId: COMPANY_ID, userId: OTHER_USER_ID, provider }),
+    discoverAvatarProviderVoices({ companyId: OTHER_COMPANY_ID, userId: USER_ID, provider }),
+  ]);
+  assert.equal(await DigitalCloneAvatarProviderVoice.countDocuments({}), 3);
+  await assert.rejects(selectAvatarProviderVoice({ companyId: COMPANY_ID, userId: OTHER_USER_ID, voiceId: ownedVoices[0]._id, provider }), (error) => error.code === "AVATAR_PROVIDER_VOICE_NOT_FOUND");
+  await assert.rejects(selectAvatarProviderVoice({ companyId: OTHER_COMPANY_ID, userId: USER_ID, voiceId: ownedVoices[0]._id, provider }), (error) => error.code === "AVATAR_PROVIDER_VOICE_NOT_FOUND");
+});
+
+test("generation resolves only server-side look and voice references and requires both readiness states", async () => {
+  const { candidate, voice, provider } = await prepareSelection(); const body = { sourceType: "manual-test", script: "Server resolved references" };
+  await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body, provider });
+  assert.equal(provider.lastCreateInput.avatar.lookRef, provider.avatars[0].lookRef);
+  assert.equal(provider.lastCreateInput.voice.voiceRef, provider.voices[0].voiceRef);
+  assert.notEqual(provider.lastCreateInput.avatar.lookRef, String(candidate._id));
+  assert.notEqual(provider.lastCreateInput.voice.voiceRef, String(voice._id));
+  await assert.rejects(createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { ...body, providerVoiceId: "injected" }, provider }), (error) => error.code === "AVATAR_VIDEO_INVALID");
+  await DigitalCloneAvatar.findOneAndUpdate({ companyId: COMPANY_ID, userId: USER_ID }, { $set: { selectedProviderVoiceId: null } });
+  await assert.rejects(createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { ...body, script: "No selected voice" }, provider }), (error) => error.code === "AVATAR_PROVIDER_VOICE_NOT_READY");
+  await DigitalCloneAvatar.findOneAndUpdate({ companyId: COMPANY_ID, userId: USER_ID }, { $set: { selectedProviderVoiceId: voice._id } });
+  await DigitalCloneAvatarCandidate.updateOne({ _id: candidate._id }, { $set: { providerReady: false, status: "unavailable" } });
+  await assert.rejects(createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { ...body, script: "Avatar not ready" }, provider }), (error) => error.code === "AVATAR_NOT_READY");
 });
 
 test("generation accepts only approved owned short-video drafts and deduplicates paid requests", async () => {
@@ -291,5 +347,5 @@ test("preview proxy validates image MIME and signature before delivery", async (
 });
 
 test("avatar rate-limit defaults control discovery, polling, and paid generation", () => {
-  assert.deepEqual(DIGITAL_CLONE_AVATAR_RATE_LIMITS, { discoveryPer15Minutes: 10, generationPerHour: 3, statusPer15Minutes: 120 });
+  assert.deepEqual(DIGITAL_CLONE_AVATAR_RATE_LIMITS, { discoveryPer15Minutes: 10, voiceDiscoveryPer15Minutes: 10, generationPerHour: 3, statusPer15Minutes: 120 });
 });

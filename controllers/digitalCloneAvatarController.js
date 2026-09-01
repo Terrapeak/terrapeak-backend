@@ -1,7 +1,7 @@
 import {
-  acceptAvatarConsent, approveAvatarVideo, createAvatarVideo, discoverAvatars, getAvatarPreviewDelivery,
-  getAvatarState, getAvatarVideoDelivery, refreshAvatarVideo, rejectAvatarVideo, revokeAvatar,
-  selectAvatar, serializeAvatarVideo,
+  acceptAvatarConsent, approveAvatarVideo, createAvatarVideo, discoverAvatarProviderVoices, discoverAvatars, getAvatarPreviewDelivery,
+  getAvatarProviderVoiceState, getAvatarState, getAvatarVideoDelivery, refreshAvatarVideo, rejectAvatarVideo, revokeAvatar,
+  selectAvatar, selectAvatarProviderVoice, serializeAvatarVideo,
 } from "../services/digitalCloneAvatarService.js";
 
 const scope = (req) => ({ companyId: req.company._id, userId: req.userId });
@@ -9,6 +9,9 @@ export const getDigitalCloneAvatar = async (req, res, next) => { try { return re
 export const acceptDigitalCloneAvatarConsent = async (req, res, next) => { try { await acceptAvatarConsent({ ...scope(req), body: req.body, acceptedIp: req.ip }); return res.json({ success: true, data: await getAvatarState(scope(req)) }); } catch (error) { return next(error); } };
 export const discoverDigitalCloneAvatars = async (req, res, next) => { try { await discoverAvatars(scope(req)); return res.json({ success: true, data: await getAvatarState(scope(req)) }); } catch (error) { return next(error); } };
 export const selectDigitalCloneAvatar = async (req, res, next) => { try { await selectAvatar({ ...scope(req), candidateId: req.params.candidateId }); return res.json({ success: true, data: await getAvatarState(scope(req)) }); } catch (error) { return next(error); } };
+export const getDigitalCloneAvatarProviderVoices = async (req, res, next) => { try { return res.json({ success: true, data: await getAvatarProviderVoiceState(scope(req)) }); } catch (error) { return next(error); } };
+export const discoverDigitalCloneAvatarProviderVoices = async (req, res, next) => { try { await discoverAvatarProviderVoices(scope(req)); return res.json({ success: true, data: await getAvatarProviderVoiceState(scope(req)) }); } catch (error) { return next(error); } };
+export const selectDigitalCloneAvatarProviderVoice = async (req, res, next) => { try { await selectAvatarProviderVoice({ ...scope(req), voiceId: req.params.voiceId }); return res.json({ success: true, data: await getAvatarState(scope(req)) }); } catch (error) { return next(error); } };
 export const deliverDigitalCloneAvatarPreview = async (req, res, next) => { try { const { stream, mimeType } = await getAvatarPreviewDelivery({ ...scope(req), candidateId: req.params.candidateId }); res.set("Content-Type", mimeType); res.set("X-Content-Type-Options", "nosniff"); res.set("Cache-Control", "private, no-store"); stream.on("error", next); return stream.pipe(res); } catch (error) { return next(error); } };
 export const createDigitalCloneAvatarVideo = async (req, res, next) => { try { const video = await createAvatarVideo({ ...scope(req), body: req.body }); return res.status(202).json({ success: true, data: serializeAvatarVideo(video) }); } catch (error) { return next(error); } };
 export const getDigitalCloneAvatarVideoStatus = async (req, res, next) => { try { const video = await refreshAvatarVideo({ ...scope(req), videoId: req.params.videoId }); return res.json({ success: true, data: serializeAvatarVideo(video) }); } catch (error) { return next(error); } };
