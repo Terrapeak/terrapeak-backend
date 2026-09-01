@@ -63,7 +63,7 @@ export const acceptAvatarConsent = async ({ companyId, userId, body, acceptedIp 
 };
 export const discoverAvatars = async ({ companyId, userId, provider: injectedProvider }) => {
   await assertAvatarConsent({ companyId, userId }); const provider = injectedProvider || resolveAvatarProvider(); let values;
-  try { values = await provider.listAvatars({ diagnostic: true }); } catch (error) { throw sanitizeProviderError(error); }
+  try { values = await provider.listAvatars(); } catch (error) { throw sanitizeProviderError(error); }
   if (!Array.isArray(values)) throw avatarServiceError("AVATAR_PROVIDER_INVALID_RESPONSE", "TerraPeak Avatar returned an invalid response.", 502);
   const normalized = new Map();
   for (const value of values.slice(0, 200)) {

@@ -3,11 +3,6 @@ import BaseAvatarProvider from "./baseAvatarProvider.js";
 
 const API_BASE_URL = "https://api.heygen.com";
 const TIMEOUT_MS = 30_000;
-const AVATAR_DIAGNOSTIC_VERSION = "avatar-live-contract-v1";
-const PAGE_KEYS = ["data", "items", "has_more", "next_token"];
-const GROUP_ITEM_FIELDS = ["id", "status", "consent_status"];
-const LOOK_ITEM_FIELDS = ["id", "group_id", "status", "supported_api_engines", "avatar_type", "default_voice_id", "preferred_orientation"];
-const READINESS_REASONS = ["GROUP_NOT_FOUND", "GROUP_STATUS_MISSING", "GROUP_STATUS_INVALID", "CONSENT_INVALID", "LOOK_STATUS_MISSING", "LOOK_STATUS_INVALID", "SUPPORTED_ENGINES_MISSING", "UNSUPPORTED_ENGINE"];
 const avatarError = (code, statusCode = 502) => {
   const messages = {
     AVATAR_PROVIDER_NOT_CONFIGURED: "TerraPeak Avatar is not configured.", AVATAR_PROVIDER_AUTH_FAILED: "TerraPeak Avatar authentication failed.",
@@ -29,13 +24,6 @@ const extractPage = (response) => {
   if (!items || typeof page.has_more !== "boolean") throw avatarError("AVATAR_PROVIDER_INVALID_RESPONSE");
   return { items, hasMore: page.has_more, nextToken: page.next_token };
 };
-const diagnosticTracker = (fields) => ({ pageCount: 0, topLevelKeys: new Set(), itemFieldPresence: Object.fromEntries(fields.map((field) => [field, false])) });
-const recordPageShape = (tracker, response, items) => {
-  if (!tracker) return;
-  tracker.pageCount += 1; const body = response?.data;
-  for (const key of PAGE_KEYS) if (Object.prototype.hasOwnProperty.call(body || {}, key)) tracker.topLevelKeys.add(key);
-  for (const item of items) for (const field of Object.keys(tracker.itemFieldPresence)) if (Object.prototype.hasOwnProperty.call(item || {}, field)) tracker.itemFieldPresence[field] = true;
-};
 export const mapHeyGenError = (error, operation = "request") => {
   if (error?.code?.startsWith?.("AVATAR_")) return error;
   if (["ECONNABORTED", "ETIMEDOUT"].includes(error?.code)) return avatarError("AVATAR_PROVIDER_TIMEOUT", 504);
@@ -55,11 +43,12 @@ const normalizeType = (value) => ({ photo_avatar: "photo-avatar", digital_twin: 
 const normalizeOrientation = (look) => { const preferred = safeCode(look.preferred_orientation); if (["portrait", "landscape"].includes(preferred)) return preferred; const width = Number(look.image_width); const height = Number(look.image_height); if (!width || !height) return "unknown"; return width === height ? "square" : height > width ? "portrait" : "landscape"; };
 const normalizeLook = (group, look) => {
   const engines = Array.isArray(look.supported_api_engines) ? look.supported_api_engines.map(safeCode).filter(Boolean) : [];
+  const groupStatus = group?.status == null ? null : safeCode(group.status);
+  const consentStatus = group?.consent_status == null ? null : safeCode(group.consent_status);
   let primaryReason = "";
   if (!group) primaryReason = "GROUP_NOT_FOUND";
-  else if (group.status === undefined) primaryReason = "GROUP_STATUS_MISSING";
-  else if (group.status !== null && group.status !== "completed") primaryReason = "GROUP_STATUS_INVALID";
-  else if (group.consent_status !== null && group.consent_status !== "approved") primaryReason = "CONSENT_INVALID";
+  else if (groupStatus !== null && groupStatus !== "completed") primaryReason = "GROUP_STATUS_INVALID";
+  else if (consentStatus !== null && !["approved", "completed"].includes(consentStatus)) primaryReason = "CONSENT_INVALID";
   else if (look?.status == null) primaryReason = "LOOK_STATUS_MISSING";
   else if (look.status !== "completed") primaryReason = "LOOK_STATUS_INVALID";
   else if (!Array.isArray(look.supported_api_engines) || engines.length === 0) primaryReason = "SUPPORTED_ENGINES_MISSING";
@@ -80,33 +69,27 @@ const normalizeVoice = (voice) => {
 };
 
 export default class HeyGenAvatarProvider extends BaseAvatarProvider {
-  constructor({ apiKey = process.env.HEYGEN_API_KEY, client = axios, timeoutMs = TIMEOUT_MS, baseUrl = API_BASE_URL, logger = console } = {}) {
-    super({ name: "heygen" }); this.apiKey = String(apiKey || "").trim(); this.client = client; this.timeoutMs = timeoutMs; this.baseUrl = String(baseUrl || "").replace(/\/$/, ""); this.logger = logger;
+  constructor({ apiKey = process.env.HEYGEN_API_KEY, client = axios, timeoutMs = TIMEOUT_MS, baseUrl = API_BASE_URL } = {}) {
+    super({ name: "heygen" }); this.apiKey = String(apiKey || "").trim(); this.client = client; this.timeoutMs = timeoutMs; this.baseUrl = String(baseUrl || "").replace(/\/$/, "");
   }
   assertConfigured() { if (!this.apiKey || this.baseUrl !== API_BASE_URL) throw avatarError("AVATAR_PROVIDER_NOT_CONFIGURED", 503); }
   options(extra = {}) { return { ...extra, headers: { "x-api-key": this.apiKey, ...(extra.headers || {}) }, timeout: this.timeoutMs }; }
-  async paged(path, params = {}, tracker = null) {
+  async paged(path, params = {}) {
     const values = []; const seenTokens = new Set(); let token;
     for (let page = 0; page < 10; page += 1) {
       const response = await this.client.get(`${this.baseUrl}${path}`, this.options({ params: { ...params, limit: 50, ...(token ? { token } : {}) } }));
-      const result = extractPage(response); recordPageShape(tracker, response, result.items); values.push(...result.items); if (!result.hasMore) return values;
+      const result = extractPage(response); values.push(...result.items); if (!result.hasMore) return values;
       token = String(result.nextToken || "").trim(); if (!token || seenTokens.has(token)) throw avatarError("AVATAR_PROVIDER_INVALID_RESPONSE");
       seenTokens.add(token);
     }
     throw avatarError("AVATAR_PROVIDER_INVALID_RESPONSE");
   }
-  async listAvatars({ diagnostic = false } = {}) {
+  async listAvatars() {
     this.assertConfigured();
     try {
-      const groupDiagnostic = diagnostic ? diagnosticTracker(GROUP_ITEM_FIELDS) : null; const lookDiagnostic = diagnostic ? diagnosticTracker(LOOK_ITEM_FIELDS) : null;
-      const [groups, looks] = await Promise.all([this.paged("/v3/avatars", { ownership: "private" }, groupDiagnostic), this.paged("/v3/avatars/looks", { ownership: "private" }, lookDiagnostic)]);
+      const [groups, looks] = await Promise.all([this.paged("/v3/avatars", { ownership: "private" }), this.paged("/v3/avatars/looks", { ownership: "private" })]);
       const byId = new Map(groups.map((group) => [String(group.id), group]));
       const normalized = looks.map((look) => normalizeLook(byId.get(String(look.group_id)), look)).filter((item) => item.groupRef && item.lookRef);
-      if (diagnostic) {
-        const readinessReasonCounts = Object.fromEntries(READINESS_REASONS.map((reason) => [reason, 0])); let readyCount = 0;
-        for (const avatar of normalized) { if (avatar.ready) readyCount += 1; else readinessReasonCounts[avatar.readinessReasons[0]] += 1; }
-        this.logger.info?.({ event: "digital_clone_avatar_discovery_diagnostic", diagnosticVersion: AVATAR_DIAGNOSTIC_VERSION, provider: this.name, groupPageCount: groupDiagnostic.pageCount, groupCount: groups.length, lookPageCount: lookDiagnostic.pageCount, lookCount: looks.length, readyCount, notReadyCount: normalized.length - readyCount, readinessReasonCounts, groupTopLevelKeys: PAGE_KEYS.filter((key) => groupDiagnostic.topLevelKeys.has(key)), lookTopLevelKeys: PAGE_KEYS.filter((key) => lookDiagnostic.topLevelKeys.has(key)), groupItemFieldPresence: groupDiagnostic.itemFieldPresence, lookItemFieldPresence: lookDiagnostic.itemFieldPresence });
-      }
       return normalized;
     } catch (error) { throw mapHeyGenError(error, "discovery"); }
   }

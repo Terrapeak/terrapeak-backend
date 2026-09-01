@@ -35,49 +35,55 @@ test("HeyGen discovery uses private v3 groups and looks and filters readiness", 
   assert.equal(avatars[3].avatarType, "photo-avatar");
 });
 
-test("HeyGen treats nullable group status as look-authoritative for live photo and digital twin shapes", async () => {
+test("HeyGen accepts production groups with omitted readiness metadata for photo and digital twin looks", async () => {
   const groups = [
-    { id: "tim-group", name: "Tim", status: null, consent_status: null, looks_count: 1 },
-    { id: "ray-group", name: "Ray", status: null, consent_status: null },
+    { id: "test-photo-group" },
+    { id: "test-twin-group" },
   ];
   const looks = [
-    { id: "tim-photo", group_id: "tim-group", name: "Tim", avatar_type: "photo_avatar", status: "completed", supported_api_engines: ["avatar_v", "avatar_iv", "avatar_iii"], default_voice_id: null },
-    { id: "ray-twin", group_id: "ray-group", name: "Ray Digital Twin", avatar_type: "digital_twin", status: "completed", supported_api_engines: ["avatar_v", "avatar_iv", "avatar_iii"], default_voice_id: "voice-ray" },
+    { id: "test-photo-look", group_id: "test-photo-group", avatar_type: "photo_avatar", status: "completed", supported_api_engines: ["avatar_v", "avatar_iv", "avatar_iii"] },
+    { id: "test-twin-look", group_id: "test-twin-group", avatar_type: "digital_twin", status: "completed", supported_api_engines: ["avatar_v", "avatar_iv", "avatar_iii"] },
   ];
   const client = { async get(url) { return { data: { items: url.endsWith("/v3/avatars") ? groups : looks, has_more: false } }; } };
   const avatars = await new HeyGenAvatarProvider({ apiKey: "test-key", client }).listAvatars();
   assert.deepEqual(avatars.map(({ ready }) => ready), [true, true]);
   assert.deepEqual(avatars.map(({ avatarType }) => avatarType), ["photo-avatar", "digital-twin"]);
   assert.deepEqual(avatars.map(({ readinessReasons }) => readinessReasons), [[], []]);
-  assert.equal(avatars[0].defaultVoiceRef, "");
-  assert.equal(avatars[1].defaultVoiceRef, "voice-ray");
+  assert.ok(avatars.every(({ defaultVoiceRef }) => defaultVoiceRef === ""));
 });
 
-test("HeyGen avatar readiness fails closed for training, engine, group, and malformed fields", async () => {
+test("HeyGen group metadata is optional but explicit non-ready values and invalid looks fail closed", async () => {
   const groups = [
-    { id: "pending", status: "processing", consent_status: "approved" },
-    { id: "failed", status: "failed", consent_status: "approved" },
-    { id: "unsupported", status: "completed", consent_status: "approved" },
-    { id: "missing-consent", status: "completed" },
+    { id: "null-metadata", status: null, consent_status: null },
     { id: "missing-status", consent_status: "approved" },
+    { id: "missing-consent", status: "completed" },
+    { id: "completed-approved", status: "completed", consent_status: "approved" },
+    { id: "completed-consent", status: "completed", consent_status: "completed" },
+    { id: "pending", status: "pending", consent_status: "approved" },
+    { id: "failed", status: "failed", consent_status: "approved" },
+    { id: "pending-consent", status: "completed", consent_status: "pending" },
     { id: "denied-consent", status: "completed", consent_status: "denied" },
-    { id: "missing-engines", status: "completed", consent_status: "approved" },
+    { id: "invalid-look", status: "completed", consent_status: "approved" },
   ];
   const looks = [
+    { id: "null-look", group_id: "null-metadata", status: "completed", supported_api_engines: ["avatar_v"] },
+    { id: "missing-status-look", group_id: "missing-status", status: "completed", supported_api_engines: ["avatar_v"] },
+    { id: "missing-consent-look", group_id: "missing-consent", status: "completed", supported_api_engines: ["avatar_iv"] },
+    { id: "approved-look", group_id: "completed-approved", status: "completed", supported_api_engines: ["avatar_iv"] },
+    { id: "completed-consent-look", group_id: "completed-consent", status: "completed", supported_api_engines: ["avatar_v"] },
     { id: "pending-look", group_id: "pending", status: "completed", supported_api_engines: ["avatar_v"] },
     { id: "failed-look", group_id: "failed", status: "completed", supported_api_engines: ["avatar_v"] },
-    { id: "unsupported-look", group_id: "unsupported", status: "completed", supported_api_engines: ["avatar_iii"] },
-    { id: "missing-consent-look", group_id: "missing-consent", status: "completed", supported_api_engines: ["avatar_iv"] },
-    { id: "missing-status-look", group_id: "missing-status", status: "completed", supported_api_engines: ["avatar_iv"] },
+    { id: "pending-consent-look", group_id: "pending-consent", status: "completed", supported_api_engines: ["avatar_iv"] },
     { id: "denied-consent-look", group_id: "denied-consent", status: "completed", supported_api_engines: ["avatar_iv"] },
-    { id: "missing-engines-look", group_id: "missing-engines", status: "completed" },
+    { id: "processing-look", group_id: "invalid-look", status: "processing", supported_api_engines: ["avatar_v"] },
+    { id: "missing-engines-look", group_id: "invalid-look", status: "completed" },
+    { id: "unsupported-look", group_id: "invalid-look", status: "completed", supported_api_engines: ["avatar_iii"] },
     { id: "orphan-look", group_id: "orphan", status: "completed", supported_api_engines: ["avatar_iv"] },
   ];
   const client = { async get(url) { return { data: { data: url.endsWith("/v3/avatars") ? groups : looks, has_more: false } }; } };
   const avatars = await new HeyGenAvatarProvider({ apiKey: "test-key", client }).listAvatars();
-  assert.deepEqual(avatars.map((avatar) => avatar.ready), [false, false, false, false, false, false, false, false]);
-  assert.ok(avatars.every((avatar) => avatar.readinessReasons.length === 1));
-  assert.deepEqual(avatars.map((avatar) => avatar.readinessReasons[0]), ["GROUP_STATUS_INVALID", "GROUP_STATUS_INVALID", "UNSUPPORTED_ENGINE", "CONSENT_INVALID", "GROUP_STATUS_MISSING", "CONSENT_INVALID", "SUPPORTED_ENGINES_MISSING", "GROUP_NOT_FOUND"]);
+  assert.deepEqual(avatars.map((avatar) => avatar.ready), [true, true, true, true, true, false, false, false, false, false, false, false, false]);
+  assert.deepEqual(avatars.map((avatar) => avatar.readinessReasons[0] || null), [null, null, null, null, null, "GROUP_STATUS_INVALID", "GROUP_STATUS_INVALID", "CONSENT_INVALID", "CONSENT_INVALID", "LOOK_STATUS_INVALID", "SUPPORTED_ENGINES_MISSING", "UNSUPPORTED_ENGINE", "GROUP_NOT_FOUND"]);
 });
 
 test("HeyGen voice discovery accepts live items envelopes, paginates public voices, and deduplicates private voices", async () => {

@@ -62,8 +62,8 @@ test("discovery stores private provider references but returns safe candidates",
 test("live HeyGen items envelopes stay ready through persistence and safe serialization", async () => {
   await authorize();
   const groups = [
-    { id: "tim-group", name: "Tim", status: null, consent_status: null },
-    { id: "ray-group", name: "Ray", status: null, consent_status: null },
+    { id: "tim-group", name: "Tim" },
+    { id: "ray-group", name: "Ray" },
   ];
   const looks = [
     { id: "tim-look", group_id: "tim-group", name: "Tim", avatar_type: "photo_avatar", status: "completed", supported_api_engines: ["avatar_v", "avatar_iv", "avatar_iii"], default_voice_id: null },
@@ -75,21 +75,10 @@ test("live HeyGen items envelopes stay ready through persistence and safe serial
     if (url.endsWith("/v3/avatars/looks")) return { data: { items: looks, has_more: false } };
     return { data: { items: [{ voice_id: `${options.params.type}-voice`, name: `${options.params.type} narrator`, language: "English", gender: "female", type: options.params.type }], has_more: false } };
   } };
-  const diagnostics = []; const provider = new HeyGenAvatarProvider({ apiKey: "test-key", client, logger: { info: (event) => diagnostics.push(event) } });
+  const provider = new HeyGenAvatarProvider({ apiKey: "test-key", client });
   const candidates = await discoverAvatars({ companyId: COMPANY_ID, userId: USER_ID, provider });
   assert.equal(candidates.filter(({ providerReady }) => providerReady).length, 2);
   assert.equal(candidates.find(({ displayName }) => displayName === "Unsupported").status, "unavailable");
-  assert.equal(diagnostics.length, 1);
-  assert.deepEqual(diagnostics[0], {
-    event: "digital_clone_avatar_discovery_diagnostic", diagnosticVersion: "avatar-live-contract-v1", provider: "heygen",
-    groupPageCount: 1, groupCount: 2, lookPageCount: 1, lookCount: 3, readyCount: 2, notReadyCount: 1,
-    readinessReasonCounts: { GROUP_NOT_FOUND: 0, GROUP_STATUS_MISSING: 0, GROUP_STATUS_INVALID: 0, CONSENT_INVALID: 0, LOOK_STATUS_MISSING: 0, LOOK_STATUS_INVALID: 0, SUPPORTED_ENGINES_MISSING: 0, UNSUPPORTED_ENGINE: 1 },
-    groupTopLevelKeys: ["items", "has_more"], lookTopLevelKeys: ["items", "has_more"],
-    groupItemFieldPresence: { id: true, status: true, consent_status: true },
-    lookItemFieldPresence: { id: true, group_id: true, status: true, supported_api_engines: true, avatar_type: true, default_voice_id: true, preferred_orientation: false },
-  });
-  const diagnosticText = JSON.stringify(diagnostics[0]);
-  for (const sensitive of ["tim-group", "ray-group", "tim-look", "ray-look", "unsupported-look", "provider-default", "public-voice", "private-voice", "https://files.heygen.ai", "test-key", "Tim", "Ray", "providerKeyHash", String(COMPANY_ID), String(USER_ID)]) assert.doesNotMatch(diagnosticText, new RegExp(sensitive, "i"));
   const voices = await discoverAvatarProviderVoices({ companyId: COMPANY_ID, userId: USER_ID, provider });
   assert.equal(voices.length, 2);
   assert.ok(voices.every(({ providerReady, status }) => providerReady && status === "discovered"));
@@ -110,19 +99,22 @@ test("discovery deduplicates repeated provider looks without merging distinct lo
 });
 
 test("existing production-style candidate and ten rediscoveries remain one updated candidate", async () => {
-  await authorize(); const provider = new MockAvatarProvider(); const value = provider.avatars[0];
+  await authorize();
+  const group = { id: "production-group" };
+  const look = { id: "production-look", group_id: group.id, name: "Recovered candidate", avatar_type: "photo_avatar", status: "completed", supported_api_engines: ["avatar_v", "avatar_iv", "avatar_iii"] };
+  const provider = new HeyGenAvatarProvider({ apiKey: "test-key", client: { async get(url) { return { data: { items: url.endsWith("/v3/avatars") ? [group] : [look], has_more: false } }; } } });
+  const value = { groupRef: group.id, lookRef: look.id };
   const providerKeyHash = createHash("sha256").update(`${provider.name}:${value.groupRef}:${value.lookRef}`).digest("hex");
   const existing = await DigitalCloneAvatarCandidate.create({ companyId: COMPANY_ID, userId: USER_ID, provider: provider.name, providerKeyHash, providerAvatarGroupRef: value.groupRef, providerAvatarLookRef: value.lookRef, providerDefaultVoiceRef: "", previewImageUrl: "", displayName: "Existing candidate", avatarType: "unknown", orientation: "unknown", supportedCapabilities: [], providerReady: false, status: "unavailable", lastDiscoveredAt: new Date("2025-01-01") });
   for (let attempt = 0; attempt < 10; attempt += 1) await discoverAvatars({ companyId: COMPANY_ID, userId: USER_ID, provider });
   const candidates = await DigitalCloneAvatarCandidate.find({ companyId: COMPANY_ID, userId: USER_ID });
   assert.equal(candidates.length, 1);
   assert.equal(String(candidates[0]._id), String(existing._id));
-  assert.equal(candidates[0].displayName, "Private Test Avatar");
+  assert.equal(candidates[0].displayName, "Recovered candidate");
   assert.equal(candidates[0].providerReady, true);
   assert.equal(candidates[0].status, "discovered");
-  assert.equal(candidates[0].avatarType, value.avatarType);
-  assert.equal(candidates[0].orientation, value.orientation);
-  assert.deepEqual(candidates[0].supportedCapabilities, value.supportedCapabilities);
+  assert.equal(candidates[0].avatarType, "photo-avatar");
+  assert.deepEqual(candidates[0].supportedCapabilities, ["avatar_v", "avatar_iv"]);
 });
 
 test("concurrent discovery reconciles one canonical candidate without duplicate-key failure", async () => {
