@@ -3,6 +3,10 @@ import BaseAvatarProvider from "./baseAvatarProvider.js";
 
 const API_BASE_URL = "https://api.heygen.com";
 const TIMEOUT_MS = 30_000;
+const VOICE_DIAGNOSTIC_VERSION = "avatar-voice-live-contract-v1";
+const VOICE_DIAGNOSTIC_KEYS = ["data", "items", "voices", "has_more", "next_token"];
+const VOICE_DIAGNOSTIC_ITEM_FIELDS = ["voice_id", "name", "language", "gender", "type", "support_pause", "support_locale", "preview_audio_url"];
+const VOICE_DIAGNOSTIC_STAGES = new Set(["BODY_SHAPE", "PAGINATION", "ITEM_NORMALIZATION", "DEDUPLICATION", "PERSISTENCE"]);
 const avatarError = (code, statusCode = 502) => {
   const messages = {
     AVATAR_PROVIDER_NOT_CONFIGURED: "TerraPeak Avatar is not configured.", AVATAR_PROVIDER_AUTH_FAILED: "TerraPeak Avatar authentication failed.",
@@ -15,6 +19,37 @@ const avatarError = (code, statusCode = 502) => {
   const error = new Error(messages[code] || messages.AVATAR_PROVIDER_UNAVAILABLE); error.code = code; error.statusCode = statusCode; return error;
 };
 const safeCode = (value) => { const code = String(value || "").trim().toLowerCase(); return /^[a-z0-9_.-]{1,100}$/.test(code) ? code : ""; };
+const hasOwn = (value, key) => Boolean(value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, key));
+const valueType = (value) => value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+const voiceDiagnosticEvent = ({ response, ownershipType, failureStage }) => {
+  const body = response?.data && typeof response.data === "object" && !Array.isArray(response.data) ? response.data : null;
+  const nested = body?.data && typeof body.data === "object" && !Array.isArray(body.data) ? body.data : null;
+  const page = nested || body;
+  const arrays = [body?.data, body?.items, body?.voices, page?.items, page?.data, page?.voices];
+  const items = arrays.find(Array.isArray) || [];
+  const first = items[0] && typeof items[0] === "object" && !Array.isArray(items[0]) ? items[0] : null;
+  return {
+    event: "digital_clone_avatar_voice_discovery_diagnostic",
+    diagnosticVersion: VOICE_DIAGNOSTIC_VERSION,
+    provider: "heygen",
+    ownershipType,
+    httpStatus: Number.isInteger(response?.status) ? response.status : null,
+    topLevelKeys: VOICE_DIAGNOSTIC_KEYS.filter((key) => hasOwn(body, key)),
+    hasDataArray: hasOwn(body, "data") && Array.isArray(body.data),
+    hasItemsArray: hasOwn(body, "items") && Array.isArray(body.items),
+    hasVoicesArray: hasOwn(body, "voices") && Array.isArray(body.voices),
+    dataIsArray: Array.isArray(body?.data),
+    itemsIsArray: Array.isArray(body?.items),
+    voicesIsArray: Array.isArray(body?.voices),
+    itemCount: items.length,
+    hasMorePresent: hasOwn(page, "has_more"),
+    hasMoreType: valueType(page?.has_more),
+    nextTokenPresent: hasOwn(page, "next_token"),
+    nextTokenType: valueType(page?.next_token),
+    firstItemFieldPresence: Object.fromEntries(VOICE_DIAGNOSTIC_ITEM_FIELDS.map((field) => [field, hasOwn(first, field)])),
+    failureStage: VOICE_DIAGNOSTIC_STAGES.has(failureStage) ? failureStage : "BODY_SHAPE",
+  };
+};
 const extractPage = (response) => {
   const body = response?.data;
   const page = body && typeof body === "object" && (Array.isArray(body.items) || Array.isArray(body.data))
@@ -69,19 +104,36 @@ const normalizeVoice = (voice) => {
 };
 
 export default class HeyGenAvatarProvider extends BaseAvatarProvider {
-  constructor({ apiKey = process.env.HEYGEN_API_KEY, client = axios, timeoutMs = TIMEOUT_MS, baseUrl = API_BASE_URL } = {}) {
-    super({ name: "heygen" }); this.apiKey = String(apiKey || "").trim(); this.client = client; this.timeoutMs = timeoutMs; this.baseUrl = String(baseUrl || "").replace(/\/$/, "");
+  constructor({ apiKey = process.env.HEYGEN_API_KEY, client = axios, timeoutMs = TIMEOUT_MS, baseUrl = API_BASE_URL, logger = console } = {}) {
+    super({ name: "heygen" }); this.apiKey = String(apiKey || "").trim(); this.client = client; this.timeoutMs = timeoutMs; this.baseUrl = String(baseUrl || "").replace(/\/$/, ""); this.logger = logger;
   }
   assertConfigured() { if (!this.apiKey || this.baseUrl !== API_BASE_URL) throw avatarError("AVATAR_PROVIDER_NOT_CONFIGURED", 503); }
   options(extra = {}) { return { ...extra, headers: { "x-api-key": this.apiKey, ...(extra.headers || {}) }, timeout: this.timeoutMs }; }
-  async paged(path, params = {}) {
-    const values = []; const seenTokens = new Set(); let token;
+  voiceDiagnostic({ response, ownershipType, failureStage }) {
+    if (!["public", "private"].includes(ownershipType)) return;
+    try { this.logger.info?.(voiceDiagnosticEvent({ response, ownershipType, failureStage })); } catch { /* diagnostics must never alter provider behavior */ }
+  }
+  async paged(path, params = {}, { voiceOwnershipType = null } = {}) {
+    const values = []; const seenTokens = new Set(); let token; let lastResponse;
     for (let page = 0; page < 10; page += 1) {
-      const response = await this.client.get(`${this.baseUrl}${path}`, this.options({ params: { ...params, limit: 50, ...(token ? { token } : {}) } }));
-      const result = extractPage(response); values.push(...result.items); if (!result.hasMore) return values;
-      token = String(result.nextToken || "").trim(); if (!token || seenTokens.has(token)) throw avatarError("AVATAR_PROVIDER_INVALID_RESPONSE");
+      let response;
+      try { response = await this.client.get(`${this.baseUrl}${path}`, this.options({ params: { ...params, limit: 50, ...(token ? { token } : {}) } })); }
+      catch (error) {
+        if (voiceOwnershipType && mapHeyGenError(error, "voice-discovery").code === "AVATAR_PROVIDER_INVALID_RESPONSE") this.voiceDiagnostic({ response: error?.response, ownershipType: voiceOwnershipType, failureStage: "BODY_SHAPE" });
+        throw error;
+      }
+      lastResponse = response; let result;
+      try { result = extractPage(response); }
+      catch (error) {
+        if (voiceOwnershipType && error?.code === "AVATAR_PROVIDER_INVALID_RESPONSE") this.voiceDiagnostic({ response, ownershipType: voiceOwnershipType, failureStage: "BODY_SHAPE" });
+        throw error;
+      }
+      values.push(...result.items); if (!result.hasMore) return values;
+      token = String(result.nextToken || "").trim();
+      if (!token || seenTokens.has(token)) { this.voiceDiagnostic({ response, ownershipType: voiceOwnershipType, failureStage: "PAGINATION" }); throw avatarError("AVATAR_PROVIDER_INVALID_RESPONSE"); }
       seenTokens.add(token);
     }
+    this.voiceDiagnostic({ response: lastResponse, ownershipType: voiceOwnershipType, failureStage: "PAGINATION" });
     throw avatarError("AVATAR_PROVIDER_INVALID_RESPONSE");
   }
   async listAvatars() {
@@ -97,7 +149,7 @@ export default class HeyGenAvatarProvider extends BaseAvatarProvider {
   async listVoices() {
     this.assertConfigured();
     try {
-      const [publicVoices, privateVoices] = await Promise.all([this.paged("/v3/voices", { type: "public" }), this.paged("/v3/voices", { type: "private" })]);
+      const [publicVoices, privateVoices] = await Promise.all([this.paged("/v3/voices", { type: "public" }, { voiceOwnershipType: "public" }), this.paged("/v3/voices", { type: "private" }, { voiceOwnershipType: "private" })]);
       const normalized = new Map();
       for (const value of [...publicVoices, ...privateVoices]) { const voice = normalizeVoice(value); if (voice.voiceRef) normalized.set(voice.voiceRef, voice); }
       return [...normalized.values()];

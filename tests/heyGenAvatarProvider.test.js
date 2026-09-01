@@ -105,10 +105,90 @@ test("HeyGen voice discovery accepts live items envelopes, paginates public voic
 });
 
 test("HeyGen voice discovery rejects malformed or non-progressing live pagination safely", async () => {
-  const malformed = new HeyGenAvatarProvider({ apiKey: "test-key", client: { async get() { return { data: { items: {}, has_more: false } }; } } });
+  const logger = { info() {} };
+  const malformed = new HeyGenAvatarProvider({ apiKey: "test-key", logger, client: { async get() { return { data: { items: {}, has_more: false } }; } } });
   await assert.rejects(malformed.listVoices(), (error) => error.code === "AVATAR_PROVIDER_INVALID_RESPONSE" && error.statusCode === 502);
-  const stalled = new HeyGenAvatarProvider({ apiKey: "test-key", client: { async get() { return { data: { items: [], has_more: true, next_token: "same-token" } }; } } });
+  const stalled = new HeyGenAvatarProvider({ apiKey: "test-key", logger, client: { async get() { return { data: { items: [], has_more: true, next_token: "same-token" } }; } } });
   await assert.rejects(stalled.listVoices(), (error) => error.code === "AVATAR_PROVIDER_INVALID_RESPONSE");
+});
+
+test("HeyGen voice failure diagnostics separate ownership and contain structural metadata only", async () => {
+  const sensitive = {
+    voice_id: "secret-provider-voice-id",
+    name: "Secret Voice Name",
+    language: "Secret Language",
+    gender: "secret-gender",
+    type: "secret-type",
+    support_pause: "secret-pause-value",
+    support_locale: "secret-locale-value",
+    preview_audio_url: "https://private.example/secret-preview.mp3",
+  };
+  const allowedEventFields = ["event", "diagnosticVersion", "provider", "ownershipType", "httpStatus", "topLevelKeys", "hasDataArray", "hasItemsArray", "hasVoicesArray", "dataIsArray", "itemsIsArray", "voicesIsArray", "itemCount", "hasMorePresent", "hasMoreType", "nextTokenPresent", "nextTokenType", "firstItemFieldPresence", "failureStage"];
+  for (const failingType of ["public", "private"]) {
+    const events = [];
+    const client = { async get(_url, options) {
+      if (options.params.type !== failingType) return { status: 200, data: { items: [], has_more: false } };
+      return { status: 200, data: { voices: [sensitive], has_more: null, next_token: { secret: "secret-token" }, raw_payload_secret: "do-not-log" } };
+    } };
+    const provider = new HeyGenAvatarProvider({ apiKey: "secret-api-key", client, logger: { info: (event) => events.push(event) } });
+    await assert.rejects(provider.listVoices(), (error) => error.code === "AVATAR_PROVIDER_INVALID_RESPONSE");
+    assert.equal(events.length, 1);
+    assert.deepEqual(Object.keys(events[0]), allowedEventFields);
+    assert.deepEqual(events[0], {
+      event: "digital_clone_avatar_voice_discovery_diagnostic",
+      diagnosticVersion: "avatar-voice-live-contract-v1",
+      provider: "heygen",
+      ownershipType: failingType,
+      httpStatus: 200,
+      topLevelKeys: ["voices", "has_more", "next_token"],
+      hasDataArray: false,
+      hasItemsArray: false,
+      hasVoicesArray: true,
+      dataIsArray: false,
+      itemsIsArray: false,
+      voicesIsArray: true,
+      itemCount: 1,
+      hasMorePresent: true,
+      hasMoreType: "null",
+      nextTokenPresent: true,
+      nextTokenType: "object",
+      firstItemFieldPresence: { voice_id: true, name: true, language: true, gender: true, type: true, support_pause: true, support_locale: true, preview_audio_url: true },
+      failureStage: "BODY_SHAPE",
+    });
+    const serialized = JSON.stringify(events[0]);
+    for (const value of [...Object.values(sensitive), "secret-token", "raw_payload_secret", "do-not-log", "secret-api-key"]) assert.doesNotMatch(serialized, new RegExp(String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+  }
+});
+
+test("HeyGen voice diagnostics classify pagination and mapped HTTP failures before rejection", async () => {
+  const paginationEvents = [];
+  const paginationClient = { async get(_url, options) {
+    if (options.params.type === "private") return { status: 200, data: { items: [], has_more: false } };
+    return { status: 200, data: { items: [], has_more: true } };
+  } };
+  const paginationProvider = new HeyGenAvatarProvider({ apiKey: "test-key", client: paginationClient, logger: { info: (event) => paginationEvents.push(event) } });
+  await assert.rejects(paginationProvider.listVoices(), (error) => error.code === "AVATAR_PROVIDER_INVALID_RESPONSE");
+  assert.equal(paginationEvents.length, 1);
+  assert.equal(paginationEvents[0].ownershipType, "public");
+  assert.equal(paginationEvents[0].failureStage, "PAGINATION");
+  assert.equal(paginationEvents[0].nextTokenPresent, false);
+  assert.equal(paginationEvents[0].nextTokenType, "undefined");
+
+  const httpEvents = [];
+  const httpClient = { async get(_url, options) {
+    if (options.params.type === "public") return { status: 200, data: { items: [], has_more: false } };
+    const error = new Error("sensitive provider validation text");
+    error.response = { status: 422, data: { error: "sensitive_provider_code", raw_payload_secret: "secret-response-value" } };
+    throw error;
+  } };
+  const httpProvider = new HeyGenAvatarProvider({ apiKey: "secret-api-key", client: httpClient, logger: { info: (event) => httpEvents.push(event) } });
+  await assert.rejects(httpProvider.listVoices(), (error) => error.code === "AVATAR_PROVIDER_INVALID_RESPONSE");
+  assert.equal(httpEvents.length, 1);
+  assert.equal(httpEvents[0].ownershipType, "private");
+  assert.equal(httpEvents[0].httpStatus, 422);
+  assert.equal(httpEvents[0].failureStage, "BODY_SHAPE");
+  const serialized = JSON.stringify(httpEvents[0]);
+  for (const sensitive of ["sensitive provider validation text", "sensitive_provider_code", "raw_payload_secret", "secret-response-value", "secret-api-key"]) assert.doesNotMatch(serialized, new RegExp(sensitive, "i"));
 });
 
 test("HeyGen video creation uses explicit selected voice and no callback or audio URL", async () => {
