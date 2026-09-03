@@ -4,6 +4,7 @@ import { v2 as cloudinary } from "cloudinary";
 
 const MAX_VIDEO_BYTES = 150 * 1024 * 1024;
 const MAX_PREVIEW_BYTES = 8 * 1024 * 1024;
+const MAX_VOICE_PREVIEW_BYTES = 5 * 1024 * 1024;
 const storageError = (code, message, statusCode = 502) => { const error = new Error(message); error.code = code; error.statusCode = statusCode; return error; };
 const configureCloudinary = () => {
   const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } = process.env;
@@ -72,5 +73,34 @@ export const streamHeyGenPreview = async ({ previewUrl, fetchPreview = axios.get
     return { stream: Readable.from([buffer]), mimeType };
   }
   catch { throw storageError("AVATAR_PREVIEW_UNAVAILABLE", "Avatar preview is temporarily unavailable."); }
+};
+const audioSignatureMatches = (buffer, mimeType) => {
+  const mp3 = buffer.length >= 3 && (buffer.subarray(0, 3).toString("ascii") === "ID3" || (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0));
+  const wav = buffer.length >= 12 && buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WAVE";
+  const ogg = buffer.length >= 4 && buffer.subarray(0, 4).toString("ascii") === "OggS";
+  const webm = buffer.length >= 4 && buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
+  const mp4 = buffer.length >= 12 && buffer.subarray(4, 8).toString("ascii") === "ftyp";
+  const aac = buffer.length >= 2 && buffer[0] === 0xff && (buffer[1] & 0xf6) === 0xf0;
+  return Boolean({
+    "audio/mpeg": mp3,
+    "audio/wav": wav,
+    "audio/x-wav": wav,
+    "audio/ogg": ogg,
+    "audio/webm": webm,
+    "audio/mp4": mp4,
+    "audio/x-m4a": mp4,
+    "audio/aac": aac,
+  }[mimeType]);
+};
+export const streamHeyGenVoicePreview = async ({ previewUrl, fetchPreview = axios.get }) => {
+  try {
+    const response = await fetchPreview(assertHeyGenMediaUrl(previewUrl), { responseType: "stream", timeout: 12_000, maxContentLength: MAX_VOICE_PREVIEW_BYTES, maxBodyLength: MAX_VOICE_PREVIEW_BYTES, maxRedirects: 0, validateStatus: (status) => status === 200 });
+    const buffer = await readBoundedResponse(response, MAX_VOICE_PREVIEW_BYTES);
+    const mimeType = String(response.headers?.["content-type"] || "").split(";")[0].trim().toLowerCase();
+    if (!buffer.length || !audioSignatureMatches(buffer, mimeType)) throw new Error("invalid audio preview");
+    return { stream: Readable.from([buffer]), mimeType };
+  } catch {
+    throw storageError("AVATAR_PROVIDER_VOICE_PREVIEW_UNAVAILABLE", "Avatar voice preview is temporarily unavailable.", 502);
+  }
 };
 export { assertHeyGenMediaUrl };

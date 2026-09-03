@@ -13,10 +13,10 @@ import DigitalCloneAvatarVideo from "../models/digitalCloneAvatarVideo.js";
 import HeyGenAvatarProvider from "../providers/digitalCloneAvatar/heyGenAvatarProvider.js";
 import MockAvatarProvider from "../providers/digitalCloneAvatar/mockAvatarProvider.js";
 import { DIGITAL_CLONE_AVATAR_RATE_LIMITS } from "../middleware/digitalCloneAvatarRateLimit.js";
-import { assertHeyGenMediaUrl, copyProviderVideoToPrivateStorage, readBoundedResponse, streamHeyGenPreview } from "../services/digitalCloneAvatarStorageService.js";
+import { assertHeyGenMediaUrl, copyProviderVideoToPrivateStorage, readBoundedResponse, streamHeyGenPreview, streamHeyGenVoicePreview } from "../services/digitalCloneAvatarStorageService.js";
 import {
   acceptAvatarConsent, approveAvatarVideo, assertAvatarConsent, createAvatarVideo, discoverAvatarProviderVoices, discoverAvatars,
-  getAvatarPreviewDelivery, getAvatarProviderVoiceState, getAvatarState, getAvatarVideoDelivery, refreshAvatarVideo, rejectAvatarVideo,
+  getAvatarPreviewDelivery, getAvatarProviderVoicePreviewDelivery, getAvatarProviderVoiceState, getAvatarState, getAvatarVideoDelivery, refreshAvatarVideo, rejectAvatarVideo,
   revokeAvatar, selectAvatar, selectAvatarProviderVoice,
 } from "../services/digitalCloneAvatarService.js";
 
@@ -186,8 +186,71 @@ test("provider voice discovery deduplicates, preserves selection, and marks unav
   assert.equal(unavailable.providerReady, false);
 });
 
+test("private voices have an independent cap, stable identity, and reconciliation", async () => {
+  await authorize();
+  const privateVoices = [
+    { voiceRef: "private-ray", displayName: "Ray", language: "English", gender: "male", voiceType: "private", previewAudioUrl: "https://files.heygen.ai/ray.mp3", ready: true },
+    { voiceRef: "private-team", displayName: "Terrapeak Group", language: "English", gender: "male", voiceType: "private", ready: true },
+  ];
+  const publicVoices = Array.from({ length: 305 }, (_, index) => ({ voiceRef: `public-${index}`, displayName: `Public ${String(index).padStart(3, "0")}`, language: "English", gender: "neutral", voiceType: "public", ready: true }));
+  const provider = new MockAvatarProvider({ voices: [...publicVoices, ...privateVoices] });
+  const first = await discoverAvatarProviderVoices({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  assert.equal(first.filter(({ voiceType }) => voiceType === "private").length, 2);
+  assert.equal(first.filter(({ voiceType, providerReady }) => voiceType === "public" && providerReady).length, 300);
+  const ray = first.find(({ displayName }) => displayName === "Ray");
+  await selectAvatarProviderVoice({ companyId: COMPANY_ID, userId: USER_ID, voiceId: ray._id, provider });
+  const second = await discoverAvatarProviderVoices({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  assert.equal(String(second.find(({ displayName }) => displayName === "Ray")._id), String(ray._id));
+  assert.equal((await DigitalCloneAvatarProviderVoice.findById(ray._id)).status, "selected");
+  provider.voices = publicVoices;
+  await discoverAvatarProviderVoices({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  const removed = await DigitalCloneAvatarProviderVoice.findById(ray._id).select("+providerPreviewUrl");
+  assert.equal(removed.status, "unavailable");
+  assert.equal(removed.previewAvailable, false);
+  assert.equal(removed.providerPreviewUrl, "");
+});
+
+test("voice preview delivery is owned, consent-gated, available-only, and safely serialized", async () => {
+  await authorize();
+  const provider = new MockAvatarProvider({ voices: [{ voiceRef: "private-ray", displayName: "Ray", language: "English", gender: "male", voiceType: "private", previewAudioUrl: "https://files.heygen.ai/ray.mp3", ready: true }] });
+  const [voice] = await discoverAvatarProviderVoices({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  let internalUrl = "";
+  const delivery = await getAvatarProviderVoicePreviewDelivery({ companyId: COMPANY_ID, userId: USER_ID, voiceId: voice._id, streamPreview: async ({ previewUrl }) => { internalUrl = previewUrl; return { stream: Readable.from([Buffer.from("audio")]), mimeType: "audio/mpeg" }; } });
+  assert.equal(internalUrl, "https://files.heygen.ai/ray.mp3");
+  assert.equal(delivery.mimeType, "audio/mpeg");
+  const state = await getAvatarProviderVoiceState({ companyId: COMPANY_ID, userId: USER_ID });
+  assert.equal(state.availableProviderVoices[0].previewAvailable, true);
+  for (const privateField of ["provider", "providerVoiceRef", "providerKeyHash", "providerPreviewUrl"]) assert.equal(privateField in state.availableProviderVoices[0], false);
+  await authorize({ companyId: COMPANY_ID, userId: OTHER_USER_ID });
+  await authorize({ companyId: OTHER_COMPANY_ID, userId: USER_ID });
+  await assert.rejects(getAvatarProviderVoicePreviewDelivery({ companyId: COMPANY_ID, userId: OTHER_USER_ID, voiceId: voice._id }), (error) => error.code === "AVATAR_PROVIDER_VOICE_NOT_FOUND");
+  await assert.rejects(getAvatarProviderVoicePreviewDelivery({ companyId: OTHER_COMPANY_ID, userId: USER_ID, voiceId: voice._id }), (error) => error.code === "AVATAR_PROVIDER_VOICE_NOT_FOUND");
+  await DigitalCloneAvatarProviderVoice.updateOne({ _id: voice._id }, { $set: { status: "unavailable", providerReady: false } });
+  await assert.rejects(getAvatarProviderVoicePreviewDelivery({ companyId: COMPANY_ID, userId: USER_ID, voiceId: voice._id }), (error) => error.code === "AVATAR_PROVIDER_VOICE_NOT_FOUND");
+  await DigitalCloneAvatarProviderVoice.updateOne({ _id: voice._id }, { $set: { status: "discovered", providerReady: true, previewAvailable: false, providerPreviewUrl: "" } });
+  await assert.rejects(getAvatarProviderVoicePreviewDelivery({ companyId: COMPANY_ID, userId: USER_ID, voiceId: voice._id }), (error) => error.code === "AVATAR_PROVIDER_VOICE_PREVIEW_UNAVAILABLE");
+  await DigitalCloneAvatar.findOneAndUpdate({ companyId: COMPANY_ID, userId: USER_ID }, { $set: { status: "revoked", "consent.revokedAt": new Date() } });
+  await assert.rejects(getAvatarProviderVoicePreviewDelivery({ companyId: COMPANY_ID, userId: USER_ID, voiceId: voice._id }), (error) => error.code === "AVATAR_CONSENT_REQUIRED");
+});
+
+test("voice preview proxy rejects SSRF, redirects, spoofed audio, oversized bodies, and sanitizes failures", async () => {
+  const validMp3 = Buffer.from([0x49, 0x44, 0x33, 0x04]); let options;
+  const result = await streamHeyGenVoicePreview({ previewUrl: "https://files.heygen.ai/ray.mp3", fetchPreview: async (_url, requestOptions) => { options = requestOptions; return { data: validMp3, headers: { "content-type": "audio/mpeg" } }; } });
+  assert.equal(result.mimeType, "audio/mpeg");
+  assert.equal(options.maxRedirects, 0); assert.equal(options.timeout, 12_000); assert.equal(options.maxContentLength, 5 * 1024 * 1024);
+  for (const previewUrl of ["http://files.heygen.ai/ray.mp3", "https://evil.example/ray.mp3", "https://heygen.ai.evil.example/ray.mp3"]) {
+    await assert.rejects(streamHeyGenVoicePreview({ previewUrl }), (error) => error.code === "AVATAR_PROVIDER_VOICE_PREVIEW_UNAVAILABLE" && !error.message.includes(previewUrl));
+  }
+  await assert.rejects(streamHeyGenVoicePreview({ previewUrl: "https://files.heygen.ai/ray.mp3", fetchPreview: async () => ({ data: Buffer.from("<html>"), headers: { "content-type": "audio/mpeg" } }) }), (error) => error.code === "AVATAR_PROVIDER_VOICE_PREVIEW_UNAVAILABLE");
+  await assert.rejects(streamHeyGenVoicePreview({ previewUrl: "https://files.heygen.ai/ray.mp3", fetchPreview: async () => ({ data: validMp3, headers: { "content-type": "text/html" } }) }), (error) => error.code === "AVATAR_PROVIDER_VOICE_PREVIEW_UNAVAILABLE");
+  await assert.rejects(streamHeyGenVoicePreview({ previewUrl: "https://files.heygen.ai/ray.mp3", fetchPreview: async () => ({ data: Readable.from([Buffer.alloc(5 * 1024 * 1024 + 1)]), headers: { "content-type": "audio/mpeg" } }) }), (error) => error.code === "AVATAR_PROVIDER_VOICE_PREVIEW_UNAVAILABLE");
+  for (const providerError of [Object.assign(new Error("secret timeout details"), { code: "ETIMEDOUT" }), new Error("provider key leaked")]) {
+    await assert.rejects(streamHeyGenVoicePreview({ previewUrl: "https://files.heygen.ai/ray.mp3", fetchPreview: async () => { throw providerError; } }), (error) => error.code === "AVATAR_PROVIDER_VOICE_PREVIEW_UNAVAILABLE" && error.message === "Avatar voice preview is temporarily unavailable.");
+  }
+});
+
 test("concurrent provider voice discovery reconciles canonical records without duplicates", async () => {
-  await authorize(); const provider = new MockAvatarProvider({ voices: [{ voiceRef: "voice-one", displayName: "One", ready: true }, { voiceRef: "voice-two", displayName: "Two", ready: true }] });
+  await authorize(); const provider = new MockAvatarProvider({ voices: [{ voiceRef: "voice-one", displayName: "One", voiceType: "public", ready: true }, { voiceRef: "voice-two", displayName: "Two", voiceType: "public", ready: true }] });
   await Promise.all(Array.from({ length: 10 }, () => discoverAvatarProviderVoices({ companyId: COMPANY_ID, userId: USER_ID, provider })));
   assert.equal(await DigitalCloneAvatarProviderVoice.countDocuments({ companyId: COMPANY_ID, userId: USER_ID }), 2);
 });
@@ -385,5 +448,5 @@ test("preview proxy validates image MIME and signature before delivery", async (
 });
 
 test("avatar rate-limit defaults control discovery, polling, and paid generation", () => {
-  assert.deepEqual(DIGITAL_CLONE_AVATAR_RATE_LIMITS, { discoveryPer15Minutes: 10, voiceDiscoveryPer15Minutes: 10, generationPerHour: 3, statusPer15Minutes: 120 });
+  assert.deepEqual(DIGITAL_CLONE_AVATAR_RATE_LIMITS, { discoveryPer15Minutes: 10, voiceDiscoveryPer15Minutes: 10, voicePreviewPer15Minutes: 30, generationPerHour: 3, statusPer15Minutes: 120 });
 });

@@ -69,7 +69,7 @@ const normalizeLook = (group, look) => {
 const normalizeVoice = (voice) => {
   const voiceRef = String(voice?.voice_id || ""); const displayName = String(voice?.name || "").trim().slice(0, 200);
   const voiceType = ["public", "private"].includes(voice?.type) ? voice.type : "unknown";
-  return { voiceRef, displayName, language: String(voice?.language || "Unknown").slice(0, 100), gender: safeCode(voice?.gender) || "unknown", voiceType, ready: Boolean(voiceRef && displayName && voiceType !== "unknown") };
+  return { voiceRef, displayName, language: String(voice?.language || "Unknown").slice(0, 100), gender: safeCode(voice?.gender) || "unknown", voiceType, previewAudioUrl: String(voice?.preview_audio_url || "").trim().slice(0, 2000), ready: Boolean(voiceRef && displayName && voiceType !== "unknown") };
 };
 
 export default class HeyGenAvatarProvider extends BaseAvatarProvider {

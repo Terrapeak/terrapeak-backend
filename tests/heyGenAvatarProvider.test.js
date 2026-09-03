@@ -103,7 +103,9 @@ test("HeyGen voice discovery accepts live items envelopes, paginates public voic
   assert.ok(requests.some(({ options }) => options.params.type === "public" && options.params.token === "public-page-two"));
   assert.equal(voices.length, 3);
   assert.equal(voices.find((voice) => voice.voiceRef === "shared-voice").voiceType, "private");
-  assert.ok(voices.every((voice) => voice.ready && !("previewAudioUrl" in voice)));
+  assert.ok(voices.every((voice) => voice.ready));
+  assert.equal(voices.find((voice) => voice.voiceRef === "private-only").previewAudioUrl, "https://files.heygen.ai/private.mp3");
+  assert.equal(voices.find((voice) => voice.voiceRef === "public-one").previewAudioUrl, "");
 });
 
 test("HeyGen voice pagination attempts page two with the current token parameter and accepts a terminal data page", async () => {

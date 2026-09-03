@@ -7,10 +7,12 @@ import DigitalCloneAvatarVideo from "../models/digitalCloneAvatarVideo.js";
 import DigitalCloneGeneration from "../models/digitalCloneGeneration.js";
 import DigitalCloneProfile from "../models/digitalCloneProfile.js";
 import { resolveAvatarProvider } from "../providers/digitalCloneAvatar/index.js";
-import { copyProviderVideoToPrivateStorage, deletePrivateAvatarVideo, streamHeyGenPreview, streamPrivateAvatarVideo } from "./digitalCloneAvatarStorageService.js";
+import { copyProviderVideoToPrivateStorage, deletePrivateAvatarVideo, streamHeyGenPreview, streamHeyGenVoicePreview, streamPrivateAvatarVideo } from "./digitalCloneAvatarStorageService.js";
 
 const CONSENT_VERSION = "1.0";
 const MAX_SCRIPT_CHARACTERS = 1200;
+const MAX_PRIVATE_PROVIDER_VOICES = 100;
+const MAX_PUBLIC_PROVIDER_VOICES = 300;
 const CANDIDATE_IDENTITY_INDEX_FIELDS = ["companyId", "providerKeyHash", "userId"];
 const CONSENT_FIELDS = new Set(["appearanceOwnershipOrAuthorization", "avatarGenerationAuthorized", "providerProcessingAuthorized", "revocationUnderstood"]);
 const VIDEO_FIELDS = new Set(["sourceType", "draftId", "script", "aspectRatio", "resolution", "captions", "background"]);
@@ -42,7 +44,7 @@ export const assertAvatarConsent = async ({ companyId, userId }) => {
 const candidateProjection = "+provider +providerKeyHash +providerAvatarGroupRef +providerAvatarLookRef +providerDefaultVoiceRef +previewImageUrl";
 const providerVoiceProjection = "+provider +providerKeyHash +providerVoiceRef";
 const serializeCandidate = (candidate) => { const value = candidate?.toObject ? candidate.toObject() : candidate; return { id: value._id, displayName: value.displayName, avatarType: value.avatarType, orientation: value.orientation, supportedCapabilities: value.supportedCapabilities, providerReady: value.providerReady, status: value.status, previewPath: `/digital-clone/avatar/available/${value._id}/preview` }; };
-const serializeProviderVoice = (voice) => { const value = voice?.toObject ? voice.toObject() : voice; return { id: value._id, displayName: value.displayName, language: value.language, gender: value.gender, voiceType: value.voiceType, providerReady: value.providerReady, status: value.status }; };
+const serializeProviderVoice = (voice) => { const value = voice?.toObject ? voice.toObject() : voice; return { id: value._id, displayName: value.displayName, language: value.language, gender: value.gender, voiceType: value.voiceType, providerReady: value.providerReady, status: value.status, previewAvailable: Boolean(value.previewAvailable) }; };
 export const serializeAvatarVideo = (video) => { const value = video?.toObject ? video.toObject() : video; return { id: value._id, avatarId: value.avatarId, sourceDraftId: value.sourceDraftId, sourceType: value.sourceType, scriptSnapshot: value.scriptSnapshot, aspectRatio: value.aspectRatio, resolution: value.resolution, captions: value.captions, background: value.background, status: value.status, failureCode: value.failureCode, durationSeconds: value.durationSeconds, approvedAt: value.approvedAt, createdAt: value.createdAt, updatedAt: value.updatedAt, deliveryPath: ["completed", "approved"].includes(value.status) ? `/digital-clone/avatar/videos/${value._id}/delivery` : null }; };
 const readiness = ({ avatar, selected, selectedVoice, available, authorized }) => {
   const reasons = [];
@@ -92,21 +94,28 @@ export const discoverAvatarProviderVoices = async ({ companyId, userId, provider
   await assertAvatarConsent({ companyId, userId }); const provider = injectedProvider || resolveAvatarProvider(); let values;
   try { values = await provider.listVoices(); } catch (error) { throw sanitizeProviderError(error); }
   if (!Array.isArray(values)) throw avatarServiceError("AVATAR_PROVIDER_INVALID_RESPONSE", "TerraPeak Avatar returned an invalid response.", 502);
-  const normalized = new Map();
-  for (const value of values.slice(0, 300)) {
+  const byScope = { private: new Map(), public: new Map() };
+  for (const value of values) {
+    const voiceType = ["private", "public"].includes(value?.voiceType) ? value.voiceType : null;
     const voiceRef = String(value?.voiceRef || ""); if (!voiceRef) continue;
+    if (!voiceType) continue;
     const identity = `${provider.name}:${voiceRef}`;
-    normalized.set(identity, { value, voiceRef, hash: createHash("sha256").update(identity).digest("hex") });
+    byScope[voiceType].set(identity, { value, voiceRef, hash: createHash("sha256").update(identity).digest("hex") });
   }
-  const now = new Date(); const seen = [...normalized.values()].map(({ hash }) => hash);
-  for (const { value, voiceRef, hash } of normalized.values()) {
+  const bounded = {
+    private: [...byScope.private.values()].slice(0, MAX_PRIVATE_PROVIDER_VOICES),
+    public: [...byScope.public.values()].slice(0, MAX_PUBLIC_PROVIDER_VOICES),
+  };
+  const now = new Date();
+  for (const { value, voiceRef, hash } of [...bounded.private, ...bounded.public]) {
     const displayName = String(value.displayName || "Unavailable Avatar voice").trim().slice(0, 200);
     const language = String(value.language || "Unknown").trim().slice(0, 100);
     const gender = ["male", "female", "neutral"].includes(value.gender) ? value.gender : "unknown";
     const voiceType = ["public", "private"].includes(value.voiceType) ? value.voiceType : "unknown";
+    const providerPreviewUrl = String(value.previewAudioUrl || "").trim().slice(0, 2000);
     const providerReady = Boolean(value.ready && value.displayName);
     const filter = { companyId, userId, providerKeyHash: hash };
-    const update = [{ $set: { provider: provider.name, providerVoiceRef: voiceRef.slice(0, 500), displayName, language, gender, voiceType, providerReady, status: { $cond: [{ $and: [{ $eq: ["$status", "selected"] }, providerReady] }, "selected", providerReady ? "discovered" : "unavailable"] }, lastDiscoveredAt: now, revokedAt: null, createdAt: { $ifNull: ["$createdAt", now] }, updatedAt: now } }];
+    const update = [{ $set: { provider: provider.name, providerVoiceRef: voiceRef.slice(0, 500), providerPreviewUrl, previewAvailable: Boolean(providerPreviewUrl), displayName, language, gender, voiceType, providerReady, status: { $cond: [{ $and: [{ $eq: ["$status", "selected"] }, providerReady] }, "selected", providerReady ? "discovered" : "unavailable"] }, lastDiscoveredAt: now, revokedAt: null, createdAt: { $ifNull: ["$createdAt", now] }, updatedAt: now } }];
     try { await DigitalCloneAvatarProviderVoice.findOneAndUpdate(filter, update, { upsert: true, new: true }); }
     catch (error) {
       if (!isCandidateIdentityDuplicate(error)) throw error;
@@ -114,8 +123,11 @@ export const discoverAvatarProviderVoices = async ({ companyId, userId, provider
       if (!reconciled) throw error;
     }
   }
-  await DigitalCloneAvatarProviderVoice.updateMany({ companyId, userId, provider: provider.name, providerKeyHash: { $nin: seen }, status: { $ne: "revoked" } }, { $set: { status: "unavailable", providerReady: false } });
-  return DigitalCloneAvatarProviderVoice.find({ companyId, userId, status: { $ne: "revoked" } }).sort({ providerReady: -1, displayName: 1 });
+  await Promise.all(["private", "public"].map((voiceType) => DigitalCloneAvatarProviderVoice.updateMany(
+    { companyId, userId, provider: provider.name, voiceType, providerKeyHash: { $nin: bounded[voiceType].map(({ hash }) => hash) }, status: { $ne: "revoked" } },
+    { $set: { status: "unavailable", providerReady: false, providerPreviewUrl: "", previewAvailable: false } },
+  )));
+  return DigitalCloneAvatarProviderVoice.find({ companyId, userId, status: { $ne: "revoked" } }).sort({ voiceType: -1, displayName: 1 });
 };
 const findCandidate = async ({ companyId, userId, candidateId }) => { validId(candidateId); const candidate = await DigitalCloneAvatarCandidate.findOne({ _id: candidateId, companyId, userId, status: { $ne: "revoked" } }).select(candidateProjection); if (!candidate) throw avatarServiceError("AVATAR_NOT_FOUND", "Avatar not found.", 404); return candidate; };
 const findProviderVoice = async ({ companyId, userId, voiceId }) => { validId(voiceId, "AVATAR_PROVIDER_VOICE_NOT_FOUND"); const voice = await DigitalCloneAvatarProviderVoice.findOne({ _id: voiceId, companyId, userId, status: { $ne: "revoked" } }).select(providerVoiceProjection); if (!voice) throw avatarServiceError("AVATAR_PROVIDER_VOICE_NOT_FOUND", "Avatar voice not found.", 404); return voice; };
@@ -142,6 +154,13 @@ export const selectAvatarProviderVoice = async ({ companyId, userId, voiceId, pr
 export const getAvatarProviderVoiceState = async ({ companyId, userId }) => {
   const setup = await assertAvatarConsent({ companyId, userId }); const voices = await DigitalCloneAvatarProviderVoice.find({ companyId, userId, status: { $ne: "revoked" } }).sort({ providerReady: -1, displayName: 1 });
   return { selectedProviderVoiceId: setup.selectedProviderVoiceId || null, availableProviderVoices: voices.map(serializeProviderVoice) };
+};
+export const getAvatarProviderVoicePreviewDelivery = async ({ companyId, userId, voiceId, streamPreview = streamHeyGenVoicePreview }) => {
+  await assertAvatarConsent({ companyId, userId }); validId(voiceId, "AVATAR_PROVIDER_VOICE_NOT_FOUND");
+  const voice = await DigitalCloneAvatarProviderVoice.findOne({ _id: voiceId, companyId, userId, status: { $in: ["discovered", "selected"] }, providerReady: true }).select("+providerPreviewUrl");
+  if (!voice) throw avatarServiceError("AVATAR_PROVIDER_VOICE_NOT_FOUND", "Avatar voice not found.", 404);
+  if (!voice.previewAvailable || !voice.providerPreviewUrl) throw avatarServiceError("AVATAR_PROVIDER_VOICE_PREVIEW_UNAVAILABLE", "This Avatar voice does not have a preview.", 404);
+  return streamPreview({ previewUrl: voice.providerPreviewUrl });
 };
 const normalizeVideoInput = async ({ companyId, userId, body }) => {
   strictObject(body, VIDEO_FIELDS, "AVATAR_VIDEO_INVALID"); const sourceType = body.sourceType;
@@ -197,4 +216,4 @@ export const getAvatarState = async ({ companyId, userId, provider: injectedProv
   const drafts = await DigitalCloneGeneration.find({ companyId, userId, contentType: "short-video-script", status: "approved" }).select("topic finalApprovedText approvedAt").sort({ approvedAt: -1 }).limit(20).lean();
   return { avatar: { status: setup?.status || "not_started", consent: setup?.consent || null, selectedAvatarId: authorized ? setup?.selectedAvatarId || null : null, selectedProviderVoiceId: authorized ? setup?.selectedProviderVoiceId || null : null, approvedAt: authorized ? setup?.approvedAt || null : null, readiness: readiness({ avatar: setup, selected, selectedVoice, available: availability.available, authorized }) }, providerAvailability: { available: availability.available, ...(!availability.available ? { code: availability.code } : {}) }, availableAvatars: candidates.map(serializeCandidate), availableProviderVoices: providerVoices.map(serializeProviderVoice), videos: videos.map(serializeAvatarVideo), approvedDrafts: drafts.map((draft) => ({ id: draft._id, topic: draft.topic, text: draft.finalApprovedText, approvedAt: draft.approvedAt })), limits: { maxScriptCharacters: MAX_SCRIPT_CHARACTERS, generationPerHour: 3 } };
 };
-export const AVATAR_CONSTANTS = Object.freeze({ consentVersion: CONSENT_VERSION, maxScriptCharacters: MAX_SCRIPT_CHARACTERS });
+export const AVATAR_CONSTANTS = Object.freeze({ consentVersion: CONSENT_VERSION, maxScriptCharacters: MAX_SCRIPT_CHARACTERS, maxPrivateProviderVoices: MAX_PRIVATE_PROVIDER_VOICES, maxPublicProviderVoices: MAX_PUBLIC_PROVIDER_VOICES });
