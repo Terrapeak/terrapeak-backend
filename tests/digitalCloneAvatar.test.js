@@ -31,6 +31,11 @@ const createProfile = ({ companyId = COMPANY_ID, userId = USER_ID } = {}) => Dig
 const authorize = async (scope = {}) => { await createProfile(scope); return acceptAvatarConsent({ companyId: scope.companyId || COMPANY_ID, userId: scope.userId || USER_ID, body: consentBody, acceptedIp: "127.0.0.1" }); };
 const prepareSelection = async ({ companyId = COMPANY_ID, userId = USER_ID, provider = new MockAvatarProvider() } = {}) => { await authorize({ companyId, userId }); const candidates = await discoverAvatars({ companyId, userId, provider }); await selectAvatar({ companyId, userId, candidateId: candidates[0]._id, provider }); const voices = await discoverAvatarProviderVoices({ companyId, userId, provider }); await selectAvatarProviderVoice({ companyId, userId, voiceId: voices[0]._id, provider }); return { candidate: candidates[0], voice: voices[0], provider }; };
 const approvedDraft = () => DigitalCloneGeneration.create({ companyId: COMPANY_ID, userId: USER_ID, contentType: "short-video-script", topic: "Launch", length: "short", originalGeneratedText: "Original", currentText: "Approved script", finalApprovedText: "Approved script", status: "approved", approvedAt: new Date() });
+const completeTestVideo = async ({ provider, script = "Avatar readiness test" }) => {
+  const video = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual_test", script }, provider });
+  const stored = await DigitalCloneAvatarVideo.findById(video._id).select("+providerJobRef"); provider.complete(stored.providerJobRef);
+  return refreshAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: video._id, provider, copyVideo: async () => ({ public_id: `private-${video._id}`, bytes: 24 }) });
+};
 const mp4 = () => { const value = Buffer.alloc(24); value.writeUInt32BE(24, 0); value.write("ftyp", 4); value.write("mp42", 8); return value; };
 
 before(async () => { mongo = await MongoMemoryServer.create(); await mongoose.connect(mongo.getUri()); await Promise.all([DigitalCloneAvatar.syncIndexes(), DigitalCloneAvatarCandidate.syncIndexes(), DigitalCloneAvatarProviderVoice.syncIndexes(), DigitalCloneAvatarVideo.syncIndexes()]); });
@@ -269,7 +274,7 @@ test("provider voice records and selection are isolated by both company and user
 });
 
 test("generation resolves only server-side look and voice references and requires both readiness states", async () => {
-  const { candidate, voice, provider } = await prepareSelection(); const body = { sourceType: "manual-test", script: "Server resolved references" };
+  const { candidate, voice, provider } = await prepareSelection(); const body = { sourceType: "manual_test", script: "Server resolved references" };
   await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body, provider });
   assert.equal(provider.lastCreateInput.avatar.lookRef, provider.avatars[0].lookRef);
   assert.equal(provider.lastCreateInput.voice.voiceRef, provider.voices[0].voiceRef);
@@ -285,16 +290,20 @@ test("generation resolves only server-side look and voice references and require
 
 test("generation accepts only approved owned short-video drafts and deduplicates paid requests", async () => {
   const { provider } = await prepareSelection(); const draft = await approvedDraft();
-  const body = { sourceType: "approved-draft", draftId: draft._id, aspectRatio: "9:16", resolution: "720p", captions: false, background: "default" };
+  const body = { sourceType: "approved_draft", approvedDraftId: draft._id, aspectRatio: "9:16", resolution: "720p", captions: false, background: "default" };
   const first = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body, provider });
   const second = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body, provider });
   assert.equal(String(first._id), String(second._id));
   assert.equal(provider.calls.create, 1);
-  await assert.rejects(createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { ...body, draftId: new mongoose.Types.ObjectId() }, provider }), (error) => ["DRAFT_NOT_APPROVED", "DRAFT_NOT_FOUND"].includes(error.code));
+  const legacy = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "approved-draft", draftId: draft._id, aspectRatio: "9:16", resolution: "720p", captions: false, background: "default" }, provider });
+  assert.equal(String(first._id), String(legacy._id));
+  assert.equal(provider.calls.create, 1);
+  assert.equal((await getAvatarState({ companyId: COMPANY_ID, userId: USER_ID, provider })).videos[0].sourceType, "approved_draft");
+  await assert.rejects(createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { ...body, approvedDraftId: new mongoose.Types.ObjectId() }, provider }), (error) => ["DRAFT_NOT_APPROVED", "DRAFT_NOT_FOUND"].includes(error.code));
 });
 
 test("concurrent identical generation requests create exactly one paid provider job", async () => {
-  const { provider } = await prepareSelection(); const body = { sourceType: "manual-test", script: "One atomic paid request" };
+  const { provider } = await prepareSelection(); const body = { sourceType: "manual_test", script: "One atomic paid request" };
   const [first, second] = await Promise.all([
     createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body, provider }),
     createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body, provider }),
@@ -304,48 +313,171 @@ test("concurrent identical generation requests create exactly one paid provider 
   assert.equal(await DigitalCloneAvatarVideo.countDocuments({ companyId: COMPANY_ID, userId: USER_ID }), 1);
 });
 
-test("manual scripts are strictly bounded and reject unexpected fields", async () => {
+test("manual scripts are trimmed, required, strictly bounded, and reject ambiguous fields", async () => {
   const { provider } = await prepareSelection();
-  await assert.rejects(createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual-test", script: "x".repeat(1201) }, provider }), (error) => error.code === "AVATAR_SCRIPT_TOO_LONG");
-  await assert.rejects(createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual-test", script: "test", audioUrl: "https://attacker.test/a.mp3" }, provider }), (error) => error.code === "AVATAR_VIDEO_INVALID");
+  const video = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual_test", script: "  valid test  " }, provider });
+  assert.equal(video.scriptSnapshot, "valid test");
+  await assert.doesNotReject(createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual-test", script: "  valid test  " }, provider }));
+  await assert.rejects(createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual_test", script: "" }, provider }), (error) => error.code === "AVATAR_SCRIPT_REQUIRED");
+  await assert.rejects(createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual_test", script: "   \n\t" }, provider }), (error) => error.code === "AVATAR_SCRIPT_REQUIRED");
+  await assert.rejects(createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual_test", script: "x".repeat(1201) }, provider }), (error) => error.code === "AVATAR_SCRIPT_TOO_LONG");
+  await assert.rejects(createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual_test", script: "test", approvedDraftId: new mongoose.Types.ObjectId() }, provider }), (error) => error.code === "AVATAR_VIDEO_INVALID");
+  await assert.rejects(createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual-test", script: "test", draftId: new mongoose.Types.ObjectId() }, provider }), (error) => error.code === "AVATAR_VIDEO_INVALID");
+  await assert.rejects(createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual_test", script: "test", audioUrl: "https://attacker.test/a.mp3" }, provider }), (error) => error.code === "AVATAR_VIDEO_INVALID");
+});
+
+test("approved draft requests reject ambiguous, unapproved, wrong-type, and cross-scope drafts", async () => {
+  const { provider } = await prepareSelection(); const draft = await approvedDraft();
+  const request = (approvedDraftId, extra = {}) => createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "approved_draft", approvedDraftId, ...extra }, provider });
+  await assert.rejects(request(draft._id, { script: "untrusted override" }), (error) => error.code === "AVATAR_VIDEO_INVALID");
+  for (const values of [
+    { status: "draft" },
+    { contentType: "linkedin-post" },
+    { userId: OTHER_USER_ID },
+    { companyId: OTHER_COMPANY_ID },
+  ]) {
+    const denied = await DigitalCloneGeneration.create({ companyId: COMPANY_ID, userId: USER_ID, contentType: "short-video-script", topic: "Denied", length: "short", originalGeneratedText: "Text", currentText: "Text", finalApprovedText: "Text", status: "approved", approvedAt: new Date(), ...values });
+    await assert.rejects(request(denied._id), (error) => error.code === "DRAFT_NOT_APPROVED");
+  }
+  const oversized = await DigitalCloneGeneration.create({ companyId: COMPANY_ID, userId: USER_ID, contentType: "short-video-script", topic: "Too long", length: "long", originalGeneratedText: "x".repeat(1201), currentText: "x".repeat(1201), finalApprovedText: "x".repeat(1201), status: "approved", approvedAt: new Date() });
+  await assert.rejects(request(oversized._id), (error) => error.code === "AVATAR_SCRIPT_TOO_LONG");
+});
+
+test("generation cannot borrow another user's selected state and fails after consent revocation", async () => {
+  const { provider } = await prepareSelection(); const body = { sourceType: "manual_test", script: "Scoped state" };
+  await authorize({ companyId: COMPANY_ID, userId: OTHER_USER_ID });
+  await assert.rejects(createAvatarVideo({ companyId: COMPANY_ID, userId: OTHER_USER_ID, body, provider }), (error) => error.code === "AVATAR_NOT_READY");
+  await DigitalCloneAvatar.updateOne({ companyId: COMPANY_ID, userId: USER_ID }, { $set: { status: "revoked", "consent.revokedAt": new Date() } });
+  await assert.rejects(createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body, provider }), (error) => error.code === "AVATAR_CONSENT_REQUIRED");
+});
+
+test("Avatar state exposes only video-eligible approved drafts", async () => {
+  const { provider } = await prepareSelection(); const eligible = await approvedDraft();
+  await DigitalCloneGeneration.create({ companyId: COMPANY_ID, userId: USER_ID, contentType: "short-video-script", topic: "Whitespace", length: "short", originalGeneratedText: "Text", currentText: "Text", finalApprovedText: "   ", status: "approved", approvedAt: new Date() });
+  await DigitalCloneGeneration.create({ companyId: COMPANY_ID, userId: USER_ID, contentType: "short-video-script", topic: "Too long", length: "long", originalGeneratedText: "x".repeat(1201), currentText: "x".repeat(1201), finalApprovedText: "x".repeat(1201), status: "approved", approvedAt: new Date() });
+  const state = await getAvatarState({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  assert.deepEqual(state.approvedDrafts.map(({ id }) => String(id)), [String(eligible._id)]);
 });
 
 test("provider status completion is copied privately before it becomes deliverable", async () => {
   const { provider } = await prepareSelection();
-  const video = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual-test", script: "Short private test" }, provider });
+  const video = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual_test", script: "Short private test" }, provider });
   const stored = await DigitalCloneAvatarVideo.findById(video._id).select("+providerJobRef"); provider.complete(stored.providerJobRef);
   const completed = await refreshAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: video._id, provider, copyVideo: async () => ({ public_id: "private-result", bytes: 24 }) });
   assert.equal(completed.status, "completed");
   assert.equal(completed.providerResultUrl, undefined);
+  const state = await getAvatarState({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  assert.equal(state.avatar.readiness.ready, false);
+  assert.equal(state.avatar.approvedVideoId, null);
   const delivery = await getAvatarVideoDelivery({ companyId: COMPANY_ID, userId: USER_ID, videoId: video._id, streamVideo: async () => Readable.from([mp4()]) });
   assert.ok(delivery.stream);
 });
 
 test("provider failure, rejection, approval, readiness, and reconfirmation are safe", async () => {
   const { provider } = await prepareSelection();
-  const failed = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual-test", script: "Failure path" }, provider });
+  const failed = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual_test", script: "Failure path" }, provider });
   let stored = await DigitalCloneAvatarVideo.findById(failed._id).select("+providerJobRef"); provider.fail(stored.providerJobRef);
   assert.equal((await refreshAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: failed._id, provider })).status, "failed");
-  const retried = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual-test", script: "Failure path" }, provider });
+  const retried = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual_test", script: "Failure path" }, provider });
   assert.notEqual(String(retried._id), String(failed._id));
   assert.equal((await rejectAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: failed._id })).status, "rejected");
-  const video = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual-test", script: "Approval path" }, provider });
+  const video = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual_test", script: "Approval path" }, provider });
   stored = await DigitalCloneAvatarVideo.findById(video._id).select("+providerJobRef"); provider.complete(stored.providerJobRef);
   await refreshAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: video._id, provider, copyVideo: async () => ({ public_id: "private-approved", bytes: 24 }) });
   await approveAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: video._id });
-  assert.equal((await getAvatarState({ companyId: COMPANY_ID, userId: USER_ID, provider })).avatar.readiness.ready, true);
+  const readyState = await getAvatarState({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  assert.equal(readyState.avatar.readiness.ready, true);
+  assert.equal(String(readyState.avatar.approvedVideoId), String(video._id));
   await acceptAvatarConsent({ companyId: COMPANY_ID, userId: USER_ID, body: consentBody });
   assert.equal((await getAvatarState({ companyId: COMPANY_ID, userId: USER_ID, provider })).avatar.readiness.ready, true);
 });
 
+test("approved test readiness is bound to the current Avatar and preserves historical secure playback", async () => {
+  const provider = new MockAvatarProvider({ avatars: [
+    { groupRef: "group-one", lookRef: "look-one", displayName: "Avatar One", avatarType: "photo-avatar", orientation: "portrait", supportedCapabilities: ["avatar_v"], previewImageUrl: "https://files.heygen.ai/one.jpg", ready: true },
+    { groupRef: "group-two", lookRef: "look-two", displayName: "Avatar Two", avatarType: "photo-avatar", orientation: "portrait", supportedCapabilities: ["avatar_v"], previewImageUrl: "https://files.heygen.ai/two.jpg", ready: true },
+  ] });
+  await prepareSelection({ provider }); const video = await completeTestVideo({ provider, script: "Avatar binding" });
+  await approveAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: video._id });
+  assert.equal((await getAvatarState({ companyId: COMPANY_ID, userId: USER_ID, provider })).avatar.readiness.ready, true);
+  const candidates = await discoverAvatars({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  const replacement = candidates.find(({ _id }) => String(_id) !== String(video.avatarId));
+  await selectAvatar({ companyId: COMPANY_ID, userId: USER_ID, candidateId: replacement._id, provider });
+  const changed = await getAvatarState({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  assert.equal(changed.avatar.readiness.ready, false);
+  assert.equal(changed.avatar.status, "selected");
+  assert.equal(changed.avatar.approvedVideoId, null);
+  assert.equal((await DigitalCloneAvatarVideo.findById(video._id)).status, "approved");
+  assert.ok((await getAvatarVideoDelivery({ companyId: COMPANY_ID, userId: USER_ID, videoId: video._id, streamVideo: async () => Readable.from([mp4()]) })).stream);
+});
+
+test("approved test readiness is bound to the current provider voice", async () => {
+  const provider = new MockAvatarProvider({ voices: [
+    { voiceRef: "voice-one", displayName: "Voice One", language: "English", gender: "neutral", voiceType: "private", ready: true },
+    { voiceRef: "voice-two", displayName: "Voice Two", language: "English", gender: "neutral", voiceType: "private", ready: true },
+  ] });
+  await prepareSelection({ provider }); const video = await completeTestVideo({ provider, script: "Voice binding" });
+  await approveAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: video._id });
+  const voices = await discoverAvatarProviderVoices({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  const replacement = voices.find(({ _id }) => String(_id) !== String(video.providerVoiceId));
+  await selectAvatarProviderVoice({ companyId: COMPANY_ID, userId: USER_ID, voiceId: replacement._id, provider });
+  const changed = await getAvatarState({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  assert.equal(changed.avatar.readiness.ready, false);
+  assert.equal(changed.avatar.approvedVideoId, null);
+  assert.equal((await DigitalCloneAvatarVideo.findById(video._id)).status, "approved");
+});
+
+test("a replacement test keeps the previous approval as historical audit state", async () => {
+  const { provider } = await prepareSelection(); const first = await completeTestVideo({ provider, script: "First approved test" });
+  await approveAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: first._id });
+  const firstApprovedAt = (await DigitalCloneAvatarVideo.findById(first._id)).approvedAt;
+  const replacement = await completeTestVideo({ provider, script: "Replacement approved test" });
+  assert.equal((await DigitalCloneAvatarVideo.findById(first._id)).status, "approved");
+  assert.equal((await getAvatarState({ companyId: COMPANY_ID, userId: USER_ID, provider })).avatar.readiness.ready, true);
+  await approveAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: replacement._id });
+  const historical = await DigitalCloneAvatarVideo.findById(first._id);
+  const current = await getAvatarState({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  assert.equal(historical.status, "completed");
+  assert.equal(historical.approvedAt.getTime(), firstApprovedAt.getTime());
+  assert.equal(String(current.avatar.approvedVideoId), String(replacement._id));
+  assert.equal(current.avatar.readiness.ready, true);
+});
+
+test("approval rejects a completed video generated with a previous provider voice", async () => {
+  const provider = new MockAvatarProvider({ voices: [
+    { voiceRef: "voice-one", displayName: "Voice One", language: "English", gender: "neutral", voiceType: "private", ready: true },
+    { voiceRef: "voice-two", displayName: "Voice Two", language: "English", gender: "neutral", voiceType: "private", ready: true },
+  ] });
+  await prepareSelection({ provider }); const video = await completeTestVideo({ provider, script: "Old voice" });
+  const voices = await discoverAvatarProviderVoices({ companyId: COMPANY_ID, userId: USER_ID, provider });
+  await selectAvatarProviderVoice({ companyId: COMPANY_ID, userId: USER_ID, voiceId: voices.find(({ _id }) => String(_id) !== String(video.providerVoiceId))._id, provider });
+  await assert.rejects(approveAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: video._id }), (error) => error.code === "AVATAR_VIDEO_NOT_APPROVABLE");
+  assert.equal((await DigitalCloneAvatarVideo.findById(video._id)).status, "completed");
+});
+
+test("another tenant or user cannot inherit readiness from an approved video", async () => {
+  const { provider } = await prepareSelection(); const video = await completeTestVideo({ provider, script: "Owned approval" });
+  await approveAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: video._id });
+  for (const scope of [{ companyId: COMPANY_ID, userId: OTHER_USER_ID }, { companyId: OTHER_COMPANY_ID, userId: USER_ID }]) {
+    const setup = await authorize(scope);
+    await DigitalCloneAvatar.updateOne({ _id: setup._id }, { $set: { status: "ready", selectedAvatarId: video.avatarId, selectedProviderVoiceId: video.providerVoiceId, approvedAt: new Date(), approvedVideoId: video._id } });
+    const state = await getAvatarState({ ...scope, provider });
+    assert.equal(state.avatar.readiness.ready, false);
+    assert.equal(state.avatar.approvedVideoId, null);
+    assert.deepEqual(state.videos, []);
+  }
+  assert.equal((await DigitalCloneAvatarVideo.findById(video._id)).status, "approved");
+});
+
 test("completed requests stay deduplicated until rejection, then permit one retry", async () => {
-  const { provider } = await prepareSelection(); const body = { sourceType: "manual-test", script: "Reject and retry" };
+  const { provider } = await prepareSelection(); const body = { sourceType: "manual_test", script: "Reject and retry" };
   const first = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body, provider });
   const stored = await DigitalCloneAvatarVideo.findById(first._id).select("+providerJobRef"); provider.complete(stored.providerJobRef);
   await refreshAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: first._id, provider, copyVideo: async () => ({ public_id: "private-rejected", bytes: 24 }) });
   const duplicate = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body, provider });
   assert.equal(String(duplicate._id), String(first._id));
   await rejectAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: first._id });
+  assert.equal((await getAvatarState({ companyId: COMPANY_ID, userId: USER_ID, provider })).avatar.readiness.ready, false);
   const retry = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body, provider });
   assert.notEqual(String(retry._id), String(first._id));
   assert.equal(provider.calls.create, 2);
@@ -377,7 +509,7 @@ test("base-consent invalidation immediately hides identity state and clears read
 
 test("revocation wins over in-flight result copying and archives approved output", async () => {
   const { provider } = await prepareSelection();
-  const video = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual-test", script: "Concurrent revoke" }, provider });
+  const video = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual_test", script: "Concurrent revoke" }, provider });
   const stored = await DigitalCloneAvatarVideo.findById(video._id).select("+providerJobRef"); provider.complete(stored.providerJobRef);
   let cleaned = false;
   await assert.rejects(refreshAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: video._id, provider, copyVideo: async () => { await revokeAvatar({ companyId: COMPANY_ID, userId: USER_ID }); return { public_id: "orphaned-private-copy", bytes: 24 }; }, deleteVideo: async ({ storagePublicId }) => { assert.equal(storagePublicId, "orphaned-private-copy"); cleaned = true; } }), (error) => error.code === "AVATAR_AUTHORIZATION_CHANGED");
@@ -387,7 +519,7 @@ test("revocation wins over in-flight result copying and archives approved output
 
 test("revocation archives an approved result so reauthorization cannot expose it", async () => {
   const { provider } = await prepareSelection();
-  const video = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual-test", script: "Approved then revoked" }, provider });
+  const video = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual_test", script: "Approved then revoked" }, provider });
   const stored = await DigitalCloneAvatarVideo.findById(video._id).select("+providerJobRef"); provider.complete(stored.providerJobRef);
   await refreshAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: video._id, provider, copyVideo: async () => ({ public_id: "private-revoked", bytes: 24 }) });
   await approveAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: video._id });
@@ -399,7 +531,7 @@ test("revocation archives an approved result so reauthorization cannot expose it
 
 test("revocation immediately blocks polling, delivery, preview, and readiness", async () => {
   const { candidate, provider } = await prepareSelection();
-  const video = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual-test", script: "Will revoke" }, provider });
+  const video = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual_test", script: "Will revoke" }, provider });
   await revokeAvatar({ companyId: COMPANY_ID, userId: USER_ID });
   await assert.rejects(refreshAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, videoId: video._id, provider }), (error) => error.code === "AVATAR_CONSENT_REQUIRED");
   await assert.rejects(getAvatarPreviewDelivery({ companyId: COMPANY_ID, userId: USER_ID, candidateId: candidate._id, streamPreview: async () => Readable.from([]) }), (error) => error.code === "AVATAR_CONSENT_REQUIRED");
@@ -425,7 +557,7 @@ test("provider downloads disable redirects and enforce bounds while streaming", 
 });
 
 test("status and video delivery are scoped to both company and user", async () => {
-  const { provider } = await prepareSelection(); const video = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual-test", script: "Owned result" }, provider });
+  const { provider } = await prepareSelection(); const video = await createAvatarVideo({ companyId: COMPANY_ID, userId: USER_ID, body: { sourceType: "manual_test", script: "Owned result" }, provider });
   await authorize({ companyId: COMPANY_ID, userId: OTHER_USER_ID });
   await assert.rejects(refreshAvatarVideo({ companyId: COMPANY_ID, userId: OTHER_USER_ID, videoId: video._id, provider }), (error) => error.code === "AVATAR_VIDEO_NOT_FOUND");
   await assert.rejects(getAvatarVideoDelivery({ companyId: COMPANY_ID, userId: OTHER_USER_ID, videoId: video._id, streamVideo: async () => Readable.from([]) }), (error) => error.code === "AVATAR_VIDEO_NOT_FOUND");
@@ -437,6 +569,12 @@ test("active dedupe index has legacy-safe partial semantics", () => {
   const [, options] = DigitalCloneAvatarVideo.schema.indexes().find(([keys]) => keys.activeDedupeKey === 1);
   assert.equal(options.unique, true);
   assert.deepEqual(options.partialFilterExpression, { activeDedupeKey: { $type: "string" } });
+});
+
+test("approved video uniqueness remains scoped to one current user/company artifact", () => {
+  const [, options] = DigitalCloneAvatarVideo.schema.indexes().find(([keys]) => keys.companyId === 1 && keys.userId === 1 && keys.status === 1);
+  assert.equal(options.unique, true);
+  assert.deepEqual(options.partialFilterExpression, { status: "approved" });
 });
 
 test("preview proxy validates image MIME and signature before delivery", async () => {
