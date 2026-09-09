@@ -29,7 +29,7 @@ const supabase = createClient(url, serviceRoleKey, {
 });
 
 const run = async (shouldApply) => {
-  const { data, error } = await supabase.rpc("migrate_legacy_reservations_business", {
+  const { data, error } = await supabase.rpc("migrate_reservations_to_canonical_v2", {
     p_business_id: businessId,
     p_apply: shouldApply,
   });
@@ -47,4 +47,5 @@ if (String(dryRun.business_slug) !== confirmedSlug) {
 }
 
 const result = await run(true);
-console.log(JSON.stringify({ phase: "applied", result }, null, 2));
+const reconciliation = await run(false);
+console.log(JSON.stringify({ phase: "applied", result, reconciliation }, null, 2));

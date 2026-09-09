@@ -42,8 +42,9 @@ const createMemoryStore = (initial = {}) => {
     settings: initial.settings || null,
     service: initial.service || null,
     branding: initial.branding || null,
+    reservationSettings: initial.reservationSettings || null,
     alternateBusinesses: initial.alternateBusinesses || {},
-    creates: { business: 0, profile: 0, settings: 0, service: 0, branding: 0 },
+    creates: { business: 0, profile: 0, settings: 0, service: 0, branding: 0, reservationSettings: 0 },
   };
 
   return {
@@ -122,6 +123,16 @@ const createMemoryStore = (initial = {}) => {
       }
       return state.branding;
     },
+    async createOrUpdateReservationBusinessSettings({ businessId, templateKey, capabilities, terminology }) {
+      if (!state.reservationSettings) {
+        state.creates.reservationSettings += 1;
+        state.reservationSettings = { business_id: businessId, template_key: templateKey, capabilities, terminology };
+      }
+      return state.reservationSettings;
+    },
+    async applyReservationsTemplate({ businessId, templateKey }) {
+      return { businessId, templateKey, addedFields: 0 };
+    },
   };
 };
 
@@ -175,6 +186,7 @@ test("repeat provisioning creates missing rows once and preserves existing rows"
     settings: 1,
     service: 1,
     branding: 1,
+    reservationSettings: 1,
   });
   assert.deepEqual(company.installedApps, ["reservations"]);
 });
@@ -227,6 +239,7 @@ test("existing customized profile, settings, and branding are reused unchanged",
     settings: 0,
     service: 0,
     branding: 0,
+    reservationSettings: 1,
   });
 });
 
@@ -353,9 +366,11 @@ test("platform provisioning repairs active Reservations and synchronizes legacy 
     ["createOrGetReservationBusiness", { id: 10, business_slug: "terrapeak" }],
     ["createOrUpdateBusinessProfile", { id: "profile-1" }],
     ["createOrUpdateRestaurantSettings", { id: "settings-1" }],
+    ["createOrUpdateReservationBusinessSettings", { id: "reservation-settings-1" }],
     ["createOrUpdateCanonicalRestaurantService", { id: "service-1" }],
     ["activateCanonicalBookingModelIfEmpty", { activated: true }],
     ["createOrUpdateRestaurantBranding", { id: "branding-1" }],
+    ["applyReservationsTemplate", { addedFields: 0 }],
   ];
   for (const [method, result] of methods) {
     t.mock.method(reservationProvisioningStore, method, async () => result);

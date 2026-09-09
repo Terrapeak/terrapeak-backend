@@ -2,6 +2,7 @@ import {
   createOrGetReservationBusiness,
   createOrUpdateBusinessProfile,
   createOrUpdateRestaurantSettings,
+  createOrUpdateReservationBusinessSettings,
   createOrUpdateCanonicalRestaurantService,
   activateCanonicalBookingModelIfEmpty,
   createOrUpdateRestaurantBranding,
@@ -10,12 +11,14 @@ import {
 } from "../utils/reservationService.js";
 import { logReservationsOperation } from "../utils/reservationsOperationalLog.js";
 import { applyReservationsTemplate } from "../utils/reservationTemplateService.js";
+import { getReservationProvisioningPlan } from "../utils/reservationProvisioningPlan.js";
 import ChatbotSettings from "../models/chatbotSettings.js";
 
 export const reservationProvisioningStore = {
   createOrGetReservationBusiness,
   createOrUpdateBusinessProfile,
   createOrUpdateRestaurantSettings,
+  createOrUpdateReservationBusinessSettings,
   createOrUpdateCanonicalRestaurantService,
   activateCanonicalBookingModelIfEmpty,
   createOrUpdateRestaurantBranding,
@@ -72,11 +75,16 @@ export async function getReservationsProvisioningHealth({
       }
 
       ({ profile, settings, branding, service } =
-        await store.getReservationProvisioningRecords(business.id));
+        await store.getReservationProvisioningRecords(business.id, {
+          templateKey: company.reservationTemplate,
+        }));
       if (!profile) missing.push("business_profile");
-      if (!settings) missing.push("restaurant_settings");
+      const legacyRestaurant = company.reservationTemplate === undefined;
+      const isRestaurant =
+        (company.reservationTemplate || "restaurant") === "restaurant";
+      if (isRestaurant && !settings && !legacyRestaurant) missing.push("restaurant_settings");
       if (!branding) missing.push("restaurant_branding");
-      if (!service) missing.push("services.restaurant");
+      if (!service) missing.push("services");
       if (Number(business.booking_model_version || 1) < 2) {
         missing.push("businesses.booking_model_version");
       }
@@ -153,24 +161,44 @@ export default async function provisionReservations({
   company,
   store = reservationProvisioningStore,
 }) {
+  // A missing company field identifies an older installation. Preserve its
+  // restaurant compatibility records, while every newly onboarded company
+  // gets the explicit selected template (general when omitted at onboarding).
+  const plan = getReservationProvisioningPlan({
+    reservationTemplate: company.reservationTemplate,
+  });
   const business = await store.createOrGetReservationBusiness({
     businessName: company.displayName || company.name,
     businessSlug: company.reservationBusinessSlug,
+    businessType: plan.businessType,
   });
 
   const profile = await store.createOrUpdateBusinessProfile({
     businessId: business.id,
     businessName: company.displayName || company.name,
     referencePrefix: company.referencePrefix,
+    businessType: plan.businessType,
+    templateKey: plan.templateKey,
+    terminology: plan.terminology,
   });
 
-  const settings = await store.createOrUpdateRestaurantSettings({
-    businessId: business.id,
-  });
+  const settings = plan.restaurantCompatibility
+    ? await store.createOrUpdateRestaurantSettings({ businessId: business.id })
+    : null;
 
   const service = await store.createOrUpdateCanonicalRestaurantService({
     businessId: business.id,
+    templateKey: plan.templateKey,
   });
+
+  const reservationSettings = store.createOrUpdateReservationBusinessSettings
+    ? await store.createOrUpdateReservationBusinessSettings({
+        businessId: business.id,
+        templateKey: plan.templateKey,
+        capabilities: plan.capabilities,
+        terminology: plan.terminology,
+      })
+    : null;
 
   const bookingModel = await store.activateCanonicalBookingModelIfEmpty({
     businessId: business.id,
@@ -181,10 +209,13 @@ export default async function provisionReservations({
     restaurantName: company.displayName || company.name,
   });
 
-  const customerForm = await store.applyReservationsTemplate({
-    businessId: business.id,
-    templateKey: company.reservationTemplate || "general",
-  });
+  const customerForm = store.applyReservationsTemplate
+    ? await store.applyReservationsTemplate({
+        businessId: business.id,
+        templateKey: plan.templateKey,
+        preserveExistingCustomizations: true,
+      })
+    : null;
 
   const chatbotLink = await reconcileChatbotReservationSlug({
     company,
@@ -196,7 +227,7 @@ export default async function provisionReservations({
     companyId: company._id,
     businessId: business.id,
     businessSlug: business.business_slug,
-    reservationTemplate: company.reservationTemplate || "general",
+    reservationTemplate: plan.templateKey,
     bookingModelVersion: bookingModel?.business?.booking_model_version || 1,
   });
 
@@ -205,6 +236,7 @@ export default async function provisionReservations({
     business,
     profile,
     settings,
+    reservationSettings,
     service,
     bookingModel,
     branding,
