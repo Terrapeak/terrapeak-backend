@@ -25,6 +25,7 @@ describe("safe Reservations template changes", () => {
       "Email",
       "Procedure",
       "First visit?",
+      "Preferred dentist",
     ]);
     assert.equal(plan.missing.every((field) => field.business_id === 42), true);
     assert.deepEqual(plan.desiredExistingIds, []);

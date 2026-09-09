@@ -3,6 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import { DateTime } from "luxon";
 import { randomUUID } from "node:crypto";
 import { logReservationsOperation } from "./reservationsOperationalLog.js";
+import { resolveReservationsConfiguration } from "./reservationConfiguration.js";
+import { getReservationTemplateServiceDefaults } from "./reservationTemplateDefaults.js";
 
 dotenv.config();
 
@@ -51,7 +53,7 @@ export async function findReservationBusinessBySlug(businessSlug) {
   return data || null;
 }
 
-export async function getReservationProvisioningRecords(businessId) {
+export async function getReservationProvisioningRecords(businessId, { templateKey = "restaurant" } = {}) {
   if (!businessId) {
     return { profile: null, settings: null, branding: null, service: null };
   }
@@ -64,7 +66,8 @@ export async function getReservationProvisioningRecords(businessId) {
       .from("services")
       .select("*")
       .eq("business_id", businessId)
-      .eq("booking_type", "restaurant")
+      .eq("slug", getReservationTemplateServiceDefaults(templateKey).slug)
+      .eq("is_internal", templateKey === "restaurant")
       .eq("is_active", true)
       .eq("is_published", true)
       .order("id", { ascending: true })
@@ -226,11 +229,12 @@ export async function getReservationConciergeContext({
       supabase
         .from("services")
         .select(
-          "id, name, slug, description, booking_type, duration_minutes, capacity, price, currency, price_session_count, package_validity_days, subject, enrollment_mode, scheduling_mode, is_active, is_published",
+          "id, name, slug, description, booking_type, duration_minutes, capacity, price, currency, price_session_count, package_validity_days, subject, enrollment_mode, scheduling_mode, is_active, is_published, is_internal",
         )
         .eq("business_id", numericBusinessId)
         .eq("is_active", true)
         .eq("is_published", true)
+        .eq("is_internal", false)
         .order("name")
         .limit(30),
       supabase
@@ -465,6 +469,7 @@ const getCanonicalRestaurantContext = async (businessId) => {
         .select("id")
         .eq("business_id", businessId)
         .eq("booking_type", "restaurant")
+        .eq("is_internal", true)
         .eq("is_active", true)
         .eq("is_published", true)
         .order("id", { ascending: true })
@@ -654,7 +659,7 @@ export async function updateReservationById({
 export async function createOrGetReservationBusiness({
   businessName,
   businessSlug,
-  businessType = "restaurant",
+  businessType = "general",
 }) {
   const existingBusiness = await findReservationBusinessBySlug(businessSlug);
 
@@ -702,18 +707,20 @@ export async function createOrGetReservationBusiness({
 export async function createOrUpdateBusinessProfile({
   businessId,
   businessName,
-  businessType = "restaurant",
+  businessType = "general",
+  terminology = {},
+  templateKey,
   referencePrefix = "BOT",
 }) {
   const profileData = {
     business_id: businessId,
     business_name: businessName,
     business_type: businessType,
-    booking_label: "Reservation",
-    customer_label: "Customer",
-    capacity_label: "Guests",
-    industry_template: businessType,
-    uses_capacity: true,
+    booking_label: terminology.bookingSingular || "Booking",
+    customer_label: terminology.customerSingular || "Customer",
+    capacity_label: terminology.guestPlural || "Guests",
+    industry_template: templateKey || businessType,
+    uses_capacity: businessType === "restaurant",
     reference_prefix: referencePrefix,
   };
 
@@ -805,23 +812,86 @@ export async function createOrUpdateRestaurantSettings({ businessId }) {
   return data;
 }
 
-export async function createOrUpdateCanonicalRestaurantService({ businessId }) {
-  const settings = await findByBusinessId("restaurant_settings", businessId);
-  if (!settings) {
+export async function createOrUpdateReservationBusinessSettings({
+  businessId,
+  templateKey,
+  capabilities,
+  terminology,
+}) {
+  const existingSettings = await findByBusinessId(
+    "reservation_business_settings",
+    businessId,
+  );
+  const resolved = resolveReservationsConfiguration({
+    templateKey,
+    capabilities,
+    terminology,
+    bookingBehavior: existingSettings || {},
+  });
+  const settingsData = {
+    business_id: businessId,
+    template_key: resolved.templateKey,
+    capabilities: resolved.capabilities,
+    terminology: resolved.terminology,
+  };
+
+  if (existingSettings) {
+    const patch = getMissingReservationFieldValues(existingSettings, settingsData);
+    if (!existingSettings.template_key) patch.template_key = settingsData.template_key;
+    if (!existingSettings.capabilities || Object.keys(existingSettings.capabilities).length === 0) {
+      patch.capabilities = settingsData.capabilities;
+    }
+    if (!existingSettings.terminology || Object.keys(existingSettings.terminology).length === 0) {
+      patch.terminology = settingsData.terminology;
+    }
+    if (!Object.keys(patch).length) return existingSettings;
+    const { data, error } = await supabase
+      .from("reservation_business_settings")
+      .update(patch)
+      .eq("business_id", businessId)
+      .select()
+      .single();
+    if (error) throw new Error("Could not update Reservations configuration");
+    return data;
+  }
+
+  const { data, error } = await supabase
+    .from("reservation_business_settings")
+    .insert([settingsData])
+    .select()
+    .single();
+  if (error) throw new Error("Could not create Reservations configuration");
+  return data;
+}
+
+export async function createOrUpdateCanonicalRestaurantService({ businessId, templateKey = "restaurant" }) {
+  const serviceDefaults = {
+    general: { name: "Appointment", slug: "appointment", description: "Book an appointment.", bookingType: "appointment", duration: 60, capacity: 1 },
+    physiotherapy: { name: "Physiotherapy Appointment", slug: "physiotherapy-appointment", description: "Book a physiotherapy appointment.", bookingType: "appointment", duration: 60, capacity: 1 },
+    dental: { name: "Dental Appointment", slug: "dental-appointment", description: "Book a dental appointment.", bookingType: "appointment", duration: 60, capacity: 1 },
+    salon: { name: "Salon Appointment", slug: "salon-appointment", description: "Book a salon or beauty appointment.", bookingType: "appointment", duration: 60, capacity: 1 },
+    learning_centre: { name: "Learning Session", slug: "learning-session", description: "Book a learning session.", bookingType: "class", duration: 60, capacity: 10 },
+    restaurant: { name: "Restaurant Reservation", slug: "restaurant-reservation", description: "Customer-facing restaurant reservations.", bookingType: "restaurant", duration: 90, capacity: 20 },
+  }[templateKey] || { name: "Appointment", slug: "appointment", description: "Book an appointment.", bookingType: "appointment", duration: 60, capacity: 1 };
+  const settings = templateKey === "restaurant"
+    ? await findByBusinessId("restaurant_settings", businessId)
+    : null;
+  if (templateKey === "restaurant" && !settings) {
     throw new Error("Restaurant settings must exist before the booking service");
   }
 
   const serviceData = {
     business_id: businessId,
-    name: "Restaurant Reservation",
-    slug: "restaurant-reservation",
-    description: "Customer-facing restaurant reservations.",
-    booking_type: "restaurant",
-    duration_minutes: Number(settings.default_duration_minutes),
+    name: serviceDefaults.name,
+    slug: serviceDefaults.slug,
+    description: serviceDefaults.description,
+    booking_type: serviceDefaults.bookingType,
+    duration_minutes: templateKey === "restaurant" ? Number(settings.default_duration_minutes) : serviceDefaults.duration,
     slot_interval_minutes: 30,
-    capacity: Number(settings.max_guests_per_slot),
+    capacity: templateKey === "restaurant" ? Number(settings.max_guests_per_slot) : serviceDefaults.capacity,
     is_active: true,
     is_published: true,
+    is_internal: templateKey === "restaurant",
   };
 
   const { data: existing, error: findError } = await supabase
@@ -837,6 +907,15 @@ export async function createOrUpdateCanonicalRestaurantService({ businessId }) {
 
   if (existing) {
     const missingValues = getMissingReservationFieldValues(existing, serviceData);
+    // Publication is an availability invariant for the canonical restaurant
+    // RPCs. Visibility is controlled by is_internal, never by unpublishing.
+    if (templateKey === "restaurant") {
+      if (existing.is_internal !== true) missingValues.is_internal = true;
+      if (existing.is_active !== true) missingValues.is_active = true;
+      if (existing.is_published !== true) missingValues.is_published = true;
+    } else if (existing.is_internal !== false) {
+      missingValues.is_internal = false;
+    }
     if (!Object.keys(missingValues).length) return existing;
 
     const { data, error } = await supabase
@@ -881,18 +960,16 @@ export async function activateCanonicalBookingModelIfEmpty({ businessId }) {
     return { activated: false, reason: "legacy-history-requires-migration" };
   }
 
-  const { data, error } = await supabase
-    .from("businesses")
-    .update({ booking_model_version: 2 })
-    .eq("id", businessId)
-    .select("id, booking_model_version")
-    .single();
+  const { data, error } = await supabase.rpc("migrate_reservations_to_canonical_v2", {
+    p_business_id: businessId,
+    p_apply: true,
+  });
 
   if (error) {
     throw new Error("Could not activate the canonical booking model");
   }
 
-  return { activated: true, reason: "empty-tenant", business: data };
+  return { activated: true, reason: "empty-tenant-reconciled", business: data };
 }
 
 export async function createOrUpdateRestaurantBranding({
