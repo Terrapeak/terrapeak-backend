@@ -11,6 +11,7 @@ import User from "../models/user.js";
 import Company from "../models/company.js";
 import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import ReservationStaffRequest from "../models/reservationStaffRequest.js";
+import { serializePublicSession } from "../utils/publicSessionSerializer.js";
 import axios from "axios";
 import { DateTime } from "luxon";
 import { extractTextFromFile } from "../utils/extractTextFromFile.js";
@@ -2400,26 +2401,7 @@ export const getSession = asyncHandler(async (req, res, next) => {
       });
     }
 
-    return res.status(200).json({
-      sessionId: session.sessionId,
-      chatbotId: session.chatbotId,
-      appointmentStep: session.appointmentStep,
-      preActivationData: session.preActivationData,
-      chatLogs: session.chatLogs,
-      reservationCallback: session.reservationCallbackRequestedAt
-        ? {
-            name: session.reservationCallbackName || "",
-            contact: session.reservationCallbackContact || "",
-            preferredTime: session.reservationCallbackPreferredTime || "",
-            question: session.reservationCallbackQuestion || "",
-            serviceOrTeacher: session.reservationCallbackServiceOrTeacher || "",
-            summary: session.reservationCallbackSummary || "",
-            bookingUrl: session.reservationCallbackBookingUrl || "",
-            requestedAt: session.reservationCallbackRequestedAt,
-          }
-        : null,
-      updatedAt: session.updatedAt,
-    });
+    return res.status(200).json(serializePublicSession(session));
   } catch (error) {
     console.error("Error fetching session:", error);
     next(error);
