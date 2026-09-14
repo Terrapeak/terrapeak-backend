@@ -23,6 +23,23 @@ export const getMissingReservationFieldValues = (existing, defaults) =>
     )
   );
 
+export async function getReservationCallbackNotificationSettings(businessId) {
+  const numericBusinessId = Number(businessId);
+  if (!Number.isFinite(numericBusinessId) || numericBusinessId <= 0) return null;
+
+  const { data, error } = await supabase
+    .from("reservation_business_settings")
+    .select("callback_notifications")
+    .eq("business_id", numericBusinessId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error("Could not load callback notification settings");
+  }
+
+  return data?.callback_notifications || null;
+}
+
 const findByBusinessId = async (table, businessId) => {
   const { data, error } = await supabase
     .from(table)

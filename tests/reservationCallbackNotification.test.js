@@ -139,6 +139,79 @@ test("sends one privacy-safe email per recipient and marks the callback sent", a
   assert.equal(deliveryUpdate.update.$set["notification.email.providerMessageId"], "provider-1,provider-2");
 });
 
+test("uses backward-compatible owner/admin behavior when canonical preference is absent", async () => {
+  setMemberships([{ userId: { email: "owner@example.com" } }]);
+  const request = makeRequest();
+  ReservationStaffRequest.findOneAndUpdate = async (_filter, update) => ({
+    ...request,
+    notification: {
+      email: {
+        status: "not_attempted",
+        claimToken: update.$set["notification.email.claimToken"],
+      },
+    },
+  });
+  ReservationStaffRequest.updateOne = async () => {};
+  const sent = [];
+  const result = await notifyReservationCallbackCreated(request, {
+    loadPreferences: async () => null,
+    send: async (message) => {
+      sent.push(message);
+      return { id: "provider-1" };
+    },
+  });
+  assert.equal(result.status, "sent");
+  assert.equal(sent.length, 1);
+});
+
+test("disabled canonical preference skips delivery and does not increment attempts", async () => {
+  const request = makeRequest({
+    notification: { email: { status: "not_attempted", attempts: 2 } },
+  });
+  let sendCount = 0;
+  let deliveryUpdate;
+  ReservationStaffRequest.updateOne = async (_filter, update) => {
+    deliveryUpdate = update;
+  };
+  const result = await notifyReservationCallbackCreated(request, {
+    loadPreferences: async () => ({ enabled: false, recipient_mode: "owner_admin" }),
+    send: async () => {
+      sendCount += 1;
+    },
+  });
+  assert.deepEqual(result, { status: "disabled" });
+  assert.equal(sendCount, 0);
+  assert.equal(deliveryUpdate.$set["notification.email.status"], "disabled");
+  assert.equal(deliveryUpdate.$inc, undefined);
+});
+
+test("preference lookup failure fails open to existing owner/admin delivery", async () => {
+  setMemberships([{ userId: { email: "owner@example.com" } }]);
+  const request = makeRequest();
+  ReservationStaffRequest.findOneAndUpdate = async (_filter, update) => ({
+    ...request,
+    notification: {
+      email: {
+        status: "not_attempted",
+        claimToken: update.$set["notification.email.claimToken"],
+      },
+    },
+  });
+  ReservationStaffRequest.updateOne = async () => {};
+  let sendCount = 0;
+  const result = await notifyReservationCallbackCreated(request, {
+    loadPreferences: async () => {
+      throw new Error("canonical settings unavailable");
+    },
+    send: async () => {
+      sendCount += 1;
+      return { id: "provider-1" };
+    },
+  });
+  assert.equal(result.status, "sent");
+  assert.equal(sendCount, 1);
+});
+
 test("records no_recipients without attempting delivery", async () => {
   setMemberships([]);
   const request = makeRequest();
@@ -254,4 +327,30 @@ test("notification attempts accept zero and positive integers only", async () =>
       error.errors["notification.email.attempts"]?.message ===
       "notification email attempts must be an integer",
   );
+});
+
+
+test("malformed or unsupported callback preferences fail safe to owner/admin delivery", async () => {
+  setMemberships([{ userId: { email: "owner@example.com" } }]);
+  const request = makeRequest();
+  ReservationStaffRequest.findOneAndUpdate = async (_filter, update) => ({
+    ...request,
+    notification: {
+      email: {
+        status: "not_attempted",
+        claimToken: update.$set["notification.email.claimToken"],
+      },
+    },
+  });
+  ReservationStaffRequest.updateOne = async () => {};
+  let sendCount = 0;
+  const result = await notifyReservationCallbackCreated(request, {
+    loadPreferences: async () => ({ enabled: "false", recipient_mode: "arbitrary_recipient" }),
+    send: async () => {
+      sendCount += 1;
+      return { id: "provider-1" };
+    },
+  });
+  assert.equal(result.status, "sent");
+  assert.equal(sendCount, 1);
 });

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import CompanyMembership from "../models/companyMembership.js";
 import ReservationStaffRequest from "../models/reservationStaffRequest.js";
 import sendEmail from "../utils/sendEmail.js";
+import { getReservationCallbackNotificationSettings } from "../utils/reservationService.js";
 
 const DASHBOARD_CALLBACK_REQUESTS_URL =
   "https://dashboard.terrapeakgroup.com/dashboard/reservations/callback-requests";
@@ -121,7 +122,7 @@ const updateDeliveryState = async (request, update, unset = {}) => {
   );
 };
 
-export const notifyReservationCallbackCreated = async (request, { send = sendEmail } = {}) => {
+export const notifyReservationCallbackCreated = async (request, { send = sendEmail, loadPreferences = getReservationCallbackNotificationSettings } = {}) => {
   const requestId = String(request?._id || "");
   const companyId = request?.companyId;
 
@@ -130,6 +131,27 @@ export const notifyReservationCallbackCreated = async (request, { send = sendEma
   }
 
   try {
+    let callbackNotifications = null;
+    try {
+      callbackNotifications = await loadPreferences(
+        request.reservationBusinessId,
+      );
+    } catch (error) {
+      console.warn("[Reservations callback notification preference lookup failed]", {
+        requestId,
+        companyId: String(companyId),
+        status: "fallback_owner_admin",
+      });
+    }
+
+    if (callbackNotifications?.enabled === false) {
+      await updateDeliveryState(request, {
+        "notification.email.status": "disabled",
+        "notification.email.lastAttemptAt": new Date(),
+      });
+      return { status: "disabled" };
+    }
+
     const existingStatus = request?.notification?.email?.status;
     if (existingStatus === "sent") {
       return { status: "already_sent" };

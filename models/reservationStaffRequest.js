@@ -48,7 +48,7 @@ const reservationStaffRequestSchema = new mongoose.Schema(
       email: {
         status: {
           type: String,
-          enum: ["not_attempted", "sent", "failed", "no_recipients"],
+          enum: ["not_attempted", "sent", "failed", "no_recipients", "disabled"],
           default: "not_attempted",
         },
         attempts: {
