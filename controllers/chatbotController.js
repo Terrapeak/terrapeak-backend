@@ -1901,7 +1901,9 @@ if (!botReply && (session.bookingType === "appointment" || inAppointmentFlow)) {
             $gte: startOfDayUTC,
             $lt: endOfDayUTC,
           },
-          userId: session.userId,
+          // TimeSlot.userId is the chatbot owner's User id. Session.userId is
+          // the visitor and is intentionally nullable for anonymous traffic.
+          userId: settings.userId,
           isBooked: false,
         });
         console.log(session.appointmentDate, slots);
@@ -2584,7 +2586,7 @@ function formatAppointmentShortForChat(appointment, slot) {
   )} - ${endLocal.toFormat("hh:mm a")} (${appointment.name})`;
 }
 
-function detectBookingIntent(lowerMsg) {
+export function detectBookingIntent(lowerMsg) {
   const remoteMeetingKeywords = [
     "callback",
     "call back",
@@ -2597,6 +2599,7 @@ function detectBookingIntent(lowerMsg) {
     "video call",
     "consultation call",
     "meeting",
+    "schedule a call",
   ];
 
   const reservationKeywords = [
