@@ -12,6 +12,7 @@ import Company from "../models/company.js";
 import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import ReservationStaffRequest from "../models/reservationStaffRequest.js";
 import { serializePublicSession } from "../utils/publicSessionSerializer.js";
+import { notifyReservationCallbackCreated } from "../services/reservationCallbackNotificationService.js";
 import axios from "axios";
 import { DateTime } from "luxon";
 import { extractTextFromFile } from "../utils/extractTextFromFile.js";
@@ -588,7 +589,7 @@ const createReservationStaffRequest = async ({
 }) => {
   if (!settings.companyId) return null;
 
-  return ReservationStaffRequest.create({
+  const request = await ReservationStaffRequest.create({
     companyId: settings.companyId,
     chatbotId: settings._id,
     sessionId: session.sessionId,
@@ -613,6 +614,19 @@ const createReservationStaffRequest = async ({
     policyWarning,
     bookingUrl: reservationBookingUrl,
   });
+
+  if (type === "callback") {
+    try {
+      await notifyReservationCallbackCreated(request);
+    } catch (error) {
+      console.warn("[Reservations callback notification hook failed]", {
+        requestId: String(request?._id || ""),
+        companyId: String(settings.companyId),
+      });
+    }
+  }
+
+  return request;
 };
 
 const buildReservationRescheduleSummary = () => {

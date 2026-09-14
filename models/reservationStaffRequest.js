@@ -44,6 +44,30 @@ const reservationStaffRequestSchema = new mongoose.Schema(
     summary: { type: String, default: "" },
     policyWarning: { type: String, default: "" },
     bookingUrl: { type: String, default: "" },
+    notification: {
+      email: {
+        status: {
+          type: String,
+          enum: ["not_attempted", "sent", "failed", "no_recipients"],
+          default: "not_attempted",
+        },
+        attempts: {
+          type: Number,
+          default: 0,
+          min: 0,
+          validate: {
+            validator: Number.isInteger,
+            message: "notification email attempts must be an integer",
+          },
+        },
+        sentAt: { type: Date, default: null },
+        lastAttemptAt: { type: Date, default: null },
+        providerMessageId: { type: String, default: "" },
+        failureCode: { type: String, default: "" },
+        claimedAt: { type: Date, default: null },
+        claimToken: { type: String, default: "" },
+      },
+    },
     source: { type: String, default: "ai-assistant" },
   },
   { timestamps: true },
