@@ -1,0 +1,30 @@
+name: Temporary D1 Backend Static Validation
+
+on:
+  push:
+    branches:
+      - callback-notification-preferences-current-main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: |
+          node --check models/company.js
+          node --check models/reservationStaffRequest.js
+          node --check services/reservationCallbackNotificationService.js
+          node --check utils/reservationService.js
+      - run: git diff --check 031cdc83cae798a8f12a5f734549d1f7794b1b2b...HEAD
+      - run: |
+          ! rg -n -i 'SUPABASE_SERVICE_ROLE_KEY|MONGO_URI|RESEND_API_KEY|BEGIN (RSA|OPENSSH|PRIVATE)|password\s*=' models/reservationStaffRequest.js services/reservationCallbackNotificationService.js utils/reservationService.js
