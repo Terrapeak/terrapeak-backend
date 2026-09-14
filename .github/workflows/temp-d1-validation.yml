@@ -1,0 +1,32 @@
+name: Temporary D1 callback preference validation
+
+on:
+  push:
+    branches: [callback-notification-preferences-current-main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: test-only-placeholder
+      MONGO_URI: mongodb://127.0.0.1:27017/test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --test tests/reservationCallbackNotification.test.js tests/reservationCallbackQueue.test.js tests/chatbotSessionPrivacy.test.js tests/chatbotPostHotfixFixes.test.js tests/chatbotAppointmentFlow.test.js
+      - run: node --check models/reservationStaffRequest.js && node --check services/reservationCallbackNotificationService.js && node --check utils/reservationService.js
+      - run: git diff --check 031cdc83cae798a8f12a5f734549d1f7794b1b2b HEAD
+      - run: |
+          if rg -n --hidden --glob '!node_modules/**' --glob '!package-lock.json' '(SUPABASE_SERVICE_ROLE_KEY|AIza[0-9A-Za-z_-]{20,}|mongodb\+srv://[^[:space:]]+)' models/reservationStaffRequest.js services/reservationCallbackNotificationService.js utils/reservationService.js tests/reservationCallbackNotification.test.js; then
+            exit 1
+          fi
+      - name: Full backend baseline comparison
+        continue-on-error: true
+        run: npm test
