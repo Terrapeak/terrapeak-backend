@@ -41,7 +41,7 @@ jobs:
           node --test tests/chatbotPostHotfixFixes.test.js
           node --test tests/chatbotAppointmentFlow.test.js
           node --test tests/chatbotSessionPrivacy.test.js
-          node --test tests/callbackRequestQueue.test.js
+          node --test tests/reservationCallbackQueue.test.js
 
       - name: Syntax and whitespace checks
         run: |
