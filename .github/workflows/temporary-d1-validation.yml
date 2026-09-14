@@ -24,6 +24,7 @@ jobs:
       - run: npm ci
       - run: node --test tests/reservationCallbackNotification.test.js tests/reservationCallbackQueue.test.js
       - run: node --test tests/chatbotSessionPrivacy.test.js tests/chatbotPostHotfixFixes.test.js tests/chatbotAppointmentFlow.test.js
+      - run: node --test tests/*.test.js
       - run: node --check models/company.js
       - run: node --check models/reservationStaffRequest.js
       - run: node --check services/reservationCallbackNotificationService.js
