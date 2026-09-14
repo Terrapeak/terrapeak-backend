@@ -121,7 +121,7 @@ const updateDeliveryState = async (request, update, unset = {}) => {
   );
 };
 
-export const notifyReservationCallbackCreated = async (request) => {
+export const notifyReservationCallbackCreated = async (request, { send = sendEmail } = {}) => {
   const requestId = String(request?._id || "");
   const companyId = request?.companyId;
 
@@ -159,12 +159,20 @@ export const notifyReservationCallbackCreated = async (request) => {
         type: "callback",
         $or: [
           { "notification.email.status": { $exists: false } },
-          { "notification.email.status": "not_attempted" },
+          {
+            "notification.email.status": "not_attempted",
+            $or: [
+              { "notification.email.claimedAt": { $exists: false } },
+              { "notification.email.claimedAt": null },
+              { "notification.email.claimedAt": { $lt: retryBefore } },
+            ],
+          },
           {
             "notification.email.status": "failed",
             $or: [
-              { "notification.email.lastAttemptAt": { $exists: false } },
-              { "notification.email.lastAttemptAt": { $lt: retryBefore } },
+              { "notification.email.claimedAt": { $exists: false } },
+              { "notification.email.claimedAt": null },
+              { "notification.email.claimedAt": { $lt: retryBefore } },
             ],
           },
         ],
@@ -191,13 +199,23 @@ export const notifyReservationCallbackCreated = async (request) => {
     }
 
     try {
-      const response = await sendEmail({
-        to: recipients.join(", "),
-        subject: getEmailPayload(request).subject,
-        text: getEmailPayload(request).text,
-        html: getEmailPayload(request).html,
-      });
-      const providerMessageId = response?.id || response?.data?.id || "";
+      const payload = getEmailPayload(request);
+      const responses = [];
+      for (const recipient of recipients) {
+        responses.push(
+          await send({
+            to: recipient,
+            subject: payload.subject,
+            text: payload.text,
+            html: payload.html,
+          }),
+        );
+      }
+      const providerMessageId = responses
+        .map((response) => response?.id || response?.data?.id || "")
+        .filter(Boolean)
+        .join(",")
+        .slice(0, MAX_EMAIL_FIELD_LENGTH);
       await updateDeliveryState(
         request,
         {
