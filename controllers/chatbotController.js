@@ -20,7 +20,9 @@ import {
   findActiveReservationsByPhone,
   cancelReservationById,
   getReservationConciergeContext,
+  findReservationBusinessById,
 } from "../utils/reservationService.js";
+import { resolveReservationsConfiguration } from "../utils/reservationConfiguration.js";
 import {
   extractReservationReference,
   isBareRescheduleMessage,
@@ -351,9 +353,15 @@ export const askGemini = asyncHandler(async (req, res) => {
     }
     return { id: reservationBusinessId };
   };
-  const reservationBookingUrl = buildReservationBookingUrl(
-    reservationCompany?.reservationBusinessSlug || settings.reservationBusinessSlug,
-  );
+  let reservationBookingUrl = null;
+  const resolveReservationBookingUrl = async () => {
+    const canonicalReservationBusiness = reservationBusinessId
+      ? await findReservationBusinessById(reservationBusinessId).catch(() => null)
+      : null;
+    return canonicalReservationBusiness?.business_slug
+      ? buildReservationBookingUrl(canonicalReservationBusiness.business_slug)
+      : "";
+  };
 
   /* ===============================
      SESSION HANDLING
@@ -686,6 +694,10 @@ const isReservationCallbackRequest =
     lowerMsg.includes("talk to")
   );
 
+if (reservationEnabled && session.reservationCallbackStep) {
+  reservationBookingUrl = await resolveReservationBookingUrl();
+}
+
 if (!botReply && reservationEnabled && session.reservationCallbackStep) {
   switch (session.reservationCallbackStep) {
     case "askName":
@@ -709,8 +721,7 @@ if (!botReply && reservationEnabled && session.reservationCallbackStep) {
     case "askQuestion":
       session.reservationCallbackQuestion = message.trim();
       session.reservationCallbackStep = "askServiceOrTeacher";
-      botReply =
-        "Which service, programme, or teacher were you asking about? Type **not sure** if there is no specific one.";
+      botReply = buildReservationCallbackQuestion(reservationCompany?.reservationTemplate);
       break;
 
     case "askServiceOrTeacher": {
@@ -736,9 +747,11 @@ if (!botReply && reservationEnabled && session.reservationCallbackStep) {
         summary: session.reservationCallbackSummary,
       });
 
-      botReply = reservationBookingUrl
-        ? `Thanks. I have saved a callback request for the centre.\n\n${session.reservationCallbackSummary}\n\nYou can also book directly here if you decide to proceed:\n\n${reservationBookingUrl}`
-        : `Thanks. I have saved a callback request for the centre.\n\n${session.reservationCallbackSummary}\n\nYou can also use the Reservations form in the customer dashboard if you decide to proceed.`;
+      botReply = buildReservationCallbackCustomerReply({
+        name: session.reservationCallbackName,
+        preferredTime: session.reservationCallbackPreferredTime,
+        bookingUrl: reservationBookingUrl,
+      });
       break;
     }
 
@@ -2033,6 +2046,7 @@ break;
           await slot.save();
           await appointment.save();
 
+let previousAppointmentCancelled = false;
 if (session.isRescheduling && session.rescheduleAppointmentId) {
   const oldAppointment = await Appointment.findById(
     session.rescheduleAppointmentId
@@ -2047,6 +2061,7 @@ const owner = await User.findById(oldAppointment.ownerId);
 
     oldAppointment.status = "cancelled";
     await oldAppointment.save();
+    previousAppointmentCancelled = true;
 
     await TimeSlot.findByIdAndUpdate(oldAppointment.timeSlotId, {
       isBooked: false,
@@ -2054,19 +2069,10 @@ const owner = await User.findById(oldAppointment.ownerId);
   }
 }
 
-botReply = `✅ **Appointment Confirmed!**
-
-Great news — your appointment is now successfully booked!
-Your previous appointment has been cancelled.
-
-**Meeting Link:**  
-${meeting.hangoutLink}
-
-📩 You’ll receive a formal confirmation email with all the details shortly.
-
-We’re looking forward to it!  
-See you soon. 😊
-`;
+botReply = buildAppointmentConfirmationReply({
+  meetingLink: meeting.hangoutLink,
+  previousAppointmentCancelled,
+});
 
           // ✅ EXIT appointment flow properly
           session.appointmentStep = null;
@@ -2475,17 +2481,54 @@ export const getUsersChatlog = asyncHandler(async (req, res, next) => {
   }
 });
 
-function buildReservationBookingUrl(businessSlug) {
+export function buildReservationBookingUrl(businessSlug) {
   const slug = String(businessSlug || "").trim();
-  if (!slug) return "";
+  if (!slug) return null;
 
-  const baseUrl = String(
+  const configuredBaseUrl =
     process.env.RESERVATION_PUBLIC_BOOKING_BASE_URL ||
-      process.env.RESERVATION_APP_BASE_URL ||
-      "https://dashboard.terrapeakgroup.com",
-  ).replace(/\/+$/, "");
+    process.env.RESERVATION_APP_BASE_URL;
+  if (!configuredBaseUrl) return null;
+
+  const baseUrl = String(configuredBaseUrl).replace(/\/+$/, "");
 
   return `${baseUrl}/book/${encodeURIComponent(slug)}`;
+}
+
+export function buildReservationCallbackCustomerReply({
+  name,
+  preferredTime,
+  bookingUrl = "",
+}) {
+  const confirmation = `Thanks, ${name || "there"}. I have sent your callback request to the centre. They will contact you around ${preferredTime || "the requested time"}.`;
+  return bookingUrl
+    ? `${confirmation}\n\nYou can also book directly here if you decide to proceed:\n\n${bookingUrl}`
+    : confirmation;
+}
+
+export function buildReservationCallbackQuestion(templateKey) {
+  const terminology = resolveReservationsConfiguration({ templateKey }).terminology;
+  return `Which ${terminology.serviceSingular.toLowerCase()} or ${terminology.teamMemberSingular.toLowerCase()} were you asking about? Type **not sure** if there is no specific one.`;
+}
+
+export function resolveCanonicalReservationBookingSlug({ canonicalBusinessSlug } = {}) {
+  const slug = String(canonicalBusinessSlug || "").trim();
+  return slug || "";
+}
+
+export function buildAppointmentConfirmationReply({ meetingLink, previousAppointmentCancelled = false }) {
+  return `✅ **Appointment Confirmed!**
+
+Great news — your appointment is now successfully booked!
+${previousAppointmentCancelled ? "Your previous appointment has been cancelled.\n" : ""}
+**Meeting Link:**
+${meetingLink}
+
+📩 You’ll receive a formal confirmation email with all the details shortly.
+
+We’re looking forward to it!
+See you soon. 😊
+`;
 }
 
 function buildReservationCallbackSummary({ session, latestUserMessage }) {
@@ -2655,7 +2698,7 @@ export function detectBookingIntent(lowerMsg) {
   return null;
 }
 
-function resetBookingSession(session) {
+export function resetBookingSession(session) {
   session.bookingType = null;
   session.bookingIntentConfirmed = false;
 
@@ -2666,6 +2709,10 @@ function resetBookingSession(session) {
   session.appointmentPhone = null;
   session.tempSlots = [];
   session.selectedSlot = null;
+  session.rescheduleStep = null;
+  session.rescheduleAppointmentId = null;
+  session.rescheduleAppointmentOptions = [];
+  session.isRescheduling = false;
 
   session.cancelStep = null;
   session.cancelAppointmentId = null;
@@ -2860,3 +2907,4 @@ ${originalText}`;
   const data = await response.json();
   return data.candidates[0].content.parts[0].text.trim();
 }
+

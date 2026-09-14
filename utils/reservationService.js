@@ -53,6 +53,20 @@ export async function findReservationBusinessBySlug(businessSlug) {
   return data || null;
 }
 
+export async function findReservationBusinessById(businessId) {
+  const numericBusinessId = Number(businessId);
+  if (!Number.isFinite(numericBusinessId) || numericBusinessId <= 0) return null;
+
+  const { data, error } = await supabase
+    .from("businesses")
+    .select("id, business_slug")
+    .eq("id", numericBusinessId)
+    .maybeSingle();
+
+  if (error) throw new Error("Could not load reservation business");
+  return data || null;
+}
+
 export async function getReservationProvisioningRecords(businessId, { templateKey = "restaurant" } = {}) {
   if (!businessId) {
     return { profile: null, settings: null, branding: null, service: null };
@@ -1016,3 +1030,4 @@ export async function createOrUpdateRestaurantBranding({
 
   return data;
 }
+

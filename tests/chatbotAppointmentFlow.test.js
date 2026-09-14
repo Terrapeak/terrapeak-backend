@@ -5,6 +5,11 @@ import mongoose from "mongoose";
 process.env.ALLOW_FAKE_GOOGLE_MEET = "true";
 process.env.SUPABASE_URL ||= "https://example.supabase.co";
 process.env.SUPABASE_SERVICE_ROLE_KEY ||= "test-service-role-key";
+globalThis.fetch = async () =>
+  new Response(JSON.stringify([{ id: 42, business_slug: "test-business" }]), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
 
 const { askGemini, detectBookingIntent } = await import(
   "../controllers/chatbotController.js"
@@ -17,6 +22,9 @@ const CompanyAppInstallation = (await import(
 const Session = (await import("../models/sessionModel.js")).default;
 const TimeSlot = (await import("../models/timeSlot.js")).default;
 const Appointment = (await import("../models/appointment.js")).default;
+const ReservationStaffRequest = (await import(
+  "../models/reservationStaffRequest.js"
+)).default;
 
 const ownerId = new mongoose.Types.ObjectId();
 const chatbotId = new mongoose.Types.ObjectId();
@@ -207,6 +215,36 @@ test("callback requests retain Reservations callback precedence", async (t) => {
   }
 });
 
+test("callback persistence keeps rich staff context out of the customer reply", async (t) => {
+  const { getSession } = installChatbotMocks(t);
+  let savedRequest = null;
+  t.mock.method(ReservationStaffRequest, "create", async (payload) => {
+    savedRequest = payload;
+    return payload;
+  });
+
+  await sendMessage(t, "request callback");
+  assert.equal(getSession().reservationCallbackBookingUrl, null);
+
+  for (const message of [
+    "Test Customer",
+    "test@example.com",
+    "9 PM",
+    "I have a private customer question",
+  ]) {
+    getSession()?.lastGeminiCall && (getSession().lastGeminiCall = 0);
+    await sendMessage(t, message);
+  }
+
+  getSession().lastGeminiCall = 0;
+  const completed = await sendMessage(t, "Acceptance Test Service");
+  assert.ok(savedRequest);
+  assert.match(savedRequest.summary, /Conversation context|Recent transcript/);
+  assert.match(completed.reply, /sent your callback request/i);
+  assert.doesNotMatch(completed.reply, /Conversation context|Recent transcript|private customer question/i);
+  assert.equal(getSession().bookingType, "reservation");
+});
+
 test("meeting phrases select the scheduled appointment flow", () => {
   for (const message of [
     "meeting",
@@ -224,3 +262,4 @@ test("appointment intent does not replace Reservations reservation intent", () =
   assert.equal(detectBookingIntent("book a table"), "reservation");
   assert.equal(detectBookingIntent("restaurant reservation"), "reservation");
 });
+
