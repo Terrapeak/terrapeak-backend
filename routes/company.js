@@ -17,6 +17,10 @@ import {
   verifyFacebookConnection,
 } from "../controllers/facebookChannelController.js";
 import { disconnectFacebookChannel } from "../controllers/facebookChannelDisconnectController.js";
+import {
+  getTenantCallbackRequests,
+  patchTenantCallbackRequest,
+} from "../controllers/reservationCallbackQueueController.js";
 
 const router = express.Router();
 
@@ -32,6 +36,21 @@ router.post(
   isVerifiedUser,
   resolveCompanyContext,
   createReservationsSession
+);
+
+router.get(
+  "/reservations/callback-requests",
+  isVerifiedUser,
+  resolveCompanyContext,
+  getTenantCallbackRequests,
+);
+
+router.patch(
+  "/reservations/callback-requests/:requestId",
+  isVerifiedUser,
+  resolveCompanyContext,
+  requireCompanyWriteAccess,
+  patchTenantCallbackRequest,
 );
 
 router.get(
