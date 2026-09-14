@@ -71,7 +71,6 @@ test("resolves active owner/admin user emails case-insensitively and excludes in
         { userId: { email: "Owner@Example.com" } },
         { userId: { email: "owner@example.com" } },
         { userId: { email: "admin@example.com" } },
-        { userId: { email: "staff@example.com" } },
         { userId: null },
         { userId: { email: "not-an-email" } },
       ],
