@@ -101,8 +101,9 @@ test("status update records tenant audit activity without returning private fiel
   const originalFindOne = ReservationStaffRequest.findOne;
   const originalUpdateOne = Company.updateOne;
   let companyFilter;
+  let companyUpdate;
   ReservationStaffRequest.findOne = async () => request;
-  Company.updateOne = async (filter) => { companyFilter = filter; };
+  Company.updateOne = async (filter, update) => { companyFilter = filter; companyUpdate = update; };
   try {
     const result = await updateTenantCallbackRequestStatus({
       companyId: "company-a",
@@ -113,6 +114,8 @@ test("status update records tenant audit activity without returning private fiel
     assert.equal(request.status, "reviewing");
     assert.deepEqual(companyFilter, { _id: "company-a" });
     assert.equal(result.status, "reviewing");
+    assert.equal(companyUpdate.$push.activityEvents.$each[0].metadata.oldStatus, "pending");
+    assert.equal(companyUpdate.$push.activityEvents.$each[0].metadata.newStatus, "reviewing");
     assert.equal("summary" in result, false);
   } finally {
     ReservationStaffRequest.findOne = originalFindOne;
@@ -120,3 +123,37 @@ test("status update records tenant audit activity without returning private fiel
   }
 });
 
+
+test("status update rejects invalid statuses", async () => {
+  const originalFindOne = ReservationStaffRequest.findOne;
+  ReservationStaffRequest.findOne = async () => ({ status: "pending" });
+  try {
+    await assert.rejects(
+      updateTenantCallbackRequestStatus({
+        companyId: "company-a",
+        requestId: "507f1f77bcf86cd799439011",
+        status: "unknown",
+      }),
+      (error) => error.statusCode === 400,
+    );
+  } finally {
+    ReservationStaffRequest.findOne = originalFindOne;
+  }
+});
+
+test("status update rejects backward transitions", async () => {
+  const originalFindOne = ReservationStaffRequest.findOne;
+  ReservationStaffRequest.findOne = async () => ({ status: "completed" });
+  try {
+    await assert.rejects(
+      updateTenantCallbackRequestStatus({
+        companyId: "company-a",
+        requestId: "507f1f77bcf86cd799439011",
+        status: "pending",
+      }),
+      (error) => error.statusCode === 409,
+    );
+  } finally {
+    ReservationStaffRequest.findOne = originalFindOne;
+  }
+});
