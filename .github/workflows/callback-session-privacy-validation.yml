@@ -60,7 +60,7 @@ jobs:
       - name: Scan changed files for secrets
         shell: bash
         run: |
-          ! grep -nE '-----BEGIN .*PRIVATE KEY-----|AKIA[0-9A-Z]{16}|(password|secret|token|api[_-]?key)[[:space:]]*[:=][[:space:]]*["''][^"'']{12,}["'']' controllers/chatbotController.js utils/publicSessionSerializer.js tests/chatbotSessionPrivacy.test.js
+          ! grep -nE -- '-----BEGIN .*PRIVATE KEY-----|AKIA[0-9A-Z]{16}|(password|secret|token|api[_-]?key)[[:space:]]*[:=][[:space:]]*["''][^"'']{12,}["'']' controllers/chatbotController.js utils/publicSessionSerializer.js tests/chatbotSessionPrivacy.test.js
 
       - name: Run full backend suite (baseline failures may remain)
         continue-on-error: true
