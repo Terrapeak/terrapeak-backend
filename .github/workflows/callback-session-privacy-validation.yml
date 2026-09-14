@@ -1,0 +1,63 @@
+name: Callback Session Privacy Validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: test-service-role-key
+      ALLOW_FAKE_GOOGLE_MEET: "true"
+    steps:
+      - name: Check out exact feature SHA
+        uses: actions/checkout@v4
+        with:
+          ref: a12974879c2c15b93b81dbed9b9a59fb2edfa3c4
+          fetch-depth: 0
+
+      - name: Verify checked-out SHA
+        shell: bash
+        run: |
+          git rev-parse HEAD
+          test "$(git rev-parse HEAD)" = "a12974879c2c15b93b81dbed9b9a59fb2edfa3c4"
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run privacy tests
+        run: node --test tests/chatbotSessionPrivacy.test.js
+
+      - name: Run chatbot regressions
+        run: node --test tests/chatbotPostHotfixFixes.test.js tests/chatbotAppointmentFlow.test.js
+
+      - name: Run relevant Reservations tests
+        run: node --test tests/canonicalReservationService.test.js tests/reservationConfiguration.test.js tests/reservationIntentService.test.js tests/reservationCustomFieldService.test.js tests/reservationTemplateDefaults.test.js
+
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          find . -type f -name '*.js' -not -path './node_modules/*' -not -path './.git/*' -print0 | xargs -0 -n1 node --check
+
+      - name: Check diff whitespace
+        run: git diff --check a12974879c2c15b93b81dbed9b9a59fb2edfa3c4^..HEAD -- controllers/chatbotController.js utils/publicSessionSerializer.js tests/chatbotSessionPrivacy.test.js
+
+      - name: Scan changed files for secrets
+        shell: bash
+        run: |
+          ! grep -nE '-----BEGIN .*PRIVATE KEY-----|AKIA[0-9A-Z]{16}|(password|secret|token|api[_-]?key)[[:space:]]*[:=][[:space:]]*["'"'][^"'"']{12,}["'"']' controllers/chatbotController.js utils/publicSessionSerializer.js tests/chatbotSessionPrivacy.test.js
+
+      - name: Run full backend suite (baseline failures may remain)
+        continue-on-error: true
+        run: node --test
