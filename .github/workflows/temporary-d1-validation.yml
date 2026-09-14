@@ -1,0 +1,27 @@
+name: Temporary D1 Backend Validation
+
+on:
+  push:
+    branches:
+      - callback-notification-preferences-current-main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --test tests/reservationCallbackNotification.test.js tests/reservationCallbackQueue.test.js
+      - run: node --test tests/chatbotSessionPrivacy.test.js tests/chatbotPostHotfixFixes.test.js tests/chatbotAppointmentFlow.test.js
+      - run: node --check models/company.js
+      - run: node --check models/reservationStaffRequest.js
+      - run: node --check services/reservationCallbackNotificationService.js
+      - run: node --check utils/reservationService.js
