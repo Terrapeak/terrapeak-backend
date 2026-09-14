@@ -1,0 +1,44 @@
+name: Tenant Callback Queue Validation
+
+on:
+  push:
+    branches:
+      - tenant-callback-queue-current-main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tenant-callback-queue-current-main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify checked out commit
+        run: git rev-parse HEAD
+      - name: Queue and privacy tests
+        run: |
+          node --test tests/reservationCallbackQueue.test.js
+          node --test tests/chatbotSessionPrivacy.test.js
+          node --test tests/chatbotPostHotfixFixes.test.js
+          node --test tests/chatbotAppointmentFlow.test.js
+      - name: Relevant company tests
+        run: node --test tests/companyMembershipInvariant.test.js tests/tenantIsolationFoundation.test.js
+      - name: Syntax and whitespace
+        run: |
+          node --check controllers/reservationCallbackQueueController.js
+          node --check services/reservationCallbackQueueService.js
+          node --check routes/company.js
+          git diff --check origin/main...HEAD
+      - name: Secret scan
+        run: |
+          if git grep -nE 'AIza|sk_live|service_role|mongodb\\+srv|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY' -- '*.js' '*.json' '*.yml' '*.yaml'; then exit 1; fi
+      - name: Full backend suite
+        run: node --test
