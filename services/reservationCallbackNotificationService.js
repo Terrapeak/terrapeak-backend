@@ -122,7 +122,7 @@ const updateDeliveryState = async (request, update, unset = {}) => {
   );
 };
 
-export const notifyReservationCallbackCreated = async (request, { send = sendEmail } = {}) => {
+export const notifyReservationCallbackCreated = async (request, { send = sendEmail, loadPreferences = getReservationCallbackNotificationSettings } = {}) => {
   const requestId = String(request?._id || "");
   const companyId = request?.companyId;
 
@@ -133,7 +133,7 @@ export const notifyReservationCallbackCreated = async (request, { send = sendEma
   try {
     let callbackNotifications = null;
     try {
-      callbackNotifications = await getReservationCallbackNotificationSettings(
+      callbackNotifications = await loadPreferences(
         request.reservationBusinessId,
       );
     } catch (error) {
