@@ -22,6 +22,8 @@ test("callback customer reply excludes internal staff context", () => {
 
   assert.match(reply, /sent your callback request/i);
   assert.doesNotMatch(reply, /Conversation context|Recent transcript|raw transcript/i);
+  assert.doesNotMatch(reply, /\bcentre\b|\bcenter\b/i);
+  assert.match(reply, /to the team/i);
   assert.doesNotMatch(reply, /private customer question/i);
 });
 

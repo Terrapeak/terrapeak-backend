@@ -575,8 +575,8 @@ function reservationContactReply() {
 
 const reservationChoicesReply = () =>
   reservationBookingUrl
-    ? `I can help you choose the right option, check details, and answer questions. To confirm anything, please use the Reservations form:\n\n${reservationBookingUrl}\n\nIf you would rather speak with the centre, reply **request callback** and I will collect the details for staff.`
-    : "I can help you choose the right option, check details, and answer questions. To confirm anything, please use the Reservations form in the customer dashboard. If you would rather speak with the centre, reply **request callback** and I will collect the details for staff.";
+    ? `I can help you choose the right option, check details, and answer questions. To confirm anything, please use the Reservations form:\n\n${reservationBookingUrl}\n\nIf you would rather speak with the team, reply **request callback** and I will collect the details for staff.`
+    : "I can help you choose the right option, check details, and answer questions. To confirm anything, please use the Reservations form in the customer dashboard. If you would rather speak with the team, reply **request callback** and I will collect the details for staff.";
 
 const createReservationStaffRequest = async ({
   type,
@@ -703,7 +703,7 @@ if (!botReply && reservationEnabled && session.reservationCallbackStep) {
     case "askName":
       session.reservationCallbackName = message.trim();
       session.reservationCallbackStep = "askContact";
-      botReply = "What phone number or email should the centre use?";
+      botReply = "What phone number or email should the team use?";
       break;
 
     case "askContact":
@@ -715,7 +715,7 @@ if (!botReply && reservationEnabled && session.reservationCallbackStep) {
     case "askPreferredTime":
       session.reservationCallbackPreferredTime = message.trim();
       session.reservationCallbackStep = "askQuestion";
-      botReply = "What question or concern should I send to the centre?";
+      botReply = "What question or concern should I send to the team?";
       break;
 
     case "askQuestion":
@@ -757,7 +757,7 @@ if (!botReply && reservationEnabled && session.reservationCallbackStep) {
 
     default:
       session.reservationCallbackStep = "askName";
-      botReply = "Sure. What name should the centre use for the callback?";
+      botReply = "Sure. What name should the team use for the callback?";
       break;
   }
 }
@@ -771,7 +771,7 @@ if (!botReply && isReservationCallbackRequest) {
   session.reservationCallbackBookingUrl = reservationBookingUrl;
 
   botReply =
-    "Sure. I can ask the centre to contact you. What name should they use?";
+    "Sure. I can ask the team to contact you. What name should they use?";
 }
 
 if (
@@ -2500,7 +2500,7 @@ export function buildReservationCallbackCustomerReply({
   preferredTime,
   bookingUrl = "",
 }) {
-  const confirmation = `Thanks, ${name || "there"}. I have sent your callback request to the centre. They will contact you around ${preferredTime || "the requested time"}.`;
+  const confirmation = `Thanks, ${name || "there"}. I have sent your callback request to the team. They will contact you around ${preferredTime || "the requested time"}.`;
   return bookingUrl
     ? `${confirmation}\n\nYou can also book directly here if you decide to proceed:\n\n${bookingUrl}`
     : confirmation;
