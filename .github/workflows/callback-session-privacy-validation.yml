@@ -1,7 +1,9 @@
 name: Callback Session Privacy Validation
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - callback-session-privacy-current-main
 
 permissions:
   contents: read
@@ -15,17 +17,18 @@ jobs:
       SUPABASE_SERVICE_ROLE_KEY: test-service-role-key
       ALLOW_FAKE_GOOGLE_MEET: "true"
     steps:
-      - name: Check out exact feature SHA
+      - name: Check out pushed feature SHA
         uses: actions/checkout@v4
         with:
-          ref: a12974879c2c15b93b81dbed9b9a59fb2edfa3c4
+          ref: \${{ github.sha }}
           fetch-depth: 0
 
-      - name: Verify checked-out SHA
+      - name: Verify checked-out SHA and status
         shell: bash
         run: |
           git rev-parse HEAD
-          test "$(git rev-parse HEAD)" = "a12974879c2c15b93b81dbed9b9a59fb2edfa3c4"
+          git status --short
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Use Node.js 22
         uses: actions/setup-node@v4
@@ -51,13 +54,13 @@ jobs:
           find . -type f -name '*.js' -not -path './node_modules/*' -not -path './.git/*' -print0 | xargs -0 -n1 node --check
 
       - name: Check diff whitespace
-        run: git diff --check a12974879c2c15b93b81dbed9b9a59fb2edfa3c4^..HEAD -- controllers/chatbotController.js utils/publicSessionSerializer.js tests/chatbotSessionPrivacy.test.js
+        run: git diff --check 2d00a1e2113f5da1ca96f858b1ff4bd8b3651c9b..HEAD -- controllers/chatbotController.js utils/publicSessionSerializer.js tests/chatbotSessionPrivacy.test.js
 
       - name: Scan changed files for secrets
         shell: bash
         run: |
-          ! grep -nE '-----BEGIN .*PRIVATE KEY-----|AKIA[0-9A-Z]{16}|(password|secret|token|api[_-]?key)[[:space:]]*[:=][[:space:]]*["'"'][^"'"']{12,}["'"']' controllers/chatbotController.js utils/publicSessionSerializer.js tests/chatbotSessionPrivacy.test.js
+          ! grep -nE '-----BEGIN .*PRIVATE KEY-----|AKIA[0-9A-Z]{16}|(password|secret|token|api[_-]?key)[[:space:]]*[:=][[:space:]]*["''][^"'']{12,}["'']' controllers/chatbotController.js utils/publicSessionSerializer.js tests/chatbotSessionPrivacy.test.js
 
       - name: Run full backend suite (baseline failures may remain)
         continue-on-error: true
-        run: node --test
+        run: node --test
