@@ -77,6 +77,7 @@ export const updateTenantCallbackRequestStatus = async ({
     throw error;
   }
 
+  const previousStatus = request.status;
   request.status = status;
   await request.save();
   await Company.updateOne(
@@ -92,7 +93,7 @@ export const updateTenantCallbackRequestStatus = async ({
               appName: "Reservations",
               actorUserId: actorUserId || null,
               createdAt: new Date(),
-              metadata: { requestId: request._id, status },
+              metadata: { requestId: request._id, oldStatus: previousStatus, newStatus: status },
             },
           ],
           $position: 0,
