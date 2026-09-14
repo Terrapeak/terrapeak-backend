@@ -1,0 +1,60 @@
+name: Callback Email Notification Validation
+
+on:
+  push:
+    branches:
+      - callback-email-notifications-current-main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: callback-email-notifications-current-main
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify checked-out SHA
+        run: |
+          echo "HEAD=$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/callback-email-notifications-current-main)"
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Focused callback notification tests
+        run: node --test tests/reservationCallbackNotification.test.js
+
+      - name: Callback regression tests
+        run: |
+          node --test tests/chatbotPostHotfixFixes.test.js
+          node --test tests/chatbotAppointmentFlow.test.js
+          node --test tests/chatbotSessionPrivacy.test.js
+          node --test tests/callbackRequestQueue.test.js
+
+      - name: Syntax and whitespace checks
+        run: |
+          node --check controllers/chatbotController.js
+          node --check models/reservationStaffRequest.js
+          node --check services/reservationCallbackNotificationService.js
+          node --check tests/reservationCallbackNotification.test.js
+          git diff --check origin/main...HEAD
+
+      - name: Scoped secret scan
+        run: |
+          ! rg -n --hidden -g 'controllers/chatbotController.js' -g 'models/reservationStaffRequest.js' -g 'services/reservationCallbackNotificationService.js' -g 'tests/reservationCallbackNotification.test.js' '(sk-[A-Za-z0-9]|AIza[A-Za-z0-9_-]{20,}|-----BEGIN (RSA|EC|OPENSSH|PRIVATE) KEY-----|mongodb(+srv)?://[^[:space:]]+:[^[:space:]]+@)' .
+
+      - name: Full backend suite baseline classification
+        continue-on-error: true
+        run: npm test
