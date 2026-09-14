@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import CompanyMembership from "../models/companyMembership.js";
+import ReservationStaffRequestModel from "../models/reservationStaffRequest.js";
 import ReservationStaffRequest from "../models/reservationStaffRequest.js";
 import {
   getEmailPayload,
@@ -226,4 +227,27 @@ test("email payload contains only approved callback fields and escapes HTML", ()
   assert.match(payload.html, /&lt;script&gt;alert\(&#39;internal&#39;\)&lt;\/script&gt;/);
   assert.doesNotMatch(payload.text, /PRIVATE_INTERNAL_SUMMARY|PRIVATE_TRANSCRIPT|PRIVATE_SESSION_ID/);
   assert.doesNotMatch(payload.html, /PRIVATE_INTERNAL_SUMMARY|PRIVATE_TRANSCRIPT|PRIVATE_SESSION_ID/);
+});
+
+test("notification attempts accept zero and positive integers only", async () => {
+  const makeDocument = (attempts) =>
+    new ReservationStaffRequestModel({
+      companyId: "507f1f77bcf86cd799439011",
+      type: "callback",
+      notification: { email: { attempts } },
+    });
+
+  assert.equal((await makeDocument(0).validate()).notification.email.attempts, 0);
+  assert.equal((await makeDocument(3).validate()).notification.email.attempts, 3);
+
+  await assert.rejects(
+    makeDocument(-1).validate(),
+    (error) => Boolean(error.errors["notification.email.attempts"]),
+  );
+  await assert.rejects(
+    makeDocument(1.5).validate(),
+    (error) =>
+      error.errors["notification.email.attempts"]?.message ===
+      "notification email attempts must be an integer",
+  );
 });
