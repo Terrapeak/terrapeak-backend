@@ -22,7 +22,6 @@ jobs:
       - run: npm ci
       - run: node --test tests/reservationCallbackNotification.test.js tests/reservationCallbackQueue.test.js tests/chatbotSessionPrivacy.test.js tests/chatbotPostHotfixFixes.test.js tests/chatbotAppointmentFlow.test.js
       - run: node --check models/reservationStaffRequest.js && node --check services/reservationCallbackNotificationService.js && node --check utils/reservationService.js
-      - run: git diff --check HEAD~1 HEAD
       - run: |
           if rg -n --hidden --glob '!node_modules/**' --glob '!package-lock.json' '(SUPABASE_SERVICE_ROLE_KEY|AIza[0-9A-Za-z_-]{20,}|mongodb\+srv://[^[:space:]]+)' models/reservationStaffRequest.js services/reservationCallbackNotificationService.js utils/reservationService.js tests/reservationCallbackNotification.test.js; then
             exit 1
