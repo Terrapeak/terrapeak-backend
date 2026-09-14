@@ -104,4 +104,3 @@ export const updateTenantCallbackRequestStatus = async ({
   );
   return serializeReservationCallbackRequest(request);
 };
-
