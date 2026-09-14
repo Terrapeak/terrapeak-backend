@@ -328,3 +328,29 @@ test("notification attempts accept zero and positive integers only", async () =>
       "notification email attempts must be an integer",
   );
 });
+
+
+test("malformed or unsupported callback preferences fail safe to owner/admin delivery", async () => {
+  setMemberships([{ userId: { email: "owner@example.com" } }]);
+  const request = makeRequest();
+  ReservationStaffRequest.findOneAndUpdate = async (_filter, update) => ({
+    ...request,
+    notification: {
+      email: {
+        status: "not_attempted",
+        claimToken: update.$set["notification.email.claimToken"],
+      },
+    },
+  });
+  ReservationStaffRequest.updateOne = async () => {};
+  let sendCount = 0;
+  const result = await notifyReservationCallbackCreated(request, {
+    loadPreferences: async () => ({ enabled: "false", recipient_mode: "arbitrary_recipient" }),
+    send: async () => {
+      sendCount += 1;
+      return { id: "provider-1" };
+    },
+  });
+  assert.equal(result.status, "sent");
+  assert.equal(sendCount, 1);
+});
