@@ -237,8 +237,12 @@ test("notification attempts accept zero and positive integers only", async () =>
       notification: { email: { attempts } },
     });
 
-  assert.equal((await makeDocument(0).validate()).notification.email.attempts, 0);
-  assert.equal((await makeDocument(3).validate()).notification.email.attempts, 3);
+  const zero = makeDocument(0);
+  const positive = makeDocument(3);
+  await zero.validate();
+  await positive.validate();
+  assert.equal(zero.notification.email.attempts, 0);
+  assert.equal(positive.notification.email.attempts, 3);
 
   await assert.rejects(
     makeDocument(-1).validate(),
