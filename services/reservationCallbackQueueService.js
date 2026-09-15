@@ -32,6 +32,15 @@ export const serializeReservationCallbackRequest = (request) => {
   };
 };
 
+export const summarizeTenantCallbackRequests = async ({ companyId }) => {
+  const query = { companyId, type: "callback" };
+  const [pending, reviewing] = await Promise.all([
+    ReservationStaffRequest.countDocuments({ ...query, status: "pending" }),
+    ReservationStaffRequest.countDocuments({ ...query, status: "reviewing" }),
+  ]);
+  return { pending, reviewing, actionable: pending + reviewing };
+};
+
 export const listTenantCallbackRequests = async ({ companyId, status }) => {
   const query = { companyId, type: "callback" };
   if (status) query.status = status;
