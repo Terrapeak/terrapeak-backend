@@ -159,7 +159,7 @@ const mapProviderError = (error) => {
   return serviceError("AI_PROVIDER_UNAVAILABLE", "Digital Clone generation is temporarily unavailable.", 503);
 };
 
-export const generateDigitalCloneDraft = async ({ company, userId, body, provider = generateWithGemini }) => {
+export const generateDigitalCloneText = async ({ company, userId, body, provider = generateWithGemini }) => {
   const companyId = company?._id;
   const input = normalizeGenerationInput(body);
   const [profile, brain] = await Promise.all([
@@ -204,10 +204,25 @@ export const generateDigitalCloneDraft = async ({ company, userId, body, provide
       if (Number.isFinite(rawUsage[field]) && rawUsage[field] >= 0) value[field] = Math.floor(rawUsage[field]);
       return value;
     }, {});
-  return DigitalCloneGeneration.create({
-    companyId, userId, ...input, originalGeneratedText: output.generatedText, currentText: output.generatedText,
-    structuredOutput: output.structuredOutput, status: "draft",
+  return {
+    input,
+    generatedText: output.generatedText,
+    structuredOutput: output.structuredOutput,
     providerMetadata: { model: String(result.model || "").slice(0, 200), usage },
+  };
+};
+
+export const generateDigitalCloneDraft = async (options) => {
+  const result = await generateDigitalCloneText(options);
+  return DigitalCloneGeneration.create({
+    companyId: options.company?._id,
+    userId: options.userId,
+    ...result.input,
+    originalGeneratedText: result.generatedText,
+    currentText: result.generatedText,
+    structuredOutput: result.structuredOutput,
+    status: "draft",
+    providerMetadata: result.providerMetadata,
   });
 };
 

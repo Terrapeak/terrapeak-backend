@@ -60,6 +60,18 @@ import {
   getDigitalCloneAvatar, getDigitalCloneAvatarProviderVoices, getDigitalCloneAvatarVideoStatus, rejectDigitalCloneAvatarVideo,
   revokeDigitalCloneAvatar, selectDigitalCloneAvatar, selectDigitalCloneAvatarProviderVoice,
 } from "../controllers/digitalCloneAvatarController.js";
+import {
+  approveDigitalCloneTestCloneScript,
+  approveDigitalCloneTestCloneVideo,
+  createDigitalCloneTestCloneFromDraft,
+  deliverDigitalCloneTestCloneVideo,
+  generateDigitalCloneTestCloneScript,
+  generateDigitalCloneTestCloneVideo,
+  getDigitalCloneTestClone,
+  getDigitalCloneTestCloneVideoStatus,
+  rejectDigitalCloneTestCloneVideo,
+  updateDigitalCloneTestCloneScript,
+} from "../controllers/digitalCloneTestCloneController.js";
 
 const router = express.Router();
 
@@ -135,6 +147,17 @@ router.get("/avatar/videos/:videoId/delivery", requireDigitalCloneAvatarConsent,
 router.post("/avatar/videos/:videoId/approve", requireDigitalCloneAvatarConsent, approveDigitalCloneAvatarVideo);
 router.post("/avatar/videos/:videoId/reject", requireDigitalCloneAvatarConsent, rejectDigitalCloneAvatarVideo);
 router.post("/avatar/revoke", revokeDigitalCloneAvatar);
+
+router.get("/test-clone", getDigitalCloneTestClone);
+router.post("/test-clone/scripts/generate", digitalCloneGenerationRateLimit, generateDigitalCloneTestCloneScript);
+router.post("/test-clone/scripts/from-draft", createDigitalCloneTestCloneFromDraft);
+router.patch("/test-clone/:testCloneId/script", updateDigitalCloneTestCloneScript);
+router.post("/test-clone/:testCloneId/script/approve", approveDigitalCloneTestCloneScript);
+router.post("/test-clone/:testCloneId/videos", digitalCloneAvatarGenerationRateLimit, generateDigitalCloneTestCloneVideo);
+router.get("/test-clone/:testCloneId/status", digitalCloneAvatarStatusRateLimit, getDigitalCloneTestCloneVideoStatus);
+router.get("/test-clone/:testCloneId/delivery", deliverDigitalCloneTestCloneVideo);
+router.post("/test-clone/:testCloneId/approve", approveDigitalCloneTestCloneVideo);
+router.post("/test-clone/:testCloneId/reject", rejectDigitalCloneTestCloneVideo);
 
 router.post("/generate", digitalCloneGenerationRateLimit, generateDigitalCloneContent);
 router.get("/drafts", listDigitalCloneGenerations);
