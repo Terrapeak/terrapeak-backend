@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   CALLBACK_STATUSES,
   listTenantCallbackRequests,
+  summarizeTenantCallbackRequests,
   serializeReservationCallbackRequest,
   updateTenantCallbackRequestStatus,
 } from "../services/reservationCallbackQueueService.js";
@@ -44,6 +45,25 @@ test("callback serializer exposes operational fields and excludes internal data"
 
 test("callback status contract permits only forward operational transitions", () => {
   assert.deepEqual(CALLBACK_STATUSES, ["pending", "reviewing", "completed", "dismissed"]);
+});
+
+test("tenant callback summary counts only pending and reviewing callbacks", async () => {
+  const originalCountDocuments = ReservationStaffRequest.countDocuments;
+  const calls = [];
+  ReservationStaffRequest.countDocuments = async (query) => {
+    calls.push(query);
+    return query.status === "pending" ? 2 : 3;
+  };
+  try {
+    const summary = await summarizeTenantCallbackRequests({ companyId: "company-a" });
+    assert.deepEqual(summary, { pending: 2, reviewing: 3, actionable: 5 });
+    assert.deepEqual(calls, [
+      { companyId: "company-a", type: "callback", status: "pending" },
+      { companyId: "company-a", type: "callback", status: "reviewing" },
+    ]);
+  } finally {
+    ReservationStaffRequest.countDocuments = originalCountDocuments;
+  }
 });
 
 test("tenant queue listing is limited to callback requests for the resolved company", async () => {
