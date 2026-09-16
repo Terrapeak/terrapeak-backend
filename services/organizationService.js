@@ -101,7 +101,7 @@ const mapPersistenceError = (error) => {
 
 const findEligibleOrganizationUser = async (userId) => {
   const user = await User.findById(userId).select(
-    "_id name email platformRole isApproved"
+    "_id name email phone platformRole isApproved accountStatus invitationStatus"
   );
 
   if (!user) {
@@ -113,6 +113,17 @@ const findEligibleOrganizationUser = async (userId) => {
       409,
       "ORGANIZATION_USER_INELIGIBLE",
       "The user must be approved before joining an Organization."
+    );
+  }
+
+  if (
+    user.accountStatus !== "active" ||
+    ["pending", "expired"].includes(user.invitationStatus)
+  ) {
+    throw serviceError(
+      409,
+      "ORGANIZATION_USER_INELIGIBLE",
+      "This user account is not active and cannot become a Distributor Owner.",
     );
   }
 
@@ -133,6 +144,104 @@ const findEligibleOrganizationUser = async (userId) => {
   }
 
   return user;
+};
+
+export const lookupInitialOwner = async ({ email }) => {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (!normalizedEmail) {
+    throw serviceError(400, "OWNER_EMAIL_REQUIRED", "Owner email is required.");
+  }
+
+  const user = await User.findOne({ email: normalizedEmail }).select(
+    "_id name email platformRole isApproved accountStatus invitationStatus"
+  );
+  if (!user) return { exists: false, eligible: true, user: null, reason: null };
+
+  if (user.platformRole && user.platformRole !== "none") {
+    return {
+      exists: true,
+      eligible: false,
+      user: { name: user.name, email: user.email },
+      reason: "This email belongs to a platform account and cannot become a Distributor Owner.",
+    };
+  }
+  if (
+    !user.isApproved ||
+    user.accountStatus !== "active" ||
+    ["pending", "expired"].includes(user.invitationStatus)
+  ) {
+    return {
+      exists: true,
+      eligible: false,
+      user: { name: user.name, email: user.email },
+      reason: "This TerraPeak customer account is not eligible for Distributor Owner access.",
+    };
+  }
+  return {
+    exists: true,
+    eligible: true,
+    user: { name: user.name, email: user.email },
+    reason: null,
+  };
+};
+
+const findOrCreateInitialOwner = async ({ ownerInput, organizationName }) => {
+  const email = String(ownerInput?.email || "").trim().toLowerCase();
+  if (!email) {
+    throw serviceError(400, "OWNER_EMAIL_REQUIRED", "Owner email is required.");
+  }
+
+  let user = await User.findOne({ email });
+  let createdUser = null;
+
+  if (user) {
+    if (user.platformRole && user.platformRole !== "none") {
+      throw serviceError(
+        409,
+        "PLATFORM_USER_NOT_ELIGIBLE",
+        "Platform users cannot become Distributor Owners.",
+      );
+    }
+    user = await findEligibleOrganizationUser(user._id);
+    return { user, createdUser };
+  }
+
+  if (!ownerInput.name?.trim()) {
+    throw serviceError(400, "OWNER_NAME_REQUIRED", "Owner full name is required.");
+  }
+  if (!ownerInput.phone?.trim()) {
+    throw serviceError(400, "OWNER_PHONE_REQUIRED", "Owner phone is required.");
+  }
+  if (!ownerInput.password || ownerInput.password.length < 8) {
+    throw serviceError(
+      400,
+      "OWNER_PASSWORD_INVALID",
+      "Owner password must be at least 8 characters.",
+    );
+  }
+
+  try {
+    user = await User.create({
+      name: ownerInput.name.trim(),
+      email,
+      phone: ownerInput.phone.trim(),
+      password: ownerInput.password,
+      companyName: organizationName,
+      role: "user",
+      isAdmin: false,
+      platformRole: "none",
+      isApproved: true,
+      accountStatus: "active",
+      mustChangePassword: true,
+    });
+    createdUser = user;
+    return { user, createdUser };
+  } catch (error) {
+    if (error?.code === 11000) {
+      throw serviceError(409, "OWNER_ACCOUNT_CONFLICT", "An account with this email or phone already exists.");
+    }
+    throw error;
+  }
 };
 
 const assertOrganizationRole = (role, platformRole = "none") => {
@@ -245,6 +354,7 @@ const createOrganizationDocuments = async ({
   return {
     organization,
     initialOwnerMembership,
+    initialOwnerUser: initialOwner,
     platformManaged: !initialOwnerMembership,
   };
 };
@@ -258,14 +368,30 @@ export const createOrganization = async ({
   assertPlainMetadata(input.metadata);
 
   const initialOwnerUserId = input.initialOwnerUserId || null;
+  const ownerInput = input.initialOwner || null;
   let initialOwner = null;
+  let createdOwner = null;
 
-  if (initialOwnerUserId) {
+  if (ownerInput) {
+    if (input.organizationType !== "distributor") {
+      throw serviceError(
+        400,
+        "INITIAL_OWNER_NOT_SUPPORTED",
+        "Initial owner details are currently supported for Distributor Organizations.",
+      );
+    }
+    const ownerResult = await findOrCreateInitialOwner({
+      ownerInput,
+      organizationName: input.name,
+    });
+    initialOwner = ownerResult.user;
+    createdOwner = ownerResult.createdUser;
+  } else if (initialOwnerUserId) {
     initialOwner = await findEligibleOrganizationUser(initialOwnerUserId);
     assertOrganizationRole("owner", initialOwner.platformRole || "none");
   }
 
-  if (initialOwner && transactionSupported) {
+  if (initialOwner && transactionSupported && !createdOwner) {
     const session = await mongoose.startSession();
     let result;
 
@@ -304,6 +430,7 @@ export const createOrganization = async ({
     return {
       organization,
       initialOwnerMembership,
+      initialOwnerUser: initialOwner,
       platformManaged: !initialOwnerMembership,
     };
   } catch (error) {
@@ -326,6 +453,27 @@ export const createOrganization = async ({
       }
     }
 
+    if (createdOwner?._id) {
+      try {
+        await User.deleteOne({ _id: createdOwner._id });
+      } catch (rollbackError) {
+        const rollbackFailure = serviceError(
+          500,
+          "ORGANIZATION_CREATION_ROLLBACK_FAILED",
+          "Organization creation failed and requires manual cleanup.",
+        );
+        rollbackFailure.cause = rollbackError;
+        throw rollbackFailure;
+      }
+    }
+
+    if (error?.code === 11000 && error?.keyPattern?.organizationId) {
+      throw serviceError(
+        409,
+        "ORGANIZATION_MEMBERSHIP_EXISTS",
+        "This user already belongs to the Organization.",
+      );
+    }
     throw mapPersistenceError(error);
   }
 };

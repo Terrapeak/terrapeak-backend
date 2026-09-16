@@ -7,6 +7,7 @@ import {
   detachPlatformOrganizationCompany,
   getPlatformOrganization,
   getPlatformOrganizations,
+  lookupPlatformOrganizationOwner,
   patchPlatformOrganization,
 } from "../controllers/organizationController.js";
 import {
@@ -21,6 +22,7 @@ const router = express.Router();
 router.use(isPlatformAuthenticated, isPlatformAdmin);
 
 router.post("/", createPlatformOrganization);
+router.get("/owner-lookup", lookupPlatformOrganizationOwner);
 router.get("/", getPlatformOrganizations);
 router.get("/:organizationId", getPlatformOrganization);
 router.patch("/:organizationId", patchPlatformOrganization);

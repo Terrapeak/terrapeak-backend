@@ -20,6 +20,7 @@ import {
   updateOrganization,
   updateOrganizationMember,
   updatePlatformOrganization,
+  lookupInitialOwner,
 } from "../services/organizationService.js";
 import { createDistributorCompany } from "../services/distributorCompanyService.js";
 
@@ -108,7 +109,7 @@ const organizationHandler = (handler) =>
         return res.status(400).json({
           success: false,
           code: "INVALID_IDENTIFIER",
-          message: "One of the supplied identifiers is invalid.",
+          message: "The supplied identifier is invalid. Use an email address or a valid existing User ID.",
         });
       }
 
@@ -142,12 +143,26 @@ export const createPlatformOrganization = organizationHandler(
       initialOwnerMembership: result.initialOwnerMembership
         ? membershipResponse(result.initialOwnerMembership)
         : null,
+      initialOwner: result.initialOwnerUser
+        ? {
+            name: result.initialOwnerUser.name,
+            email: result.initialOwnerUser.email,
+            dashboardUrl: "dashboard.terrapeakgroup.com",
+          }
+        : null,
       platformManaged: result.platformManaged,
       message: result.platformManaged
         ? "Organization created without an initial owner and remains platform-managed."
         : "Organization and initial owner created.",
     });
   }
+);
+
+export const lookupPlatformOrganizationOwner = organizationHandler(
+  async (req, res) => {
+    const result = await lookupInitialOwner({ email: req.query.email });
+    res.json({ success: true, ...result });
+  },
 );
 
 export const getPlatformOrganizations = organizationHandler(
