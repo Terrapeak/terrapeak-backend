@@ -146,6 +146,24 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
   const normalizedOrganizationSlug =
     organizationSlug || `${slugify(normalizedOrganizationName)}-organization`;
 
+  const selectedOrganization =
+    organizationMode === "existing"
+      ? await Organization.findOne({
+          _id: organizationId,
+          status: "active",
+          isActive: true,
+        }).select("organizationType billingMode plan")
+      : null;
+  if (organizationMode === "existing" && !selectedOrganization) {
+    res.status(404);
+    throw new Error("The selected Organization could not be found or is inactive.");
+  }
+  const derivedBillingMode =
+    selectedOrganization?.organizationType === "distributor"
+      ? selectedOrganization.billingMode || "company"
+      : billingMode;
+  const derivedPlan = selectedOrganization?.plan || plan;
+
   const availableApps = await App.find({
     isVisible: true,
     isComingSoon: false,
@@ -205,7 +223,7 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
         organizationMode === "create" ? normalizedOrganizationSlug : null,
     },
     billing: {
-      mode: billingMode,
+      mode: derivedBillingMode,
     },
     company: {
       name: companyName,
@@ -214,7 +232,7 @@ export const onboardPlatformCustomer = asyncHandler(async (req, res) => {
       referencePrefix: normalizedPrefix,
       reservationBusinessSlug: normalizedReservationSlug,
       reservationTemplate,
-      plan,
+      plan: derivedPlan,
       maxUsers: Number(maxUsers) || 1,
     },
     installedApps: Array.from(finalApps),

@@ -1,5 +1,6 @@
 import asyncHandler from "express-async-handler";
 import OrganizationMembership from "../models/organizationMembership.js";
+import App from "../models/app.js";
 import { normalizeOrganizationType } from "../utils/organizationTypes.js";
 
 import {
@@ -20,6 +21,7 @@ import {
   updateOrganizationMember,
   updatePlatformOrganization,
 } from "../services/organizationService.js";
+import { createDistributorCompany } from "../services/distributorCompanyService.js";
 
 export const organizationResponse = (organization) => ({
   organizationId: organization._id,
@@ -63,6 +65,22 @@ const companyResponse = (company) => ({
   displayName: company.displayName,
   slug: company.slug,
   isActive: company.isActive,
+});
+
+const distributorCompanyResponse = (result) => ({
+  company: companyResponse(result.company),
+  user: {
+    userId: result.user._id,
+    name: result.user.name,
+    email: result.user.email,
+  },
+  membership: membershipResponse(result.membership),
+  installedApps: result.installedApps,
+  billingSource: result.company.billingSource,
+  billingScope:
+    result.company.billingSource === "organization"
+      ? "organization"
+      : "company",
 });
 
 const organizationHandler = (handler) =>
@@ -282,6 +300,48 @@ export const getOrganizationCompanies = organizationHandler(
       companies: companies.map(companyResponse),
     });
   }
+);
+
+export const getDistributorCompanyOptions = organizationHandler(
+  async (req, res) => {
+    if (req.organization.organizationType !== "distributor") {
+      return res.status(403).json({
+        success: false,
+        code: "DISTRIBUTOR_ORGANIZATION_REQUIRED",
+        message: "Only Distributor Organizations can create Customers here.",
+      });
+    }
+    const apps = await App.find({
+      isVisible: true,
+      isComingSoon: false,
+      allowInstall: { $ne: false },
+    })
+      .select("slug name description category isCore requiresAIAssistant dependencies sortOrder")
+      .sort({ sortOrder: 1, name: 1 })
+      .lean();
+    res.json({
+      success: true,
+      billingMode: req.organization.billingMode || "company",
+      plan: req.organization.plan || "starter",
+      maxCompanies: req.organization.billing?.maxCompanies ?? null,
+      apps,
+    });
+  },
+);
+
+export const createDistributorOrganizationCompany = organizationHandler(
+  async (req, res) => {
+    const result = await createDistributorCompany({
+      organization: req.organization,
+      actorMembership: req.organizationMembership,
+      input: req.body || {},
+    });
+    res.status(201).json({
+      success: true,
+      organization: organizationResponse(req.organization),
+      ...distributorCompanyResponse(result),
+    });
+  },
 );
 
 export const attachOrganizationCompany = organizationHandler(

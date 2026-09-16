@@ -156,7 +156,7 @@ test("customer billing and minimum-plan restrictions remain enforced", async (t)
 
   assert.deepEqual(billingResult.installedApps, []);
   assert.deepEqual(billingResult.skippedApps, ["reservations"]);
-  assert.match(billingResult.warnings[0], /Billing must be active/);
+  assert.match(billingResult.warnings[0], /Company billing is not active/);
 
   company.billing.status = "trial";
   const facebookDefinition = APP_REGISTRY_DEFINITIONS.find(
@@ -294,6 +294,9 @@ test("customer onboarding delegates provisioning and fully restores owner member
     status: "active",
     isActive: true,
     createdByUserId: OWNER_ID,
+    async save() {
+      return this;
+    },
   };
   const organizationMembership = {
     _id: "organization-membership-1",

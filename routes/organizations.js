@@ -3,6 +3,8 @@ import express from "express";
 import {
   attachOrganizationCompany,
   createOrganizationMember,
+  createDistributorOrganizationCompany,
+  getDistributorCompanyOptions,
   deleteOrganizationMember,
   detachOrganizationCompany,
   getMyOrganizations,
@@ -41,6 +43,18 @@ router.get(
   "/:organizationId/companies",
   ...organizationContext,
   getOrganizationCompanies
+);
+router.post(
+  "/:organizationId/companies",
+  ...organizationContext,
+  requireOrganizationRole("owner", "admin"),
+  createDistributorOrganizationCompany,
+);
+router.get(
+  "/:organizationId/companies/options",
+  ...organizationContext,
+  requireOrganizationRole("owner", "admin"),
+  getDistributorCompanyOptions,
 );
 router.post(
   "/:organizationId/companies/:companyId",
