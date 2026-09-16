@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import ChatbotSettings from "../models/chatbotSettings.js";
+import App from "../models/app.js";
 import Company from "../models/company.js";
 import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import CompanyMembership from "../models/companyMembership.js";
@@ -11,6 +12,7 @@ import User from "../models/user.js";
 import {
   assertDistributorCompanyAccess,
   cleanupDistributorCompanyCreation,
+  createDistributorCompany,
 } from "../services/distributorCompanyService.js";
 
 const distributor = { organizationType: "distributor", status: "active", isActive: true };
@@ -90,4 +92,78 @@ test("compensating cleanup attempts every resource and preserves cleanup failure
   assert.equal(userDeleted, true);
   assert.equal(failures.length, 1);
   assert.match(failures[0].message, /installation cleanup failed/);
+});
+
+test("Distributor creation returns the fresh Company after provisioning changes its version", async (t) => {
+  const owner = {
+    _id: "user-1",
+    name: "Customer Owner",
+    email: "owner@example.com",
+    phone: "+15550000001",
+    platformRole: "none",
+    isApproved: true,
+    accountStatus: "active",
+  };
+  const staleCompany = {
+    _id: "company-1",
+    name: "Customer Company",
+    displayName: "Customer Company",
+    slug: "customer-company",
+    ownerUserId: owner._id,
+    organizationId: "organization-1",
+    billingSource: "organization",
+    installedApps: [],
+    save: async () => {
+      throw new Error("stale Company save must not run");
+    },
+  };
+  const freshCompany = {
+    ...staleCompany,
+    installedApps: ["ai-assistant", "reservations"],
+  };
+  const appQuery = {
+    select: () => appQuery,
+    lean: async () => [
+      { slug: "ai-assistant", isCore: true, dependencies: [] },
+      { slug: "reservations", isCore: false, dependencies: [] },
+    ],
+  };
+
+  t.mock.method(App, "find", () => appQuery);
+  t.mock.method(User, "findOne", async () => owner);
+  t.mock.method(User, "findById", () => ({
+    select: async () => owner,
+  }));
+  t.mock.method(Company, "findOne", () => ({
+    select: () => ({ lean: async () => null }),
+  }));
+  t.mock.method(Company, "create", async () => staleCompany);
+  t.mock.method(Company, "findById", async () => freshCompany);
+  t.mock.method(CompanyMembership, "create", async (input) => input);
+
+  const result = await createDistributorCompany({
+    organization: {
+      _id: "organization-1",
+      organizationType: "distributor",
+      status: "active",
+      isActive: true,
+      billingMode: "organization",
+      plan: "starter",
+      billing: { maxCompanies: null },
+    },
+    actorMembership: { role: "owner", status: "active" },
+    input: {
+      company: { name: "Customer Company", slug: "customer-company" },
+      owner: { email: owner.email },
+      installedApps: ["ai-assistant", "reservations"],
+    },
+    provisionCompanyFn: async () => ({
+      installedApps: ["ai-assistant", "reservations"],
+      alreadyInstalledApps: [],
+    }),
+  });
+
+  assert.deepEqual(result.company.installedApps, ["ai-assistant", "reservations"]);
+  assert.equal(result.company, freshCompany);
+  assert.equal(result.membership.role, "owner");
 });

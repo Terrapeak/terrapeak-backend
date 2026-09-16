@@ -126,14 +126,20 @@ export const assertDistributorCompanyAccess = ({ organization, actorMembership }
   }
 };
 
-export const createDistributorCompany = async ({ organization, actorMembership, input = {} }) => {
+export const createDistributorCompany = async ({
+  organization,
+  actorMembership,
+  input = {},
+  provisionCompanyFn = provisionCompany,
+  issueInvitationFn = issueInvitation,
+}) => {
   assertDistributorCompanyAccess({ organization, actorMembership });
 
   const owner = input.owner || {};
   const companyInput = input.company || input;
   const email = String(owner.email || "").trim().toLowerCase();
-  if (!companyInput.name || !email || !owner.name || !owner.phone) {
-    throw fail(400, "CUSTOMER_DETAILS_REQUIRED", "Company name and owner name, email, and phone are required.");
+  if (!companyInput.name || !email) {
+    throw fail(400, "CUSTOMER_DETAILS_REQUIRED", "Company name and owner email are required.");
   }
 
   const companySlug = slugify(companyInput.slug || companyInput.name);
@@ -210,20 +216,29 @@ export const createDistributorCompany = async ({ organization, actorMembership, 
     let contract = null;
     if (!organizationBilling) contract = await createTrialContract({ company, createdBy: user });
 
-    const provisioning = await provisionCompany({
+    const provisioning = await provisionCompanyFn({
       companyId: company._id,
       ownerUserId: user._id,
       mode: "customer",
       requestedAppSlugs: installedApps,
     });
     const provisionedApps = [...new Set([...provisioning.installedApps, ...provisioning.alreadyInstalledApps])];
-    company.installedApps = provisionedApps;
-    await company.save();
+    const currentCompany = await Company.findById(company._id);
+    if (!currentCompany) {
+      throw new Error("Company was not found after provisioning.");
+    }
 
     const invitation = createdUser
-      ? await issueInvitation({ user, company, role: "owner" })
+      ? await issueInvitationFn({ user, company: currentCompany, role: "owner" })
       : null;
-    return { user, company, membership, contract, invitation, installedApps: provisionedApps };
+    return {
+      user,
+      company: currentCompany,
+      membership,
+      contract,
+      invitation,
+      installedApps: provisionedApps,
+    };
   } catch (error) {
     const cleanupFailures = await cleanupDistributorCompanyCreation({
       company,
