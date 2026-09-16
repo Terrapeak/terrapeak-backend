@@ -35,7 +35,9 @@ const uniqueStrings = (values) => [
   ...new Set(values.filter(Boolean).map(asString)),
 ];
 const asObjectIds = (values) =>
-  uniqueStrings(values).map((value) => new mongoose.Types.ObjectId(value));
+  uniqueStrings(values)
+    .filter((value) => mongoose.isValidObjectId(value))
+    .map((value) => new mongoose.Types.ObjectId(value));
 const idList = (documents) => documents.map((document) => document._id);
 const publicDoc = (document) => {
   const output = { ...document, id: asString(document._id) };
@@ -480,6 +482,7 @@ const verify = async (db, plan) => {
 };
 
 const run = async () => {
+  console.log("TARGETED_CUSTOMER_CLEANUP_START=1");
   if (!process.env.MONGO_URI) fail("MONGO_URI is required.");
   await mongoose.connect(process.env.MONGO_URI);
   try {
