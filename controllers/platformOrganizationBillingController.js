@@ -48,6 +48,7 @@ const parseNullableLimit = (value, fieldName) => {
 const serializeOrganizationBilling = (organization, companies = []) => ({
   organizationId: organization._id,
   organizationName: organization.name,
+  organizationType: organization.organizationType || "direct_customer",
   billingMode: organization.billingMode || "company",
   plan: organization.plan || "starter",
   billing: {

@@ -70,6 +70,7 @@ export const resolveEffectiveBilling = async (company) => {
       id: organization._id,
       name: organization.name,
       slug: organization.slug,
+      organizationType: organization.organizationType || "direct_customer",
       billingMode: organization.billingMode,
     },
     plan: organization.plan || company.plan || "starter",

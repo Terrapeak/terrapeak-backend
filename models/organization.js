@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { ORGANIZATION_TYPE_VALUES } from "../utils/organizationTypes.js";
 
 const ORGANIZATION_STATUSES = ["active", "inactive", "archived"];
 const BILLING_STATUSES = [
@@ -32,6 +33,17 @@ const OrganizationSchema = new mongoose.Schema(
       required: true,
       lowercase: true,
       trim: true,
+    },
+
+    organizationType: {
+      type: String,
+      enum: ORGANIZATION_TYPE_VALUES,
+      default: "direct_customer",
+      index: true,
+      validate: {
+        validator: (value) => value !== null,
+        message: "Organization type cannot be null.",
+      },
     },
 
     status: {

@@ -1,5 +1,6 @@
 import asyncHandler from "express-async-handler";
 import OrganizationMembership from "../models/organizationMembership.js";
+import { normalizeOrganizationType } from "../utils/organizationTypes.js";
 
 import {
   OrganizationServiceError,
@@ -20,10 +21,11 @@ import {
   updatePlatformOrganization,
 } from "../services/organizationService.js";
 
-const organizationResponse = (organization) => ({
+export const organizationResponse = (organization) => ({
   organizationId: organization._id,
   name: organization.name,
   slug: organization.slug,
+  organizationType: normalizeOrganizationType(organization.organizationType),
   status: organization.status,
   isActive: organization.isActive,
   metadata: organization.metadata || {},

@@ -13,6 +13,8 @@ import OrganizationMembership, {
 } from "../models/organizationMembership.js";
 import User from "../models/user.js";
 import { ORGANIZATION_ROLES } from "../utils/roleSeparation.js";
+import { ORGANIZATION_TYPES } from "../utils/organizationTypes.js";
+import { organizationResponse } from "../controllers/organizationController.js";
 
 const ORGANIZATION_ID = "64b000000000000000000001";
 const USER_ID = "64b000000000000000000002";
@@ -76,7 +78,57 @@ test("Organization accepts valid data and normalizes name and slug", () => {
   assert.equal(organization.slug, "example-org");
   assert.equal(organization.status, "active");
   assert.equal(organization.isActive, true);
+  assert.equal(organization.organizationType, ORGANIZATION_TYPES.DIRECT_CUSTOMER);
   assert.deepEqual(organization.metadata, { source: "phase-3a" });
+});
+
+test("Organization supports all structural types and rejects invalid types", () => {
+  for (const organizationType of Object.values(ORGANIZATION_TYPES)) {
+    const organization = new Organization({
+      name: "Example",
+      slug: `example-${organizationType}`,
+      organizationType,
+    });
+    assert.equal(organization.validateSync(), undefined);
+  }
+
+  for (const organizationType of ["not-a-type", "", null]) {
+    const invalid = new Organization({
+      name: "Example",
+      slug: `invalid-${organizationType || "null"}`,
+      organizationType,
+    });
+    assert.ok(invalid.validateSync()?.errors.organizationType);
+  }
+});
+
+test("legacy Organization objects normalize to direct_customer", () => {
+  const organization = Organization.hydrate({
+    name: "Legacy",
+    slug: "legacy",
+  });
+  assert.equal(organization.organizationType, ORGANIZATION_TYPES.DIRECT_CUSTOMER);
+});
+
+test("Organization type declares a lookup index", () => {
+  assert.equal(hasIndex(Organization.schema, { organizationType: 1 }), true);
+});
+
+test("Organization responses include a safe normalized organization type", () => {
+  assert.equal(
+    organizationResponse({ _id: ORGANIZATION_ID, name: "Legacy", slug: "legacy" })
+      .organizationType,
+    ORGANIZATION_TYPES.DIRECT_CUSTOMER,
+  );
+  assert.equal(
+    organizationResponse({
+      _id: ORGANIZATION_ID,
+      name: "Distributor",
+      slug: "distributor",
+      organizationType: ORGANIZATION_TYPES.DISTRIBUTOR,
+    }).organizationType,
+    ORGANIZATION_TYPES.DISTRIBUTOR,
+  );
 });
 
 test("Organization declares a unique slug and status index", () => {

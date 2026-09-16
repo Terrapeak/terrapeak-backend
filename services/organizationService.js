@@ -9,6 +9,11 @@ import {
   assertOrganizationRoleAssignment,
   isOrganizationRole,
 } from "../utils/roleSeparation.js";
+import {
+  canSelfManageCompanyAssignments,
+  isOrganizationType,
+  ORGANIZATION_TYPES,
+} from "../utils/organizationTypes.js";
 
 const PLATFORM_ORGANIZATION_ADMIN_ROLES = new Set([
   "platform-owner",
@@ -175,11 +180,26 @@ export const databaseSupportsTransactions = (
   return ["ReplicaSetWithPrimary", "Sharded"].includes(topologyType);
 };
 
+const getOrganizationTypeOrDefault = (value) => {
+  const organizationType = value === undefined
+    ? ORGANIZATION_TYPES.DIRECT_CUSTOMER
+    : value;
+  if (!isOrganizationType(organizationType)) {
+    throw serviceError(
+      400,
+      "INVALID_ORGANIZATION_TYPE",
+      "Organization type is invalid.",
+    );
+  }
+  return organizationType;
+};
+
 const buildOrganizationPayload = ({ actor, input }) => ({
     name: input.name,
     slug: input.slug,
     status: input.status || "active",
     metadata: input.metadata || {},
+    organizationType: getOrganizationTypeOrDefault(input.organizationType),
     createdByUserId: actor._id,
 });
 
@@ -323,8 +343,13 @@ export const readPlatformOrganization = async ({
   return getOrganizationOrThrow(organizationId);
 };
 
-const applyOrganizationUpdates = async (organization, updates) => {
+const applyOrganizationUpdates = async (
+  organization,
+  updates,
+  { allowOrganizationType = false } = {},
+) => {
   const editableFields = ["name", "slug", "status", "metadata"];
+  if (allowOrganizationType) editableFields.push("organizationType");
   assertPlainMetadata(updates.metadata);
 
   for (const field of editableFields) {
@@ -349,7 +374,9 @@ export const updatePlatformOrganization = async ({
 }) => {
   assertPlatformOrganizationAdmin(actor);
   const organization = await getOrganizationOrThrow(organizationId);
-  return applyOrganizationUpdates(organization, updates);
+  return applyOrganizationUpdates(organization, updates, {
+    allowOrganizationType: true,
+  });
 };
 
 export const listAvailableOrganizations = async ({ userId }) => {
@@ -723,6 +750,14 @@ export const assignCompanyToOrganization = async ({
 }) => {
   assertCompanyMutationAccess({ actorMembership, platformActor });
 
+  if (!platformActor && !canSelfManageCompanyAssignments(organization)) {
+    throw serviceError(
+      403,
+      "ORGANIZATION_COMPANY_SELF_SERVICE_DISABLED",
+      "Distributor Organizations cannot self-attach existing Companies.",
+    );
+  }
+
   if (organization.status !== "active") {
     throw serviceError(
       409,
@@ -769,6 +804,14 @@ export const removeCompanyFromOrganization = async ({
   platformActor,
 }) => {
   assertCompanyMutationAccess({ actorMembership, platformActor });
+
+  if (!platformActor && !canSelfManageCompanyAssignments(organization)) {
+    throw serviceError(
+      403,
+      "ORGANIZATION_COMPANY_SELF_SERVICE_DISABLED",
+      "Distributor Organizations cannot self-detach or reassign Companies.",
+    );
+  }
 
   const company = await Company.findById(companyId);
   if (!company) {

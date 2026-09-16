@@ -15,6 +15,7 @@ import {
   removeCompanyFromOrganization,
   removeOrganizationMember,
   updateOrganization,
+  updatePlatformOrganization,
   updateOrganizationMember,
 } from "../services/organizationService.js";
 
@@ -187,6 +188,54 @@ test("Organization owner and admin may update Organization fields", async () => 
     assert.equal(target.name, `${role} update`);
     assert.deepEqual(target.metadata, { role });
   }
+});
+
+test("platform Organization creation rejects invalid structural types", async () => {
+  for (const organizationType of ["invalid", "Distributor", "", null]) {
+    await assert.rejects(
+      () =>
+        createOrganization({
+          actor: platformActor(),
+          input: { name: "Example", slug: "example", organizationType },
+          transactionSupported: false,
+        }),
+      (error) => error.code === "INVALID_ORGANIZATION_TYPE",
+    );
+  }
+});
+
+test("Organization admins cannot change structural Organization type", async () => {
+  const target = organization({
+    save: async function save() {
+      return this;
+    },
+  });
+
+  await updateOrganization({
+    organization: target,
+    membership: membership("admin"),
+    updates: { organizationType: "distributor" },
+  });
+
+  assert.equal(target.organizationType, undefined);
+});
+
+test("platform admins can change structural Organization type", async (t) => {
+  const target = organization({
+    organizationType: "direct_customer",
+    save: async function save() {
+      return this;
+    },
+  });
+  t.mock.method(Organization, "findById", async () => target);
+
+  const result = await updatePlatformOrganization({
+    actor: platformActor("platform-owner"),
+    organizationId: ORGANIZATION_ID,
+    updates: { organizationType: "distributor" },
+  });
+
+  assert.equal(result.organizationType, "distributor");
 });
 
 for (const role of ["manager", "member", "viewer"]) {
@@ -377,6 +426,18 @@ test("owner attaches an unassigned Company", async (t) => {
   assert.equal(saveCount, 1);
 });
 
+test("distributor owner cannot self-attach an unassigned Company", async () => {
+  await assert.rejects(
+    () =>
+      assignCompanyToOrganization({
+        organization: organization({ organizationType: "distributor" }),
+        companyId: COMPANY_ID,
+        actorMembership: membership("owner"),
+      }),
+    (error) => error.code === "ORGANIZATION_COMPANY_SELF_SERVICE_DISABLED",
+  );
+});
+
 test("Company assigned to another Organization is rejected", async (t) => {
   t.mock.method(Company, "findById", async () => ({
     _id: COMPANY_ID,
@@ -439,6 +500,18 @@ test("detaching a Company clears organizationId without deleting it", async (t) 
 
   assert.equal(company.organizationId, null);
   assert.equal(saveCount, 1);
+});
+
+test("distributor owner cannot self-detach a Company", async () => {
+  await assert.rejects(
+    () =>
+      removeCompanyFromOrganization({
+        organization: organization({ organizationType: "distributor" }),
+        companyId: COMPANY_ID,
+        actorMembership: membership("owner"),
+      }),
+    (error) => error.code === "ORGANIZATION_COMPANY_SELF_SERVICE_DISABLED",
+  );
 });
 
 test("Organization role alone cannot claim an unassigned Company", async (t) => {

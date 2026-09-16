@@ -43,7 +43,7 @@ export const getPlatformOnboardingOptions = asyncHandler(async (req, res) => {
       status: "active",
       isActive: true,
     })
-      .select("name slug billingMode plan billing.status billing.paymentStatus")
+      .select("name slug organizationType billingMode plan billing.status billing.paymentStatus")
       .sort({ name: 1 })
       .lean(),
   ]);
@@ -63,6 +63,7 @@ export const getPlatformOnboardingOptions = asyncHandler(async (req, res) => {
       id: organization._id,
       name: organization.name,
       slug: organization.slug,
+      organizationType: organization.organizationType || "direct_customer",
       billingMode: organization.billingMode || "company",
       plan: organization.plan || "starter",
       billingStatus: organization.billing?.status || "not_configured",
