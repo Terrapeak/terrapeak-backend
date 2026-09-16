@@ -10,6 +10,7 @@ import {
   addOrganizationMember,
   assignCompanyToOrganization,
   createOrganization,
+  lookupInitialOwner,
   listOrganizationCompanies,
   listOrganizationMembers,
   removeCompanyFromOrganization,
@@ -61,6 +62,7 @@ const mockUserLookup = (
     email: "customer@example.com",
     platformRole: "none",
     isApproved: true,
+    accountStatus: "active",
   }
 ) => {
   t.mock.method(User, "findById", () => ({
@@ -115,6 +117,330 @@ test("platform admin creates an Organization with a valid initial owner", async 
   assert.equal(result.initialOwnerMembership.userId, USER_ID);
   assert.equal(result.platformManaged, false);
 });
+
+test("platform admin creates a Distributor with a new initial owner account", async (t) => {
+  const owner = {
+    _id: USER_ID,
+    name: "Distributor Owner",
+    email: "owner@example.com",
+    phone: "+15551234567",
+    platformRole: "none",
+    isApproved: true,
+    accountStatus: "active",
+  };
+  const ownerMembership = membership("owner");
+  t.mock.method(User, "findOne", async () => null);
+  t.mock.method(User, "create", async (input) => ({ ...owner, ...input }));
+  t.mock.method(Organization, "create", async (input) => ({
+    _id: ORGANIZATION_ID,
+    ...input,
+  }));
+  t.mock.method(
+    OrganizationMembership,
+    "create",
+    async (input) => ({ ...ownerMembership, ...input }),
+  );
+
+  const result = await createOrganization({
+    actor: platformActor(),
+    input: {
+      name: "Example Distribution",
+      slug: "example-distribution",
+      organizationType: "distributor",
+      initialOwner: {
+        name: owner.name,
+        email: owner.email,
+        phone: owner.phone,
+        password: "temporary-password",
+      },
+    },
+    transactionSupported: false,
+  });
+
+  assert.equal(result.initialOwnerMembership.role, "owner");
+  assert.equal(result.initialOwnerMembership.userId, USER_ID);
+  assert.equal(result.initialOwnerMembership.status, "active");
+  assert.equal(result.organization.organizationType, "distributor");
+  assert.equal(result.initialOwnerUser.platformRole, "none");
+});
+
+test("an eligible existing customer user can become a Distributor owner", async (t) => {
+  const owner = {
+    _id: USER_ID,
+    name: "Existing Owner",
+    email: "existing@example.com",
+    platformRole: "none",
+    isApproved: true,
+    accountStatus: "active",
+    invitationStatus: "not_invited",
+    password: "existing-password-hash",
+    phone: "+15550000000",
+  };
+  t.mock.method(User, "findOne", async () => owner);
+  mockUserLookup(t, owner);
+  t.mock.method(Organization, "create", async (input) => ({
+    _id: ORGANIZATION_ID,
+    ...input,
+  }));
+  t.mock.method(OrganizationMembership, "create", async (input) => input);
+
+  const result = await createOrganization({
+    actor: platformActor(),
+    input: {
+      name: "Existing Distribution",
+      slug: "existing-distribution",
+      organizationType: "distributor",
+      initialOwner: { email: owner.email },
+    },
+    transactionSupported: false,
+  });
+
+  assert.equal(result.initialOwnerMembership.userId, USER_ID);
+  assert.equal(owner.password, "existing-password-hash");
+  assert.equal(owner.name, "Existing Owner");
+  assert.equal(owner.phone, "+15550000000");
+});
+
+for (const state of [
+  { label: "inactive", accountStatus: "suspended", isApproved: true },
+  { label: "unapproved", accountStatus: "active", isApproved: false },
+  { label: "pending invitation", accountStatus: "active", isApproved: true, invitationStatus: "pending" },
+]) {
+  test(`${state.label} existing user is rejected as a Distributor owner`, async (t) => {
+    t.mock.method(User, "findOne", async () => ({
+      _id: USER_ID,
+      email: `${state.label.replaceAll(" ", "-")}@example.com`,
+      name: "Ineligible User",
+      platformRole: "none",
+      ...state,
+    }));
+    t.mock.method(User, "findById", () => ({
+      select: async () => ({
+        _id: USER_ID,
+        email: "ineligible@example.com",
+        name: "Ineligible User",
+        platformRole: "none",
+        ...state,
+      }),
+    }));
+
+    await assert.rejects(
+      () =>
+        createOrganization({
+          actor: platformActor(),
+          input: {
+            name: "Ineligible Distribution",
+            slug: `ineligible-${state.label.replaceAll(" ", "-")}`,
+            organizationType: "distributor",
+            initialOwner: { email: "ineligible@example.com" },
+          },
+        }),
+      (error) => error.code === "ORGANIZATION_USER_INELIGIBLE",
+    );
+  });
+}
+
+test("existing Distributor owner does not require a replacement password", async (t) => {
+  const owner = {
+    _id: USER_ID,
+    name: "Existing Owner",
+    email: "existing-no-password@example.com",
+    phone: "+15550000001",
+    password: "unchanged-password-hash",
+    platformRole: "none",
+    isApproved: true,
+    accountStatus: "active",
+    invitationStatus: "not_invited",
+  };
+  t.mock.method(User, "findOne", async () => owner);
+  mockUserLookup(t, owner);
+  t.mock.method(Organization, "create", async (input) => ({ _id: ORGANIZATION_ID, ...input }));
+  t.mock.method(OrganizationMembership, "create", async (input) => input);
+
+  const result = await createOrganization({
+    actor: platformActor(),
+    input: {
+      name: "No Password Distribution",
+      slug: "no-password-distribution",
+      organizationType: "distributor",
+      initialOwner: { email: owner.email },
+    },
+    transactionSupported: false,
+  });
+
+  assert.equal(result.initialOwnerUser.password, "unchanged-password-hash");
+  assert.equal(result.initialOwnerUser.name, "Existing Owner");
+  assert.equal(result.initialOwnerUser.phone, "+15550000001");
+});
+
+test("new Distributor owner requires a valid password", async (t) => {
+  t.mock.method(User, "findOne", async () => null);
+  await assert.rejects(
+    () =>
+      createOrganization({
+        actor: platformActor(),
+        input: {
+          name: "Password Distribution",
+          slug: "password-distribution",
+          organizationType: "distributor",
+          initialOwner: {
+            name: "New Owner",
+            email: "new-owner@example.com",
+            phone: "+15550000002",
+            password: "short",
+          },
+        },
+      }),
+    (error) => error.code === "OWNER_PASSWORD_INVALID",
+  );
+});
+
+test("a platform owner email is rejected as a Distributor owner", async (t) => {
+  const owner = {
+    _id: USER_ID,
+    email: "platform@example.com",
+    platformRole: "platform-admin",
+    isApproved: true,
+    accountStatus: "active",
+  };
+  t.mock.method(User, "findOne", async () => owner);
+
+  await assert.rejects(
+    () =>
+      createOrganization({
+        actor: platformActor(),
+        input: {
+          name: "Blocked Distribution",
+          slug: "blocked-distribution",
+          organizationType: "distributor",
+          initialOwner: { email: owner.email },
+        },
+      }),
+    (error) =>
+      error.code === "PLATFORM_USER_NOT_ELIGIBLE" &&
+      error.statusCode === 409,
+  );
+});
+
+test("new Distributor owner is rolled back when membership creation fails", async (t) => {
+  const owner = { _id: USER_ID, platformRole: "none" };
+  let deletedUserId = null;
+  t.mock.method(User, "findOne", async () => null);
+  t.mock.method(User, "create", async (input) => ({ ...owner, ...input }));
+  t.mock.method(Organization, "create", async (input) => ({
+    _id: ORGANIZATION_ID,
+    ...input,
+  }));
+  t.mock.method(OrganizationMembership, "create", async () => {
+    throw new Error("membership creation failed");
+  });
+  t.mock.method(Organization, "deleteOne", async () => ({ deletedCount: 1 }));
+  t.mock.method(User, "deleteOne", async ({ _id }) => {
+    deletedUserId = _id;
+    return { deletedCount: 1 };
+  });
+
+  await assert.rejects(() =>
+    createOrganization({
+      actor: platformActor(),
+      input: {
+        name: "Rollback Distribution",
+        slug: "rollback-distribution",
+        organizationType: "distributor",
+        initialOwner: {
+          name: "Rollback Owner",
+          email: "rollback@example.com",
+          phone: "+15551234567",
+          password: "temporary-password",
+        },
+      },
+      transactionSupported: false,
+    }),
+  );
+  assert.equal(deletedUserId, USER_ID);
+});
+
+test("rollback never deletes an existing reused owner", async (t) => {
+  const owner = {
+    _id: USER_ID,
+    email: "reused-owner@example.com",
+    name: "Reused Owner",
+    phone: "+15550000003",
+    platformRole: "none",
+    isApproved: true,
+    accountStatus: "active",
+    invitationStatus: "not_invited",
+  };
+  let deletedUser = false;
+  t.mock.method(User, "findOne", async () => owner);
+  mockUserLookup(t, owner);
+  t.mock.method(Organization, "create", async (input) => ({ _id: ORGANIZATION_ID, ...input }));
+  t.mock.method(OrganizationMembership, "create", async () => {
+    throw new Error("membership creation failed");
+  });
+  t.mock.method(Organization, "deleteOne", async () => ({ deletedCount: 1 }));
+  t.mock.method(User, "deleteOne", async () => {
+    deletedUser = true;
+    return { deletedCount: 1 };
+  });
+
+  await assert.rejects(() =>
+    createOrganization({
+      actor: platformActor(),
+      input: {
+        name: "Reused Distribution",
+        slug: "reused-distribution",
+        organizationType: "distributor",
+        initialOwner: { email: owner.email },
+      },
+      transactionSupported: false,
+    }),
+  );
+  assert.equal(deletedUser, false);
+});
+
+test("duplicate owner membership is returned as a clear conflict", async (t) => {
+  mockUserLookup(t);
+  t.mock.method(Organization, "create", async (input) => ({ _id: ORGANIZATION_ID, ...input }));
+  t.mock.method(OrganizationMembership, "create", async () => {
+    const error = new Error("duplicate membership");
+    error.code = 11000;
+    error.keyPattern = { organizationId: 1, userId: 1 };
+    throw error;
+  });
+  t.mock.method(Organization, "deleteOne", async () => ({ deletedCount: 1 }));
+
+  await assert.rejects(
+    () =>
+      createOrganization({
+        actor: platformActor(),
+        input: {
+          name: "Duplicate Distribution",
+          slug: "duplicate-distribution",
+          organizationType: "distributor",
+          initialOwnerUserId: USER_ID,
+        },
+        transactionSupported: false,
+      }),
+    (error) => error.code === "ORGANIZATION_MEMBERSHIP_EXISTS",
+  );
+});
+
+for (const organizationType of ["direct_customer", "enterprise_group"]) {
+  test(`${organizationType} creation remains ownerless-compatible`, async (t) => {
+    t.mock.method(Organization, "create", async (input) => ({ _id: ORGANIZATION_ID, ...input }));
+    const result = await createOrganization({
+      actor: platformActor("platform-owner"),
+      input: {
+        name: `${organizationType} Example`,
+        slug: `${organizationType}-example`,
+        organizationType,
+      },
+    });
+    assert.equal(result.organization.organizationType, organizationType);
+    assert.equal(result.initialOwnerMembership, null);
+  });
+}
 
 test("Organization creation rolls back when initial owner creation fails", async (t) => {
   mockUserLookup(t);
@@ -171,6 +497,40 @@ test("non-administrative platform role cannot manage Organizations", async () =>
       }),
     (error) => error.code === "PLATFORM_ROLE_REQUIRED"
   );
+});
+
+for (const actor of [null, { _id: USER_ID, platformRole: "none" }]) {
+  test("unauthenticated or normal dashboard users cannot create Organizations", async () => {
+    await assert.rejects(
+      () =>
+        createOrganization({
+          actor,
+          input: { name: "Blocked Organization", slug: "blocked-organization" },
+        }),
+      (error) => error.code === "PLATFORM_ROLE_REQUIRED",
+    );
+  });
+}
+
+test("owner lookup exposes only non-sensitive eligibility details", async (t) => {
+  t.mock.method(User, "findOne", () => ({
+    select: async () => ({
+      name: "Lookup User",
+      email: "lookup@example.com",
+      platformRole: "none",
+      isApproved: true,
+      accountStatus: "active",
+      password: "secret-hash",
+    }),
+  }));
+  const result = await lookupInitialOwner({ email: "lookup@example.com" });
+  assert.deepEqual(result, {
+    exists: true,
+    eligible: true,
+    user: { name: "Lookup User", email: "lookup@example.com" },
+    reason: null,
+  });
+  assert.equal("password" in result, false);
 });
 
 test("Organization owner and admin may update Organization fields", async () => {
@@ -356,6 +716,7 @@ test("platform-role conflict is rejected when adding a member", async (t) => {
     _id: USER_ID,
     platformRole: "platform-admin",
     isApproved: true,
+    accountStatus: "active",
   });
 
   await assert.rejects(
@@ -375,6 +736,7 @@ test("Organization role assignment never changes platform authority", async (t) 
     platformRole: "none",
     isAdmin: false,
     isApproved: true,
+    accountStatus: "active",
   };
   mockUserLookup(t, user);
   t.mock.method(OrganizationMembership, "findOne", () => ({
