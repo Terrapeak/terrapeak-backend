@@ -99,18 +99,19 @@ const refreshAiAnalysis = async (conversation, { throwOnError = false } = {}) =>
 };
 
 export const listMySupportConversations = asyncHandler(async (req, res) => {
-  const membership = req.companyMembership;
-  const conversations = await SupportConversation.find({ companyId: membership.companyId, customerHiddenAt: null }).select("-aiAnalysis").sort({ lastMessageAt: -1 }).lean();
+  const companyId = req.company._id;
+  const conversations = await SupportConversation.find({ companyId, customerHiddenAt: null }).select("-aiAnalysis").sort({ lastMessageAt: -1 }).lean();
   res.json({ success: true, conversations });
 });
 
 export const createSupportConversation = asyncHandler(async (req, res) => {
   const membership = req.companyMembership;
+  const companyId = req.company._id;
   const user = await User.findById(req.userId).select("name email phone");
   const subject = String(req.body.subject || "").trim();
   const body = String(req.body.body || "").trim();
   if (!subject || !body) return res.status(400).json({ success: false, message: "Subject and message are required." });
-  const conversation = await SupportConversation.create({ companyId: membership.companyId, createdByUserId: req.userId, subject, category: req.body.category || "general", priority: req.body.priority || "normal", status: "new", messages: [{ senderType: "customer", senderUserId: req.userId, senderName: user?.name || user?.email || "Customer", body, readByCustomer: true, readByPlatform: false }], lastMessageAt: new Date() });
+  const conversation = await SupportConversation.create({ companyId, createdByUserId: req.userId, subject, category: req.body.category || "general", priority: req.body.priority || "normal", status: "new", messages: [{ senderType: "customer", senderUserId: req.userId, senderName: user?.name || user?.email || "Customer", body, readByCustomer: true, readByPlatform: false }], lastMessageAt: new Date() });
   const handled = await runCustomerAutomation({ conversation, requestBody: body, membership, user });
   if (!handled) await refreshAiAnalysis(conversation);
   res.status(201).json({ success: true, conversation: serializeConversation(conversation), automaticallyHandled: handled });
@@ -118,10 +119,11 @@ export const createSupportConversation = asyncHandler(async (req, res) => {
 
 export const replyToMySupportConversation = asyncHandler(async (req, res) => {
   const membership = req.companyMembership;
+  const companyId = req.company._id;
   const body = String(req.body.body || "").trim();
   if (!body) return res.status(400).json({ success: false, message: "Message is required." });
   const user = await User.findById(req.userId).select("name email phone");
-  const conversation = await SupportConversation.findOne({ _id: req.params.conversationId, companyId: membership.companyId, customerHiddenAt: null, archivedAt: null });
+  const conversation = await SupportConversation.findOne({ _id: req.params.conversationId, companyId, customerHiddenAt: null, archivedAt: null });
   if (!conversation) return res.status(404).json({ success: false, message: "Support conversation not found." });
   conversation.messages.push({ senderType: "customer", senderUserId: req.userId, senderName: user?.name || user?.email || "Customer", body, readByCustomer: true, readByPlatform: false });
   conversation.status = "needs_reply"; conversation.lastMessageAt = new Date(); conversation.resolvedAt = null; await conversation.save();
@@ -131,9 +133,9 @@ export const replyToMySupportConversation = asyncHandler(async (req, res) => {
 });
 
 export const hideMySupportConversation = asyncHandler(async (req, res) => {
-  const membership = req.companyMembership;
+  const companyId = req.company._id;
   const conversation = await SupportConversation.findOneAndUpdate(
-    { _id: req.params.conversationId, companyId: membership.companyId, customerHiddenAt: null },
+    { _id: req.params.conversationId, companyId, customerHiddenAt: null },
     { $set: { customerHiddenAt: new Date(), customerHiddenByUserId: req.userId } },
     { new: true },
   );

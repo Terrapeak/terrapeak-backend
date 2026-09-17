@@ -68,15 +68,15 @@ const getChannelState = ({ installation, config }) => {
 };
 
 export const getFacebookChannel = asyncHandler(async (req, res) => {
-  const membership = req.companyMembership;
+  const companyId = req.company._id;
 
   const [installation, config] = await Promise.all([
     CompanyAppInstallation.findOne({
-      companyId: membership.companyId,
+      companyId,
       appSlug: "facebook",
     }),
     FacebookChannelConfig.findOne({
-      companyId: membership.companyId,
+      companyId,
     }),
   ]);
 
@@ -85,7 +85,7 @@ export const getFacebookChannel = asyncHandler(async (req, res) => {
   return res.json({
     success: true,
     channel: {
-      companyId: membership.companyId,
+      companyId,
       slug: "facebook",
       name: "Facebook Messenger",
       state,
@@ -127,10 +127,10 @@ export const getFacebookChannel = asyncHandler(async (req, res) => {
 });
 
 export const connectFacebookChannel = asyncHandler(async (req, res) => {
-  const membership = req.companyMembership;
+  const companyId = req.company._id;
 
   const installation = await CompanyAppInstallation.findOne({
-    companyId: membership.companyId,
+    companyId,
     appSlug: "facebook",
     enabled: true,
     status: { $ne: "disabled" },
@@ -146,13 +146,13 @@ export const connectFacebookChannel = asyncHandler(async (req, res) => {
   const nonce = crypto.randomBytes(32).toString("base64url");
   const state = createFacebookOAuthState({
     userId: req.userId,
-    companyId: membership.companyId,
+    companyId,
     nonce,
   });
   const authorizationUrl = buildFacebookAuthorizationUrl(state);
 
   await FacebookChannelConfig.findOneAndUpdate(
-    { companyId: membership.companyId },
+    { companyId },
     {
       $set: {
         appInstallationId: installation._id,
@@ -169,7 +169,7 @@ export const connectFacebookChannel = asyncHandler(async (req, res) => {
         lastError: "",
       },
       $setOnInsert: {
-        companyId: membership.companyId,
+        companyId,
       },
     },
     {
@@ -315,7 +315,7 @@ export const selectFacebookPage = asyncHandler(async (req, res) => {
 
   const membership = req.companyMembership;
 
-  if (membership.role !== "owner") {
+  if (!membership || membership.role !== "owner") {
     return res.status(403).json({
       success: false,
       message: "Only the company owner can select a Facebook Page.",
@@ -376,7 +376,7 @@ export const selectFacebookPage = asyncHandler(async (req, res) => {
 export const verifyFacebookConnection = asyncHandler(async (req, res) => {
   const membership = req.companyMembership;
 
-  if (membership.role !== "owner") {
+  if (!membership || membership.role !== "owner") {
     return res.status(403).json({
       success: false,
       message: "Only the company owner can verify a Facebook connection.",
