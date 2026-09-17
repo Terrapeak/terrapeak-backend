@@ -7,6 +7,7 @@ import reconcileOrganizationAccessForCompanyUser from "../services/companyOrgani
 
 const MEMBERSHIP_ROLES = new Set(["owner", "admin", "manager", "staff", "viewer"]);
 const ACTIVITY_LIMIT = 50;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const appendAdminActivity = async ({ companyId, title, actor, metadata = {} }) => {
   await Company.updateOne(
@@ -42,6 +43,9 @@ const findReplacementOwner = async (companyId, excludedMembershipId) =>
     role: "owner",
     status: "active",
   }).select("userId");
+
+export const findPlatformUserEmailConflict = async ({ email, userId }) =>
+  User.findOne({ email, _id: { $ne: userId } }).select("_id");
 
 const ensureOwnerSafeguard = async ({ companyId, membership, nextRole, nextActive }) => {
   const removesOwner =
@@ -103,6 +107,29 @@ export const updatePlatformCompanyUserLifecycle = asyncHandler(async (req, res) 
         message: `This company has reached its maximum of ${company.maxUsers} active users.`,
       });
     }
+  }
+
+  if (req.body.email !== undefined) {
+    const normalizedEmail = String(req.body.email).trim().toLowerCase();
+    if (!EMAIL_PATTERN.test(normalizedEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid user email is required.",
+      });
+    }
+
+    const emailConflict = await findPlatformUserEmailConflict({
+      email: normalizedEmail,
+      userId: user._id,
+    });
+    if (emailConflict) {
+      return res.status(409).json({
+        success: false,
+        message: "Email address is already in use.",
+      });
+    }
+    user.email = normalizedEmail;
+    await user.save();
   }
 
   membership.role = nextRole;
