@@ -1,7 +1,11 @@
 import asyncHandler from "express-async-handler";
 import OrganizationMembership from "../models/organizationMembership.js";
 import App from "../models/app.js";
-import { normalizeOrganizationType } from "../utils/organizationTypes.js";
+import {
+  isDistributorOrganization,
+  normalizeOrganizationType,
+} from "../utils/organizationTypes.js";
+import { COMPANY_ACCESS_SOURCES } from "../services/companyAccessService.js";
 
 import {
   OrganizationServiceError,
@@ -59,13 +63,14 @@ const membershipResponse = (membership) => {
   };
 };
 
-const companyResponse = (company) => ({
+const companyResponse = (company, { accessSource = null } = {}) => ({
   companyId: company._id,
   organizationId: company.organizationId,
   name: company.name,
   displayName: company.displayName,
   slug: company.slug,
   isActive: company.isActive,
+  ...(accessSource ? { accessSource } : {}),
 });
 
 const distributorCompanyResponse = (result) => ({
@@ -312,7 +317,15 @@ export const getOrganizationCompanies = organizationHandler(
     });
     res.json({
       success: true,
-      companies: companies.map(companyResponse),
+      companies: companies.map((company) =>
+        companyResponse(company, {
+          accessSource:
+            isDistributorOrganization(req.organization) &&
+            ["owner", "admin"].includes(req.organizationMembership.role)
+              ? COMPANY_ACCESS_SOURCES.DISTRIBUTOR_DELEGATED
+              : null,
+        }),
+      ),
     });
   }
 );

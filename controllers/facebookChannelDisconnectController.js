@@ -4,7 +4,7 @@ import FacebookChannelConfig from "../models/facebookChannelConfig.js";
 export const disconnectFacebookChannel = asyncHandler(async (req, res) => {
   const membership = req.companyMembership;
 
-  if (membership.role !== "owner") {
+  if (!membership || membership.role !== "owner") {
     return res.status(403).json({
       success: false,
       message: "Only the company owner can disconnect Facebook.",

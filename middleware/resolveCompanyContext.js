@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 
-import CompanyMembership from "../models/companyMembership.js";
 import isAuthenticated from "./isAuthenticated.js";
+import resolveCompanyAccess from "../services/companyAccessService.js";
 
 const attachCompanyContext = async (req, res, next) => {
   const requestedCompanyId = String(req.get("x-company-id") || "").trim();
@@ -17,25 +17,13 @@ const attachCompanyContext = async (req, res, next) => {
     });
   }
 
-  const membershipFilter = {
+  const access = await resolveCompanyAccess({
     userId: req.userId,
-    status: "active",
-    ...(requestedCompanyId ? { companyId: requestedCompanyId } : {}),
-  };
-
-  const memberships = await CompanyMembership.find(membershipFilter).populate({
-    path: "companyId",
-    match: {
-      isActive: true,
-      isPlatformWorkspace: { $ne: true },
-    },
+    companyId: requestedCompanyId || null,
+    user: req.user || null,
   });
 
-  const activeMemberships = memberships.filter(
-    (membership) => membership.companyId
-  );
-
-  if (requestedCompanyId && !activeMemberships.length) {
+  if (requestedCompanyId && !access?.allowed) {
     return res.status(403).json({
       success: false,
       code: "COMPANY_ACCESS_DENIED",
@@ -43,7 +31,7 @@ const attachCompanyContext = async (req, res, next) => {
     });
   }
 
-  if (!activeMemberships.length) {
+  if (!access) {
     return res.status(404).json({
       success: false,
       code: "COMPANY_CONTEXT_NOT_FOUND",
@@ -51,7 +39,7 @@ const attachCompanyContext = async (req, res, next) => {
     });
   }
 
-  if (activeMemberships.length > 1) {
+  if (access.reason === "multiple_companies") {
     return res.status(409).json({
       success: false,
       code: "COMPANY_CONTEXT_REQUIRED",
@@ -59,10 +47,9 @@ const attachCompanyContext = async (req, res, next) => {
     });
   }
 
-  const companyMembership = activeMemberships[0];
-
-  req.companyMembership = companyMembership;
-  req.company = companyMembership.companyId;
+  req.companyAccess = access;
+  req.companyMembership = access.companyMembership;
+  req.company = access.company;
 
   return next();
 };

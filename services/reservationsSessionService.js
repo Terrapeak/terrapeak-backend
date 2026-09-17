@@ -51,6 +51,7 @@ export async function createReservationsSessionBootstrap({
   terraPeakUserId,
   company,
   companyRole,
+  accessSource = "direct_company_membership",
 }) {
   if (!company?.reservationBusinessId) {
     const error = new Error("Reservations is not mapped to this company.");
@@ -65,7 +66,9 @@ export async function createReservationsSessionBootstrap({
     throw error;
   }
 
-  const normalizedRole = normalizeCompanyRole(companyRole);
+  const operationalRole =
+    accessSource === "distributor_delegated_access" ? "admin" : companyRole;
+  const normalizedRole = normalizeCompanyRole(operationalRole);
   const compatibilityRole =
     RESERVATIONS_COMPATIBILITY_ROLE_BY_PLATFORM_ROLE[normalizedRole];
   const supabase = getSupabaseAdmin();
@@ -155,6 +158,7 @@ export async function createReservationsSessionBootstrap({
     businessId: company.reservationBusinessId,
     userId: terraPeakUserId,
     companyRole: normalizedRole,
+    accessSource,
   });
 
   return {
@@ -163,7 +167,9 @@ export async function createReservationsSessionBootstrap({
     businessId: Number(company.reservationBusinessId),
     businessSlug: company.reservationBusinessSlug || "",
     companyId: String(company._id),
-    companyRole: normalizedRole,
+    companyRole:
+      accessSource === "distributor_delegated_access" ? null : normalizedRole,
+    accessSource,
     reservationsCompatibilityRole: compatibilityRole,
     supabaseUserId: linkData.user.id,
   };

@@ -118,6 +118,9 @@ const buildReservationsServiceUrl = (company, installation) => {
 export const getMyCompanyApps = asyncHandler(async (req, res) => {
   const company = req.company;
   const companyRole = req.companyMembership?.role || "viewer";
+  const delegatedAccess =
+    req.companyAccess?.accessSource === "distributor_delegated_access";
+  const capabilityRole = delegatedAccess ? "admin" : companyRole;
 
   await ensureReservationsBusinessMapping(company);
 
@@ -168,8 +171,13 @@ export const getMyCompanyApps = asyncHandler(async (req, res) => {
       reservationBusinessSlug: isReservations
         ? company.reservationBusinessSlug || ""
         : "",
-      companyRole: isReservations ? companyRole : null,
-      capabilities: isReservations ? getReservationsCapabilities(companyRole) : null,
+      companyRole: isReservations && !delegatedAccess ? companyRole : null,
+      accessSource: isReservations
+        ? req.companyAccess?.accessSource || "direct_company_membership"
+        : null,
+      capabilities: isReservations
+        ? getReservationsCapabilities(capabilityRole)
+        : null,
       isCore: app.isCore,
       isComingSoon: app.isComingSoon,
       installed: Boolean(installation?.enabled),
@@ -195,6 +203,8 @@ export const getMyCompanyApps = asyncHandler(async (req, res) => {
 export const createReservationsSession = asyncHandler(async (req, res) => {
   const company = req.company;
   const companyRole = req.companyMembership?.role || "viewer";
+  const accessSource =
+    req.companyAccess?.accessSource || "direct_company_membership";
 
   await ensureReservationsBusinessMapping(company);
 
@@ -227,13 +237,16 @@ export const createReservationsSession = asyncHandler(async (req, res) => {
     terraPeakUserId: req.userId,
     company,
     companyRole,
+    accessSource,
   });
 
   return res.json({
     success: true,
     bootstrap: {
       ...bootstrap,
-      capabilities: getReservationsCapabilities(companyRole),
+      capabilities: getReservationsCapabilities(
+        accessSource === "distributor_delegated_access" ? "admin" : companyRole,
+      ),
     },
   });
 });
