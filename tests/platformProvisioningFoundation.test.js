@@ -9,11 +9,15 @@ import ChatbotSettings from "../models/chatbotSettings.js";
 import Company from "../models/company.js";
 import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import FacebookChannelConfig from "../models/facebookChannelConfig.js";
+import Organization from "../models/organization.js";
+import { reservationProvisioningStore } from "../provisioners/reservationProvisioner.js";
 
 const COMPANY_ID = "507f1f77bcf86cd799439011";
 const USER_ID = "507f191e810c19729de860ea";
 const INSTALLATION_ID = "507f191e810c19729de860eb";
 const OWNER_ID = "507f191e810c19729de860ec";
+const COMPANY_PROJECTION =
+  "_id slug plan billing billingSource organizationId installedApps displayName reservationBusinessSlug referencePrefix ownerUserId";
 
 const createCompany = (installedApps = []) => ({
   _id: COMPANY_ID,
@@ -73,20 +77,29 @@ const mockInstallationLifecycle = (t, appSlug) => {
   return { pendingInstallation, activeInstallation, updates };
 };
 
-const invokeEnable = async ({ t, app, company, activeInstallation }) => {
+const invokeEnable = async ({
+  t,
+  app,
+  company,
+  activeInstallation,
+  initialInstallation = null,
+}) => {
   let installationLookupCount = 0;
 
   t.mock.method(Company, "findById", (companyId) => {
     assert.equal(companyId, COMPANY_ID);
     return {
-      select: async () => company,
+      select: async (projection) => {
+        assert.equal(projection, COMPANY_PROJECTION);
+        return company;
+      },
     };
   });
   t.mock.method(App, "findById", async () => app);
   t.mock.method(CompanyAppInstallation, "findOne", async (filter) => {
     assert.deepEqual(filter, { companyId: COMPANY_ID, appSlug: app.slug });
     installationLookupCount += 1;
-    return installationLookupCount === 1 ? null : activeInstallation;
+    return installationLookupCount === 1 ? initialInstallation : activeInstallation;
   });
   t.mock.method(Company, "updateOne", async () => ({}));
 
@@ -108,6 +121,56 @@ const invokeEnable = async ({ t, app, company, activeInstallation }) => {
   );
 
   return response;
+};
+
+const mockReservationsProvisioning = (t) => {
+  const business = {
+    id: 10,
+    business_slug: "customer-company",
+    booking_model_version: 2,
+  };
+
+  t.mock.method(ChatbotSettings, "findOne", async () => null);
+  t.mock.method(
+    reservationProvisioningStore,
+    "createOrGetReservationBusiness",
+    async () => business,
+  );
+  t.mock.method(
+    reservationProvisioningStore,
+    "createOrUpdateBusinessProfile",
+    async () => ({ id: "profile-1" }),
+  );
+  t.mock.method(
+    reservationProvisioningStore,
+    "createOrUpdateRestaurantSettings",
+    async () => ({ id: "settings-1" }),
+  );
+  t.mock.method(
+    reservationProvisioningStore,
+    "createOrUpdateCanonicalRestaurantService",
+    async () => ({ id: "service-1" }),
+  );
+  t.mock.method(
+    reservationProvisioningStore,
+    "createOrUpdateReservationBusinessSettings",
+    async () => ({ id: "reservation-settings-1" }),
+  );
+  t.mock.method(
+    reservationProvisioningStore,
+    "activateCanonicalBookingModelIfEmpty",
+    async () => ({ business }),
+  );
+  t.mock.method(
+    reservationProvisioningStore,
+    "createOrUpdateRestaurantBranding",
+    async () => ({ id: "branding-1" }),
+  );
+  t.mock.method(
+    reservationProvisioningStore,
+    "applyReservationsTemplate",
+    async () => ({ id: "form-1" }),
+  );
 };
 
 test("active registry apps have manifests and technical installers use active slugs", () => {
@@ -218,6 +281,104 @@ test("enabling AI Assistant provisions ChatbotSettings", async (t) => {
   assert.equal(savedSettings.userId.toString(), OWNER_ID);
   assert.equal(savedSettings.brandName, "Customer Company");
   assert.deepEqual(company.installedApps, ["ai-assistant"]);
+});
+
+test("re-enabling Reservations uses inherited Organization billing", async (t) => {
+  const company = createCompany();
+  company.plan = "starter";
+  company.billing = { status: "not_configured", paymentStatus: "not_configured" };
+  company.billingSource = "organization";
+  company.organizationId = "organization-1";
+  const disabledInstallation = {
+    _id: INSTALLATION_ID,
+    companyId: COMPANY_ID,
+    appSlug: "reservations",
+    enabled: false,
+    status: "disabled",
+  };
+  const { activeInstallation, updates } = mockInstallationLifecycle(
+    t,
+    "reservations",
+  );
+
+  t.mock.method(Organization, "findById", () => ({
+    lean: async () => ({
+      _id: "organization-1",
+      billingMode: "organization",
+      plan: "enterprise",
+      billing: { status: "active", paymentStatus: "paid" },
+    }),
+  }));
+  mockReservationsProvisioning(t);
+
+  const response = await invokeEnable({
+    t,
+    company,
+    activeInstallation,
+    initialInstallation: disabledInstallation,
+    app: {
+      slug: "reservations",
+      name: "Reservations",
+      isCore: false,
+      isComingSoon: false,
+      allowInstall: true,
+      minimumPlan: "starter",
+    },
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.installation, activeInstallation);
+  assert.equal(updates.length, 2);
+  assert.deepEqual(updates[1].update.$set, {
+    enabled: true,
+    status: "active",
+    installedBy: USER_ID,
+  });
+  assert.deepEqual(company.installedApps, ["reservations"]);
+});
+
+test("re-enabling Reservations denies invalid inherited Organization billing", async (t) => {
+  const company = createCompany();
+  company.billingSource = "organization";
+  company.organizationId = "organization-1";
+  company.billing = { status: "not_configured" };
+  const disabledInstallation = {
+    _id: INSTALLATION_ID,
+    companyId: COMPANY_ID,
+    appSlug: "reservations",
+    enabled: false,
+    status: "disabled",
+  };
+  const { activeInstallation } = mockInstallationLifecycle(t, "reservations");
+
+  t.mock.method(Organization, "findById", () => ({
+    lean: async () => ({
+      _id: "organization-1",
+      billingMode: "organization",
+      plan: "enterprise",
+      billing: { status: "not_configured" },
+    }),
+  }));
+
+  const response = await invokeEnable({
+    t,
+    company,
+    activeInstallation,
+    initialInstallation: disabledInstallation,
+    app: {
+      slug: "reservations",
+      name: "Reservations",
+      isCore: false,
+      isComingSoon: false,
+      allowInstall: true,
+      minimumPlan: "starter",
+    },
+  });
+
+  assert.equal(response.statusCode, 409);
+  assert.equal(response.body.message, "Organization billing is not active for this Company.");
+  assert.equal(response.body.billingStatus, "not_configured");
+  assert.equal(response.body.plan, "enterprise");
 });
 
 test("existing AI Assistant configuration is reused", async (t) => {
