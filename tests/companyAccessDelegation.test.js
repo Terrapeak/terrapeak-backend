@@ -79,7 +79,8 @@ const mockDelegatedLookup = (
     selectedCompany &&
     selectedCompany.isActive === true &&
     selectedCompany.isPlatformWorkspace !== true &&
-    filter.isActive === true &&
+    (filter.isActive === true || filter.isActive?.$ne === false) &&
+    (filter.lifecycleStatus?.$ne === "archived" || !filter.lifecycleStatus) &&
     filter.isPlatformWorkspace?.$ne === true
       ? selectedCompany
       : null,
@@ -397,9 +398,27 @@ const setupEndpointMocks = (t, accessCase) => {
   process.env.SUPABASE_SERVICE_ROLE_KEY ||= "test-service-role-key";
   t.mock.method(User, "findById", async () => user());
   t.mock.method(CompanyMembership, "find", () =>
-    queryWithPopulate(accessCase.directMemberships || []),
+    queryWithPopulate(
+      (accessCase.directMemberships || []).filter(
+        (membership) =>
+          membership.companyId &&
+          membership.companyId.isActive !== false &&
+          membership.companyId.lifecycleStatus !== "archived",
+      ),
+    ),
   );
-  t.mock.method(Company, "findOne", async () => accessCase.selectedCompany || null);
+  t.mock.method(Company, "findOne", async (filter) => {
+    const selectedCompany = accessCase.selectedCompany;
+    if (!selectedCompany) return null;
+    if (
+      (filter.isActive?.$ne === false && selectedCompany.isActive === false) ||
+      (filter.lifecycleStatus?.$ne === "archived" &&
+        selectedCompany.lifecycleStatus === "archived")
+    ) {
+      return null;
+    }
+    return selectedCompany;
+  });
   t.mock.method(Organization, "findOne", async () => accessCase.selectedOrganization || null);
   t.mock.method(OrganizationMembership, "findOne", async (filter) => {
     const membership = accessCase.selectedOrganizationMembership;
@@ -416,8 +435,8 @@ const setupEndpointMocks = (t, accessCase) => {
   t.mock.method(ChatbotSettings, "findOne", async () => ({ _id: "settings-1", companyId: COMPANY_ID }));
 };
 
-const endpointRequest = () => ({
-  method: "GET",
+const endpointRequest = (method = "GET") => ({
+  method,
   userId: USER_ID,
   query: { summary: "1" },
   params: {},
@@ -460,6 +479,64 @@ test("real Company apps endpoint preserves direct customer access", async (t) =>
   await invokeRoute(router, "/apps", endpointRequest(), res);
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.success, true);
+});
+
+test("real Company apps endpoint denies archived delegated Companies", async (t) => {
+  setupEndpointMocks(t, {
+    selectedCompany: company({ lifecycleStatus: "archived", isActive: false }),
+    selectedOrganization: organization(),
+    selectedOrganizationMembership: organizationMembership({ role: "owner" }),
+    directMemberships: [],
+  });
+  const { default: router } = await import("../routes/company.js");
+  const res = routeResponse();
+  await invokeRoute(router, "/apps", endpointRequest(), res);
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.code, "COMPANY_ACCESS_DENIED");
+});
+
+test("real Company apps endpoint denies archived direct Companies", async (t) => {
+  setupEndpointMocks(t, {
+    selectedCompany: company({ lifecycleStatus: "archived", isActive: false }),
+    selectedOrganization: null,
+    selectedOrganizationMembership: null,
+    directMemberships: [
+      { companyId: company({ lifecycleStatus: "archived", isActive: false }), role: "owner", status: "active" },
+    ],
+  });
+  const { default: router } = await import("../routes/company.js");
+  const res = routeResponse();
+  await invokeRoute(router, "/apps", endpointRequest(), res);
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.code, "COMPANY_ACCESS_DENIED");
+});
+
+test("Reservations session bootstrap denies archived delegated Companies", async (t) => {
+  setupEndpointMocks(t, {
+    selectedCompany: company({ lifecycleStatus: "archived", isActive: false }),
+    selectedOrganization: organization(),
+    selectedOrganizationMembership: organizationMembership({ role: "owner" }),
+    directMemberships: [],
+  });
+  const { default: router } = await import("../routes/company.js");
+  const res = routeResponse();
+  await invokeRoute(router, "/apps/reservations/session", endpointRequest("POST"), res);
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.code, "COMPANY_ACCESS_DENIED");
+});
+
+test("AI Assistant Company settings deny archived delegated Companies", async (t) => {
+  setupEndpointMocks(t, {
+    selectedCompany: company({ lifecycleStatus: "archived", isActive: false }),
+    selectedOrganization: organization(),
+    selectedOrganizationMembership: organizationMembership({ role: "owner" }),
+    directMemberships: [],
+  });
+  const { default: router } = await import("../routes/chatbot.js");
+  const res = routeResponse();
+  await invokeRoute(router, "/settings", endpointRequest(), res);
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.code, "COMPANY_ACCESS_DENIED");
 });
 
 for (const deniedRole of ["member", "viewer"]) {

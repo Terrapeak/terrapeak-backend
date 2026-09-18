@@ -27,6 +27,10 @@ import {
   lookupInitialOwner,
 } from "../services/organizationService.js";
 import { createDistributorCompany } from "../services/distributorCompanyService.js";
+import {
+  archiveCompany,
+  restoreCompany,
+} from "../services/companyLifecycleService.js";
 
 export const organizationResponse = (organization) => ({
   organizationId: organization._id,
@@ -70,6 +74,10 @@ const companyResponse = (company, { accessSource = null } = {}) => ({
   displayName: company.displayName,
   slug: company.slug,
   isActive: company.isActive,
+  lifecycleStatus: company.lifecycleStatus || (company.isActive === false ? "archived" : "active"),
+  archivedAt: company.archivedAt || null,
+  archiveReason: company.archiveReason || "",
+  installedApps: company.installedApps || [],
   ...(accessSource ? { accessSource } : {}),
 });
 
@@ -95,6 +103,14 @@ const organizationHandler = (handler) =>
       await handler(req, res);
     } catch (error) {
       if (error instanceof OrganizationServiceError) {
+        return res.status(error.statusCode).json({
+          success: false,
+          code: error.code,
+          message: error.message,
+        });
+      }
+
+      if (error?.statusCode && error?.code) {
         return res.status(error.statusCode).json({
           success: false,
           code: error.code,
@@ -392,6 +408,38 @@ export const detachOrganizationCompany = organizationHandler(
     });
     res.json({ success: true, company: companyResponse(company) });
   }
+);
+
+export const archiveOrganizationCompany = organizationHandler(
+  async (req, res) => {
+    const result = await archiveCompany({
+      companyId: req.params.companyId,
+      organization: req.organization,
+      actorMembership: req.organizationMembership,
+      reason: req.body?.reason,
+    });
+    res.json({
+      success: true,
+      alreadyArchived: result.alreadyArchived,
+      company: companyResponse(result.company),
+    });
+  },
+);
+
+export const restoreOrganizationCompany = organizationHandler(
+  async (req, res) => {
+    const result = await restoreCompany({
+      companyId: req.params.companyId,
+      organization: req.organization,
+      actorMembership: req.organizationMembership,
+      reason: req.body?.reason,
+    });
+    res.json({
+      success: true,
+      alreadyActive: result.alreadyActive,
+      company: companyResponse(result.company),
+    });
+  },
 );
 
 export const getOrganizationMembers = organizationHandler(

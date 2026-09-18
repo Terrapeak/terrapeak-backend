@@ -13,6 +13,10 @@ import {
   resolveEffectiveBilling,
 } from "../services/companyAppAccessService.js";
 import installApps, { hasAppInstaller } from "../installers/installApps.js";
+import {
+  archiveCompany,
+  restoreCompany,
+} from "../services/companyLifecycleService.js";
 
 const ACTIVITY_LIMIT = 50;
 
@@ -77,6 +81,65 @@ const getCompanyActivityEvents = (company) =>
     }))
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .slice(0, ACTIVITY_LIMIT);
+
+const lifecycleCompanyResponse = (company) => ({
+  _id: company._id,
+  name: company.name,
+  displayName: company.displayName,
+  slug: company.slug,
+  email: company.email,
+  country: company.country,
+  organizationId: company.organizationId,
+  lifecycleStatus: company.lifecycleStatus || (company.isActive === false ? "archived" : "active"),
+  isActive: company.isActive !== false,
+  archivedAt: company.archivedAt || null,
+  archiveReason: company.archiveReason || "",
+  installedApps: company.installedApps || [],
+});
+
+const sendLifecycleError = (res, error) => {
+  if (!error?.statusCode || !error?.code) return false;
+  res.status(error.statusCode).json({
+    success: false,
+    code: error.code,
+    message: error.message,
+  });
+  return true;
+};
+
+export const archivePlatformCompany = asyncHandler(async (req, res) => {
+  try {
+    const result = await archiveCompany({
+      companyId: req.params.companyId,
+      actor: req.platformUser,
+      reason: req.body?.reason,
+    });
+    res.json({
+      success: true,
+      alreadyArchived: result.alreadyArchived,
+      company: lifecycleCompanyResponse(result.company),
+    });
+  } catch (error) {
+    if (!sendLifecycleError(res, error)) throw error;
+  }
+});
+
+export const restorePlatformCompany = asyncHandler(async (req, res) => {
+  try {
+    const result = await restoreCompany({
+      companyId: req.params.companyId,
+      actor: req.platformUser,
+      reason: req.body?.reason,
+    });
+    res.json({
+      success: true,
+      alreadyActive: result.alreadyActive,
+      company: lifecycleCompanyResponse(result.company),
+    });
+  } catch (error) {
+    if (!sendLifecycleError(res, error)) throw error;
+  }
+});
 
 const getSafeAIUsageSummary = () => ({
   messagesToday: 0,

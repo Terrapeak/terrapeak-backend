@@ -11,6 +11,7 @@ import {
 } from "../utils/roleSeparation.js";
 import {
   canSelfManageCompanyAssignments,
+  isDistributorOrganization,
   isOrganizationType,
   ORGANIZATION_TYPES,
 } from "../utils/organizationTypes.js";
@@ -885,7 +886,17 @@ export const listOrganizationCompanies = async ({
     );
   }
 
-  return Company.find({ organizationId: organization._id }).sort({
+  const canManageArchived =
+    isDistributorOrganization(organization) &&
+    (platformActor || ["owner", "admin"].includes(membership?.role));
+  const lifecycleFilter = canManageArchived
+    ? {}
+    : {
+        isActive: { $ne: false },
+        lifecycleStatus: { $ne: "archived" },
+      };
+
+  return Company.find({ organizationId: organization._id, ...lifecycleFilter }).sort({
     name: 1,
   });
 };
