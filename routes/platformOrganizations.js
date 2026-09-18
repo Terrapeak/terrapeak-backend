@@ -8,6 +8,8 @@ import {
   getPlatformOrganization,
   getPlatformOrganizations,
   lookupPlatformOrganizationOwner,
+  patchPlatformOrganizationOwner,
+  postPlatformOrganizationOwnerPasswordReset,
   patchPlatformOrganization,
 } from "../controllers/organizationController.js";
 import {
@@ -26,6 +28,11 @@ router.get("/owner-lookup", lookupPlatformOrganizationOwner);
 router.get("/", getPlatformOrganizations);
 router.get("/:organizationId", getPlatformOrganization);
 router.patch("/:organizationId", patchPlatformOrganization);
+router.patch("/:organizationId/owner", patchPlatformOrganizationOwner);
+router.post(
+  "/:organizationId/owner/password-reset",
+  postPlatformOrganizationOwnerPasswordReset,
+);
 router.get("/:organizationId/billing", getPlatformOrganizationBilling);
 router.patch("/:organizationId/billing", updatePlatformOrganizationBilling);
 router.post(

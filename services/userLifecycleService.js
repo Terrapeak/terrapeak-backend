@@ -79,9 +79,14 @@ export const issueInvitation = async ({ user, company, role }) => {
   return { expiresAt };
 };
 
-export const issuePasswordReset = async ({ user }) => {
+export const issuePasswordReset = async ({ user, sendEmailFn = sendEmail }) => {
   const token = createToken();
   const expiresAt = new Date(Date.now() + TOKEN_TTL_MS);
+  const previousResetState = {
+    passwordResetTokenHash: user.passwordResetTokenHash || null,
+    passwordResetExpiresAt: user.passwordResetExpiresAt || null,
+    passwordResetSentAt: user.passwordResetSentAt || null,
+  };
 
   user.passwordResetTokenHash = hashToken(token);
   user.passwordResetExpiresAt = expiresAt;
@@ -90,24 +95,42 @@ export const issuePasswordReset = async ({ user }) => {
 
   const resetUrl = `${getCustomerDashboardUrl()}/account/setup?mode=reset&token=${token}`;
 
-  await sendEmail({
-    to: user.email,
-    subject: "Reset your Terrapeak password",
-    text: `Reset your Terrapeak password here: ${resetUrl}`,
-    html: `
-      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #172033;">
-        <h2 style="color:#1d3e5e;">Reset your Terrapeak password</h2>
-        <p>Hi <b>${user.name}</b>,</p>
-        <p>A password reset was requested for your Terrapeak account.</p>
-        <p>
-          <a href="${resetUrl}" style="display:inline-block;background:#2f5d50;color:#ffffff;padding:12px 18px;border-radius:8px;text-decoration:none;font-weight:bold;">
-            Reset password
-          </a>
-        </p>
-        <p>This link expires in 24 hours.</p>
-      </div>
-    `,
-  });
+  try {
+    await sendEmailFn({
+      to: user.email,
+      subject: "Reset your Terrapeak password",
+      text: `Reset your Terrapeak password here: ${resetUrl}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #172033;">
+          <h2 style="color:#1d3e5e;">Reset your Terrapeak password</h2>
+          <p>Hi <b>${user.name}</b>,</p>
+          <p>A password reset was requested for your Terrapeak account.</p>
+          <p>
+            <a href="${resetUrl}" style="display:inline-block;background:#2f5d50;color:#ffffff;padding:12px 18px;border-radius:8px;text-decoration:none;font-weight:bold;">
+              Reset password
+            </a>
+          </p>
+          <p>This link expires in 24 hours.</p>
+        </div>
+      `,
+    });
+  } catch (error) {
+    user.passwordResetTokenHash = previousResetState.passwordResetTokenHash;
+    user.passwordResetExpiresAt = previousResetState.passwordResetExpiresAt;
+    user.passwordResetSentAt = previousResetState.passwordResetSentAt;
+    try {
+      await user.save();
+    } catch (compensationError) {
+      const consistencyError = new Error(
+        "The password reset state may have partially applied and requires review.",
+      );
+      consistencyError.code = "PASSWORD_RESET_CONSISTENCY_FAILURE";
+      consistencyError.statusCode = 500;
+      consistencyError.cause = compensationError;
+      throw consistencyError;
+    }
+    throw error;
+  }
 
   return { expiresAt };
 };
