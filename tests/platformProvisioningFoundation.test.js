@@ -17,7 +17,7 @@ const USER_ID = "507f191e810c19729de860ea";
 const INSTALLATION_ID = "507f191e810c19729de860eb";
 const OWNER_ID = "507f191e810c19729de860ec";
 const COMPANY_PROJECTION =
-  "_id slug plan billing billingSource organizationId installedApps displayName reservationBusinessSlug referencePrefix ownerUserId";
+  "_id slug plan billing billingSource organizationId reservationTemplate installedApps displayName reservationBusinessSlug referencePrefix ownerUserId";
 
 const createCompany = (installedApps = []) => ({
   _id: COMPANY_ID,
@@ -123,7 +123,7 @@ const invokeEnable = async ({
   return response;
 };
 
-const mockReservationsProvisioning = (t) => {
+const mockReservationsProvisioning = (t, { general = false } = {}) => {
   const business = {
     id: 10,
     business_slug: "customer-company",
@@ -144,7 +144,10 @@ const mockReservationsProvisioning = (t) => {
   t.mock.method(
     reservationProvisioningStore,
     "createOrUpdateRestaurantSettings",
-    async () => ({ id: "settings-1" }),
+    async () => {
+      assert.equal(general, false);
+      return { id: "settings-1" };
+    },
   );
   t.mock.method(
     reservationProvisioningStore,
@@ -285,6 +288,7 @@ test("enabling AI Assistant provisions ChatbotSettings", async (t) => {
 
 test("re-enabling Reservations uses inherited Organization billing", async (t) => {
   const company = createCompany();
+  company.reservationTemplate = "general";
   company.plan = "starter";
   company.billing = { status: "not_configured", paymentStatus: "not_configured" };
   company.billingSource = "organization";
@@ -309,7 +313,7 @@ test("re-enabling Reservations uses inherited Organization billing", async (t) =
       billing: { status: "active", paymentStatus: "paid" },
     }),
   }));
-  mockReservationsProvisioning(t);
+  mockReservationsProvisioning(t, { general: true });
 
   const response = await invokeEnable({
     t,
@@ -335,6 +339,37 @@ test("re-enabling Reservations uses inherited Organization billing", async (t) =
     installedBy: USER_ID,
   });
   assert.deepEqual(company.installedApps, ["reservations"]);
+  assert.equal(company.reservationTemplate, "general");
+});
+
+test("re-enabling legacy restaurant Reservations remains compatible", async (t) => {
+  const company = createCompany();
+  const { activeInstallation } = mockInstallationLifecycle(t, "reservations");
+  mockReservationsProvisioning(t);
+
+  const response = await invokeEnable({
+    t,
+    company,
+    activeInstallation,
+    initialInstallation: {
+      _id: INSTALLATION_ID,
+      companyId: COMPANY_ID,
+      appSlug: "reservations",
+      enabled: false,
+      status: "disabled",
+    },
+    app: {
+      slug: "reservations",
+      name: "Reservations",
+      isCore: false,
+      isComingSoon: false,
+      allowInstall: true,
+      minimumPlan: "starter",
+    },
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.installation, activeInstallation);
 });
 
 test("re-enabling Reservations denies invalid inherited Organization billing", async (t) => {

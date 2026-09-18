@@ -527,7 +527,7 @@ export const toggleCompanyApp = asyncHandler(async (req, res) => {
   const { companyId, appId } = req.params;
 
   const company = await Company.findById(companyId).select(
-    "_id slug plan billing billingSource organizationId installedApps displayName reservationBusinessSlug referencePrefix ownerUserId"
+    "_id slug plan billing billingSource organizationId reservationTemplate installedApps displayName reservationBusinessSlug referencePrefix ownerUserId"
   );
   if (!company) {
     return res.status(404).json({

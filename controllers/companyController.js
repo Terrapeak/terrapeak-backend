@@ -141,7 +141,9 @@ export const getMyCompanyApps = asyncHandler(async (req, res) => {
 
   const reservationsInstallation = installedMap.get("reservations");
   const reservationsReadiness = reservationsInstallation?.enabled
-    ? await getCanonicalReservationsReadiness(company.reservationBusinessId)
+    ? await getCanonicalReservationsReadiness(company.reservationBusinessId, {
+        reservationTemplate: company.reservationTemplate,
+      })
     : { ready: false };
 
   const result = apps.map((app) => {
@@ -223,6 +225,7 @@ export const createReservationsSession = asyncHandler(async (req, res) => {
 
   const readiness = await getCanonicalReservationsReadiness(
     company.reservationBusinessId,
+    { reservationTemplate: company.reservationTemplate },
   );
   if (!readiness.ready) {
     return res.status(409).json({
