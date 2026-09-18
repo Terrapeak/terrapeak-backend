@@ -10,6 +10,8 @@ import {
   toggleCompanyApp,
   getPlatformApps,
   updatePlatformApp,
+  archivePlatformCompany,
+  restorePlatformCompany,
 } from "../controllers/platformAdminController.js";
 import {
   updatePlatformCompany,
@@ -59,6 +61,8 @@ router.get("/onboarding/options", isPlatformAuthenticated, isPlatformAdmin, getP
 router.post("/onboarding", isPlatformAuthenticated, isPlatformAdmin, onboardPlatformCustomer);
 router.get("/companies/search", isPlatformAuthenticated, isPlatformAdmin, searchPlatformCompanies);
 router.get("/companies/:companyId", isPlatformAuthenticated, isPlatformAdmin, getPlatformCompanyDetail);
+router.post("/companies/:companyId/archive", isPlatformAuthenticated, isPlatformAdmin, archivePlatformCompany);
+router.post("/companies/:companyId/restore", isPlatformAuthenticated, isPlatformAdmin, restorePlatformCompany);
 router.get("/companies/:companyId/users", isPlatformAuthenticated, isPlatformAdmin, listPlatformCompanyUsers);
 router.get("/companies/:companyId/effective-billing", isPlatformAuthenticated, isPlatformAdmin, getPlatformCompanyEffectiveBilling);
 router.patch("/companies/:companyId", isPlatformAuthenticated, isPlatformAdmin, updatePlatformCompany);

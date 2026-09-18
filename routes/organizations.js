@@ -2,6 +2,7 @@ import express from "express";
 
 import {
   attachOrganizationCompany,
+  archiveOrganizationCompany,
   createOrganizationMember,
   createDistributorOrganizationCompany,
   getDistributorCompanyOptions,
@@ -13,6 +14,7 @@ import {
   getOrganizationMembers,
   patchOrganization,
   patchOrganizationMember,
+  restoreOrganizationCompany,
 } from "../controllers/organizationController.js";
 import isAuthenticated from "../middleware/isAuthenticated.js";
 import resolveOrganizationContext, {
@@ -67,6 +69,18 @@ router.delete(
   ...organizationContext,
   requireOrganizationRole("owner", "admin"),
   detachOrganizationCompany
+);
+router.post(
+  "/:organizationId/companies/:companyId/archive",
+  ...organizationContext,
+  requireOrganizationRole("owner", "admin"),
+  archiveOrganizationCompany,
+);
+router.post(
+  "/:organizationId/companies/:companyId/restore",
+  ...organizationContext,
+  requireOrganizationRole("owner", "admin"),
+  restoreOrganizationCompany,
 );
 router.get(
   "/:organizationId/members",

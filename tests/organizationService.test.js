@@ -900,7 +900,11 @@ test("Organization role alone cannot claim an unassigned Company", async (t) => 
 test("Company listing is strictly filtered by Organization", async (t) => {
   const companies = [{ _id: COMPANY_ID, organizationId: ORGANIZATION_ID }];
   t.mock.method(Company, "find", (filter) => {
-    assert.deepEqual(filter, { organizationId: ORGANIZATION_ID });
+    assert.deepEqual(filter, {
+      organizationId: ORGANIZATION_ID,
+      isActive: { $ne: false },
+      lifecycleStatus: { $ne: "archived" },
+    });
     return {
       sort: async () => companies,
     };

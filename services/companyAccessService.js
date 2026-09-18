@@ -13,7 +13,8 @@ const DISTRIBUTOR_ADMIN_ROLES = new Set(["owner", "admin"]);
 
 const activeCompanyQuery = (companyId) => ({
   _id: companyId,
-  isActive: true,
+  isActive: { $ne: false },
+  lifecycleStatus: { $ne: "archived" },
   isPlatformWorkspace: { $ne: true },
 });
 
@@ -72,8 +73,9 @@ export const resolveCompanyAccess = async ({
     ...(companyId ? { companyId } : {}),
   }).populate({
     path: "companyId",
-    match: {
-      isActive: true,
+      match: {
+      isActive: { $ne: false },
+      lifecycleStatus: { $ne: "archived" },
       isPlatformWorkspace: { $ne: true },
     },
   });

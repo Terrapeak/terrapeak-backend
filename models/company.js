@@ -90,6 +90,24 @@ const CompanySchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    lifecycleStatus: {
+      type: String,
+      enum: ["active", "archived"],
+      default: "active",
+      index: true,
+    },
+    archivedAt: { type: Date, default: null },
+    archivedByUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    archiveReason: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+      default: "",
+    },
     isActive: { type: Boolean, default: true },
     isPlatformWorkspace: { type: Boolean, default: false },
     activityEvents: {
@@ -115,6 +133,17 @@ const CompanySchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+
+CompanySchema.pre("save", function synchronizeCompanyLifecycle(next) {
+  if (this.lifecycleStatus === "archived" || this.isActive === false) {
+    this.lifecycleStatus = "archived";
+    this.isActive = false;
+  } else {
+    this.lifecycleStatus = "active";
+    this.isActive = true;
+  }
+  next();
+});
 
 CompanySchema.index({ organizationId: 1, billingSource: 1 });
 

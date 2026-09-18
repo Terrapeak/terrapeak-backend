@@ -260,7 +260,14 @@ export const getMyCompanies = asyncHandler(async (req, res) => {
   const memberships = await CompanyMembership.find({
     userId,
     status: "active",
-  }).populate("companyId");
+  }).populate({
+    path: "companyId",
+    match: {
+      isActive: { $ne: false },
+      lifecycleStatus: { $ne: "archived" },
+      isPlatformWorkspace: { $ne: true },
+    },
+  });
 
   const companies = memberships
     .filter((membership) => membership.companyId)
