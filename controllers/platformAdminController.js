@@ -8,7 +8,10 @@ import App from "../models/app.js";
 import ChatbotSettings from "../models/chatbotSettings.js";
 import Session from "../models/sessionModel.js";
 import ReservationStaffRequest from "../models/reservationStaffRequest.js";
-import { canEnableCompanyApp } from "../services/companyAppAccessService.js";
+import {
+  canEnableCompanyApp,
+  resolveEffectiveBilling,
+} from "../services/companyAppAccessService.js";
 import installApps, { hasAppInstaller } from "../installers/installApps.js";
 
 const ACTIVITY_LIMIT = 50;
@@ -554,9 +557,11 @@ const isBeingEnabled =
   !installation || !installation.enabled;
 
 if (isBeingEnabled) {
+  const effectiveBilling = await resolveEffectiveBilling(company);
   const access = canEnableCompanyApp({
     company,
     app,
+    effectiveBilling,
   });
 
   if (!access.allowed) {
@@ -565,9 +570,9 @@ if (isBeingEnabled) {
       code: "APP_BILLING_RESTRICTION",
       message: access.reason,
       billingStatus:
-        company.billing?.status ||
+        effectiveBilling.billing?.status ||
         "not_configured",
-      plan: company.plan || "starter",
+      plan: effectiveBilling.plan || "starter",
       minimumPlan:
         app.minimumPlan || null,
     });

@@ -167,3 +167,71 @@ test("Distributor creation returns the fresh Company after provisioning changes 
   assert.equal(result.company, freshCompany);
   assert.equal(result.membership.role, "owner");
 });
+
+test("Distributor creation preserves selected Reservations through normalization and response", async (t) => {
+  const owner = {
+    _id: "user-1",
+    name: "Customer Owner",
+    email: "owner@example.com",
+    phone: "+15550000001",
+    platformRole: "none",
+  };
+  const company = {
+    _id: "company-1",
+    name: "Customer Company",
+    displayName: "Customer Company",
+    slug: "customer-company",
+    organizationId: "organization-1",
+    billingSource: "organization",
+    installedApps: [],
+  };
+  const appQuery = {
+    select: () => appQuery,
+    lean: async () => [
+      { slug: "ai-assistant", isCore: true, dependencies: [] },
+      { slug: "reservations", isCore: false, dependencies: [] },
+    ],
+  };
+  let provisioningInput;
+
+  t.mock.method(App, "find", () => appQuery);
+  t.mock.method(User, "findOne", async () => owner);
+  t.mock.method(Company, "findOne", () => ({
+    select: () => ({ lean: async () => null }),
+  }));
+  t.mock.method(Company, "create", async () => company);
+  t.mock.method(Company, "findById", async () => ({
+    ...company,
+    installedApps: ["ai-assistant", "reservations"],
+  }));
+  t.mock.method(CompanyMembership, "create", async (input) => input);
+
+  const result = await createDistributorCompany({
+    organization: {
+      _id: "organization-1",
+      organizationType: "distributor",
+      status: "active",
+      isActive: true,
+      billingMode: "organization",
+      plan: "enterprise",
+      billing: { maxCompanies: null },
+    },
+    actorMembership: { role: "owner", status: "active" },
+    input: {
+      company: { name: "Customer Company", slug: "customer-company" },
+      owner: { email: owner.email },
+      installedApps: ["reservations"],
+    },
+    provisionCompanyFn: async (input) => {
+      provisioningInput = input;
+      return {
+        installedApps: ["ai-assistant", "reservations"],
+        alreadyInstalledApps: [],
+      };
+    },
+  });
+
+  assert.deepEqual(provisioningInput.requestedAppSlugs, ["ai-assistant", "reservations"]);
+  assert.deepEqual(result.installedApps, ["ai-assistant", "reservations"]);
+  assert.deepEqual(result.company.installedApps, ["ai-assistant", "reservations"]);
+});
