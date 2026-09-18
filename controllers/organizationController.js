@@ -31,6 +31,10 @@ import {
   archiveCompany,
   restoreCompany,
 } from "../services/companyLifecycleService.js";
+import {
+  sendOrganizationOwnerPasswordReset,
+  updateOrganizationOwner,
+} from "../services/organizationOwnerService.js";
 
 export const organizationResponse = (organization) => ({
   organizationId: organization._id,
@@ -408,6 +412,37 @@ export const detachOrganizationCompany = organizationHandler(
     });
     res.json({ success: true, company: companyResponse(company) });
   }
+);
+
+export const patchPlatformOrganizationOwner = organizationHandler(
+  async (req, res) => {
+    const user = await updateOrganizationOwner({
+      actor: req.platformUser,
+      organizationId: req.params.organizationId,
+      updates: req.body || {},
+    });
+    res.json({
+      success: true,
+      owner: {
+        userId: user._id,
+        name: user.name,
+        email: user.email,
+      },
+    });
+  },
+);
+
+export const postPlatformOrganizationOwnerPasswordReset = organizationHandler(
+  async (req, res) => {
+    await sendOrganizationOwnerPasswordReset({
+      actor: req.platformUser,
+      organizationId: req.params.organizationId,
+    });
+    res.json({
+      success: true,
+      message: "Password reset email sent.",
+    });
+  },
 );
 
 export const archiveOrganizationCompany = organizationHandler(
