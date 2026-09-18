@@ -123,6 +123,110 @@ test("Dashboard access fails closed before canonical readiness", async () => {
   );
 
   assert.match(source, /getCanonicalReservationsReadiness/);
+  assert.match(source, /reservationTemplate: company\.reservationTemplate/);
   assert.match(source, /RESERVATIONS_NOT_CONFIGURED/);
   assert.match(source, /reservationsReadiness\.ready/);
+});
+
+const createReadinessStore = ({
+  business = { id: 10, booking_model_version: 2 },
+  profile = { id: "profile-1" },
+  settings = null,
+  branding = { id: "branding-1" },
+  reservationSettings = {
+    template_key: "general",
+    capabilities: { services: true },
+    terminology: { bookingSingular: "Booking" },
+  },
+} = {}) => ({
+  async findReservationBusinessById() {
+    return { data: business, error: null };
+  },
+  async getReservationProvisioningRecords() {
+    return { profile, settings, branding, reservationSettings };
+  },
+});
+
+test("general Reservations readiness uses reservation business settings", async () => {
+  const readiness = await getCanonicalReservationsReadiness(10, {
+    reservationTemplate: "general",
+    store: createReadinessStore(),
+  });
+
+  assert.deepEqual(readiness, { ready: true, reason: null });
+});
+
+test("general Reservations readiness requires matching configuration", async () => {
+  const missingSettings = await getCanonicalReservationsReadiness(10, {
+    reservationTemplate: "general",
+    store: createReadinessStore({ reservationSettings: null }),
+  });
+  const wrongTemplate = await getCanonicalReservationsReadiness(10, {
+    reservationTemplate: "general",
+    store: createReadinessStore({
+      reservationSettings: {
+        template_key: "restaurant",
+        capabilities: { services: false },
+        terminology: { bookingSingular: "Reservation" },
+      },
+    }),
+  });
+
+  assert.deepEqual(missingSettings, {
+    ready: false,
+    reason: "provisioning-incomplete",
+  });
+  assert.deepEqual(wrongTemplate, {
+    ready: false,
+    reason: "provisioning-incomplete",
+  });
+});
+
+test("general Reservations readiness still requires universal records", async () => {
+  for (const overrides of [
+    { business: null },
+    { business: { id: 10, booking_model_version: 1 } },
+    { profile: null },
+    { branding: null },
+  ]) {
+    const readiness = await getCanonicalReservationsReadiness(10, {
+      reservationTemplate: "general",
+      store: createReadinessStore(overrides),
+    });
+
+    assert.equal(readiness.ready, false);
+  }
+});
+
+test("restaurant Reservations readiness still requires restaurant settings", async () => {
+  const complete = await getCanonicalReservationsReadiness(10, {
+    reservationTemplate: "restaurant",
+    store: createReadinessStore({ settings: { timezone: "UTC" } }),
+  });
+  const missingTimezone = await getCanonicalReservationsReadiness(10, {
+    reservationTemplate: "restaurant",
+    store: createReadinessStore({ settings: {} }),
+  });
+  const generalOnly = await getCanonicalReservationsReadiness(10, {
+    reservationTemplate: "restaurant",
+    store: createReadinessStore({ settings: null }),
+  });
+
+  assert.deepEqual(complete, { ready: true, reason: null });
+  assert.deepEqual(missingTimezone, {
+    ready: false,
+    reason: "provisioning-incomplete",
+  });
+  assert.deepEqual(generalOnly, {
+    ready: false,
+    reason: "provisioning-incomplete",
+  });
+});
+
+test("missing reservationTemplate preserves legacy restaurant readiness", async () => {
+  const readiness = await getCanonicalReservationsReadiness(10, {
+    store: createReadinessStore({ settings: { timezone: "UTC" } }),
+  });
+
+  assert.deepEqual(readiness, { ready: true, reason: null });
 });

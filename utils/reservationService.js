@@ -3,7 +3,10 @@ import { createClient } from "@supabase/supabase-js";
 import { DateTime } from "luxon";
 import { randomUUID } from "node:crypto";
 import { logReservationsOperation } from "./reservationsOperationalLog.js";
-import { resolveReservationsConfiguration } from "./reservationConfiguration.js";
+import {
+  normalizeReservationsTemplateKey,
+  resolveReservationsConfiguration,
+} from "./reservationConfiguration.js";
 import { getReservationTemplateServiceDefaults } from "./reservationTemplateDefaults.js";
 
 dotenv.config();
@@ -89,7 +92,7 @@ export async function getReservationProvisioningRecords(businessId, { templateKe
     return { profile: null, settings: null, branding: null, service: null };
   }
 
-  const [profile, settings, branding, serviceResult] = await Promise.all([
+  const [profile, settings, branding, serviceResult, reservationSettings] = await Promise.all([
     findByBusinessId("business_profile", businessId),
     findByBusinessId("restaurant_settings", businessId),
     findByBusinessId("restaurant_branding", businessId),
@@ -104,28 +107,49 @@ export async function getReservationProvisioningRecords(businessId, { templateKe
       .order("id", { ascending: true })
       .limit(1)
       .maybeSingle(),
+    findByBusinessId("reservation_business_settings", businessId),
   ]);
 
   if (serviceResult.error) {
     throw new Error("Could not load canonical restaurant service");
   }
 
-  return { profile, settings, branding, service: serviceResult.data || null };
+  return {
+    profile,
+    settings,
+    branding,
+    service: serviceResult.data || null,
+    reservationSettings,
+  };
 }
 
-export async function getCanonicalReservationsReadiness(businessId) {
+export async function getCanonicalReservationsReadiness(
+  businessId,
+  { reservationTemplate, store = null } = {},
+) {
   const numericBusinessId = Number(businessId);
   if (!Number.isFinite(numericBusinessId) || numericBusinessId <= 0) {
     return { ready: false, reason: "missing-business-mapping" };
   }
 
-  const [{ data: business, error: businessError }, records] = await Promise.all([
-    supabase
+  const findBusiness = store?.findReservationBusinessById || (async (id) => {
+    const { data, error } = await supabase
       .from("businesses")
       .select("id, booking_model_version")
-      .eq("id", numericBusinessId)
-      .maybeSingle(),
-    getReservationProvisioningRecords(numericBusinessId),
+      .eq("id", id)
+      .maybeSingle();
+    return { data, error };
+  });
+  const getRecords =
+    store?.getReservationProvisioningRecords || getReservationProvisioningRecords;
+  const [{ data: business, error: businessError }, records] = await Promise.all([
+    findBusiness(numericBusinessId),
+    getRecords(numericBusinessId, {
+      templateKey:
+        reservationTemplate === undefined
+          ? "restaurant"
+          : normalizeReservationsTemplateKey(reservationTemplate),
+    }),
   ]);
 
   if (businessError) {
@@ -136,7 +160,21 @@ export async function getCanonicalReservationsReadiness(businessId) {
   if (Number(business.booking_model_version || 1) < 2) {
     return { ready: false, reason: "canonical-model-not-active" };
   }
-  if (!records.profile || !records.settings?.timezone || !records.branding) {
+
+  const templateKey =
+    reservationTemplate === undefined
+      ? "restaurant"
+      : normalizeReservationsTemplateKey(reservationTemplate);
+  const templateReady =
+    templateKey === "restaurant"
+      ? Boolean(records.settings?.timezone)
+      : Boolean(
+          records.reservationSettings?.template_key === templateKey &&
+            Object.keys(records.reservationSettings?.capabilities || {}).length &&
+            Object.keys(records.reservationSettings?.terminology || {}).length,
+        );
+
+  if (!records.profile || !templateReady || !records.branding) {
     return { ready: false, reason: "provisioning-incomplete" };
   }
   return { ready: true, reason: null };
