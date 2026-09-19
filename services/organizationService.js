@@ -497,6 +497,39 @@ export const readPlatformOrganization = async ({
   return getOrganizationOrThrow(organizationId);
 };
 
+const PLATFORM_MEMBER_ROLE_ORDER = {
+  owner: 0,
+  admin: 1,
+  manager: 2,
+  member: 3,
+  viewer: 4,
+};
+
+export const listPlatformOrganizationMembers = async ({
+  actor,
+  organizationId,
+}) => {
+  assertPlatformOrganizationAdmin(actor);
+  await getOrganizationOrThrow(organizationId);
+
+  const memberships = await OrganizationMembership.find({ organizationId })
+    .populate("userId", "_id name email")
+    .sort({ createdAt: 1 });
+
+  return memberships.sort((left, right) => {
+    const roleDifference =
+      (PLATFORM_MEMBER_ROLE_ORDER[left.role] ?? Number.MAX_SAFE_INTEGER) -
+      (PLATFORM_MEMBER_ROLE_ORDER[right.role] ?? Number.MAX_SAFE_INTEGER);
+    if (roleDifference !== 0) return roleDifference;
+
+    const leftUser = left.userId && typeof left.userId === "object" ? left.userId : {};
+    const rightUser = right.userId && typeof right.userId === "object" ? right.userId : {};
+    const nameDifference = String(leftUser.name || "").localeCompare(String(rightUser.name || ""));
+    if (nameDifference !== 0) return nameDifference;
+    return String(leftUser.email || "").localeCompare(String(rightUser.email || ""));
+  });
+};
+
 const applyOrganizationUpdates = async (
   organization,
   updates,

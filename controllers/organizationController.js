@@ -15,6 +15,7 @@ import {
   listAvailableOrganizations,
   listOrganizationCompanies,
   listOrganizationMembers,
+  listPlatformOrganizationMembers,
   listPlatformOrganizations,
   readOrganization,
   readPlatformOrganization,
@@ -77,6 +78,23 @@ const membershipResponse = (membership, userOverride = null) => {
     isActive: membership.isActive,
     createdAt: membership.createdAt,
     updatedAt: membership.updatedAt,
+  };
+};
+
+export const platformMembershipResponse = (membership) => {
+  const user =
+    membership.userId && typeof membership.userId === "object"
+      ? membership.userId
+      : null;
+
+  return {
+    membershipId: membership._id,
+    userId: user?._id || membership.userId,
+    name: user?.name || "",
+    email: user?.email || "",
+    role: membership.role,
+    status: membership.status,
+    isActive: membership.isActive,
   };
 };
 
@@ -229,10 +247,15 @@ export const getPlatformOrganization = organizationHandler(
     if (activeOwner) {
       await activeOwner.populate("userId", "_id name email");
     }
+    const members = await listPlatformOrganizationMembers({
+      actor: req.platformUser,
+      organizationId: organization._id,
+    });
     res.json({
       success: true,
       organization: organizationResponse(organization),
       activeOwner: activeOwner ? membershipResponse(activeOwner) : null,
+      members: members.map(platformMembershipResponse),
     });
   }
 );

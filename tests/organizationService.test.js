@@ -13,6 +13,7 @@ import {
   lookupInitialOwner,
   listOrganizationCompanies,
   listOrganizationMembers,
+  listPlatformOrganizationMembers,
   removeCompanyFromOrganization,
   removeOrganizationMember,
   updateOrganization,
@@ -661,6 +662,82 @@ test("Organization manager may list members", async (t) => {
     membership: membership("manager"),
   });
   assert.equal(result, members);
+});
+
+test("platform Organization member listing is scoped, safe, and sorted with removed members", async (t) => {
+  const members = [
+    {
+      _id: "64b000000000000000000009",
+      organizationId: ORGANIZATION_ID,
+      userId: {
+        _id: "64b000000000000000000010",
+        name: "Member User",
+        email: "member@example.com",
+        password: "never-returned",
+        resetTokenHash: "never-returned",
+      },
+      role: "member",
+      status: "active",
+      isActive: true,
+    },
+    {
+      _id: "64b000000000000000000011",
+      organizationId: ORGANIZATION_ID,
+      userId: {
+        _id: "64b000000000000000000012",
+        name: "Former Owner",
+        email: "former@example.com",
+        oauthTokens: "never-returned",
+      },
+      role: "member",
+      status: "removed",
+      isActive: false,
+    },
+    {
+      _id: "64b000000000000000000013",
+      organizationId: ORGANIZATION_ID,
+      userId: {
+        _id: "64b000000000000000000014",
+        name: "Current Owner",
+        email: "owner@example.com",
+      },
+      role: "owner",
+      status: "active",
+      isActive: true,
+    },
+  ];
+  t.mock.method(Organization, "findById", async () => organization());
+  t.mock.method(OrganizationMembership, "find", (filter) => {
+    assert.deepEqual(filter, { organizationId: ORGANIZATION_ID });
+    return {
+      populate: (path, select) => {
+        assert.equal(path, "userId");
+        assert.equal(select, "_id name email");
+        return { sort: async () => members };
+      },
+    };
+  });
+
+  const result = await listPlatformOrganizationMembers({
+    actor: platformActor(),
+    organizationId: ORGANIZATION_ID,
+  });
+
+  assert.deepEqual(result.map((entry) => entry.role), ["owner", "member", "member"]);
+  assert.equal(result[1].status, "removed");
+  assert.equal(result[0].userId.name, "Current Owner");
+  assert.equal(result[2].userId.email, "member@example.com");
+});
+
+test("platform Organization member listing rejects non-platform users", async () => {
+  await assert.rejects(
+    () =>
+      listPlatformOrganizationMembers({
+        actor: { _id: USER_ID, platformRole: "none" },
+        organizationId: ORGANIZATION_ID,
+      }),
+    (error) => error.code === "PLATFORM_ROLE_REQUIRED",
+  );
 });
 
 test("final active Organization owner cannot be removed", async (t) => {
