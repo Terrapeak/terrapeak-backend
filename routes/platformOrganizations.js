@@ -12,6 +12,9 @@ import {
   postPlatformOrganizationOwnerPasswordReset,
   getPlatformOrganizationOwnerCandidates,
   postPlatformOrganizationOwnerTransfer,
+  postPlatformOrganizationMember,
+  patchPlatformOrganizationMember,
+  deletePlatformOrganizationMember,
   patchPlatformOrganization,
 } from "../controllers/organizationController.js";
 import {
@@ -43,6 +46,9 @@ router.post(
   "/:organizationId/owner/transfer",
   postPlatformOrganizationOwnerTransfer,
 );
+router.post("/:organizationId/members", postPlatformOrganizationMember);
+router.patch("/:organizationId/members/:membershipId", patchPlatformOrganizationMember);
+router.delete("/:organizationId/members/:membershipId", deletePlatformOrganizationMember);
 router.get("/:organizationId/billing", getPlatformOrganizationBilling);
 router.patch("/:organizationId/billing", updatePlatformOrganizationBilling);
 router.post(

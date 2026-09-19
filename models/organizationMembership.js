@@ -59,6 +59,12 @@ const OrganizationMembershipSchema = new mongoose.Schema(
       default: true,
     },
 
+    memberManagementVersion: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
     invitedByUserId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
