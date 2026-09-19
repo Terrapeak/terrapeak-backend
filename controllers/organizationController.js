@@ -40,6 +40,11 @@ import {
   transferOrganizationOwner,
 } from "../services/organizationOwnerTransferService.js";
 import {
+  addPlatformOrganizationMember,
+  removePlatformOrganizationMember,
+  updatePlatformOrganizationMember,
+} from "../services/platformOrganizationMemberService.js";
+import {
   ORGANIZATION_OWNER_INTEGRITY,
   organizationOwnerIntegrityError,
   resolveOrganizationOwnerIntegrity,
@@ -81,11 +86,11 @@ const membershipResponse = (membership, userOverride = null) => {
   };
 };
 
-export const platformMembershipResponse = (membership) => {
-  const user =
-    membership.userId && typeof membership.userId === "object"
+export const platformMembershipResponse = (membership, userOverride = null) => {
+  const user = userOverride ||
+    (membership.userId && typeof membership.userId === "object"
       ? membership.userId
-      : null;
+      : null);
 
   return {
     membershipId: membership._id,
@@ -97,6 +102,11 @@ export const platformMembershipResponse = (membership) => {
     isActive: membership.isActive,
   };
 };
+
+export const platformMemberMutationResponse = (result) => ({
+  success: true,
+  membership: platformMembershipResponse(result.membership, result.user),
+});
 
 const companyResponse = (company, { accessSource = null } = {}) => ({
   companyId: company._id,
@@ -513,6 +523,42 @@ export const postPlatformOrganizationOwnerTransfer = organizationHandler(
       notificationSent: result.notificationSent,
       notificationPending: result.notificationPending,
     });
+  },
+);
+
+export const postPlatformOrganizationMember = organizationHandler(
+  async (req, res) => {
+    const result = await addPlatformOrganizationMember({
+      actor: req.platformUser,
+      organizationId: req.params.organizationId,
+      email: req.body?.email,
+      role: req.body?.role,
+    });
+    res.status(201).json(platformMemberMutationResponse(result));
+  },
+);
+
+export const patchPlatformOrganizationMember = organizationHandler(
+  async (req, res) => {
+    const result = await updatePlatformOrganizationMember({
+      actor: req.platformUser,
+      organizationId: req.params.organizationId,
+      membershipId: req.params.membershipId,
+      role: req.body?.role,
+      status: req.body?.status,
+    });
+    res.json(platformMemberMutationResponse(result));
+  },
+);
+
+export const deletePlatformOrganizationMember = organizationHandler(
+  async (req, res) => {
+    const result = await removePlatformOrganizationMember({
+      actor: req.platformUser,
+      organizationId: req.params.organizationId,
+      membershipId: req.params.membershipId,
+    });
+    res.json(platformMemberMutationResponse(result));
   },
 );
 
