@@ -330,6 +330,11 @@ test("customer onboarding delegates provisioning and fully restores owner member
     "findOne",
     async () => organizationMembership
   );
+  t.mock.method(
+    OrganizationMembership,
+    "find",
+    async () => [organizationMembership],
+  );
   t.mock.method(Company, "findOne", async () => company);
   mockCompanyLookup(t, company);
   t.mock.method(
@@ -358,6 +363,10 @@ test("customer onboarding delegates provisioning and fully restores owner member
       slug: company.slug,
       organizationSlug: organization.slug,
     },
+    organization: {
+      mode: "existing",
+      id: organization._id,
+    },
   });
 
   assert.equal(result.provisioning.mode, "customer");
@@ -372,6 +381,75 @@ test("customer onboarding delegates provisioning and fully restores owner member
     removedAt: null,
     removedByUserId: null,
   });
+});
+
+test("customer onboarding rejects an existing Organization with an active owner", async (t) => {
+  const organization = {
+    _id: ORGANIZATION_ID,
+    name: "Existing Organization",
+    slug: "existing-organization",
+    status: "active",
+  };
+  const user = {
+    _id: OWNER_ID,
+    email: "new-owner@example.com",
+    isApproved: true,
+    accountStatus: "active",
+    platformRole: "none",
+    companyName: "Existing Company",
+    async save() {
+      return this;
+    },
+  };
+  t.mock.method(User, "findOne", async () => user);
+  t.mock.method(Organization, "findOne", async () => organization);
+  t.mock.method(OrganizationMembership, "find", async () => [
+    { organizationId: ORGANIZATION_ID, userId: OWNER_ID, role: "owner", status: "active" },
+  ]);
+
+  await assert.rejects(
+    onboardCustomerEnvironment({
+      owner: { email: user.email },
+      company: { name: "New Company", slug: "new-company" },
+      organization: { mode: "create", slug: organization.slug },
+    }),
+    (error) => error.code === "ORGANIZATION_ALREADY_HAS_OWNER" && error.statusCode === 409,
+  );
+});
+
+test("customer onboarding rejects an existing Organization with multiple owners", async (t) => {
+  const organization = {
+    _id: ORGANIZATION_ID,
+    name: "Existing Organization",
+    slug: "existing-organization",
+    status: "active",
+  };
+  const user = {
+    _id: OWNER_ID,
+    email: "new-owner@example.com",
+    isApproved: true,
+    accountStatus: "active",
+    platformRole: "none",
+    companyName: "Existing Company",
+    async save() {
+      return this;
+    },
+  };
+  t.mock.method(User, "findOne", async () => user);
+  t.mock.method(Organization, "findOne", async () => organization);
+  t.mock.method(OrganizationMembership, "find", async () => [
+    { organizationId: ORGANIZATION_ID, userId: OWNER_ID, role: "owner", status: "active" },
+    { organizationId: ORGANIZATION_ID, userId: "64b000000000000000000099", role: "owner", status: "active" },
+  ]);
+
+  await assert.rejects(
+    onboardCustomerEnvironment({
+      owner: { email: user.email },
+      company: { name: "New Company", slug: "new-company" },
+      organization: { mode: "create", slug: organization.slug },
+    }),
+    (error) => error.code === "ORGANIZATION_OWNER_INTEGRITY_ERROR" && error.statusCode === 409,
+  );
 });
 
 test("Terrapeak setup delegates platform provisioning without customer onboarding", () => {

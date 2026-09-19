@@ -23,6 +23,7 @@ const actor = (platformRole = "platform-admin") => ({
 const installMocks = (t, {
   ownerOverrides = {},
   membershipOverrides = {},
+  ownerMemberships = null,
   existingUser = null,
   auditEvents = [],
   saveFailure = null,
@@ -69,6 +70,16 @@ const installMocks = (t, {
     _id: ORGANIZATION_ID,
     name: "Example Organization",
   }));
+  t.mock.method(OrganizationMembership, "find", async (filter) =>
+    filter?.organizationId === ORGANIZATION_ID &&
+    filter?.role === "owner" &&
+    filter?.status === "active"
+      ? ownerMemberships ||
+        (membership.status === "active" && membership.role === "owner"
+          ? [membership]
+          : [])
+      : [],
+  );
   t.mock.method(OrganizationMembership, "findOne", async (filter) => {
     if (filter?.status === "active") {
       return membership.status === "active" ? membership : null;
@@ -145,6 +156,68 @@ test("rejects a duplicate normalized owner email before persistence", async (t) 
     (error) => error.code === "OWNER_EMAIL_CONFLICT" && error.statusCode === 409,
   );
   assert.equal(saveCalls, 0);
+});
+
+test("rejects Phase A owner details when multiple active owners exist", async (t) => {
+  const state = installMocks(t, {
+    ownerMemberships: [
+      {
+        _id: "64b000000000000000000005",
+        organizationId: ORGANIZATION_ID,
+        userId: USER_ID,
+        role: "owner",
+        status: "active",
+      },
+      {
+        _id: "64b000000000000000000006",
+        organizationId: ORGANIZATION_ID,
+        userId: OTHER_USER_ID,
+        role: "owner",
+        status: "active",
+      },
+    ],
+  });
+
+  await assert.rejects(
+    updateOrganizationOwner({
+      actor: actor(),
+      organizationId: ORGANIZATION_ID,
+      updates: { name: "Updated Owner" },
+      transactionSupported: false,
+    }),
+    (error) => error.code === "ORGANIZATION_OWNER_INTEGRITY_ERROR" && error.statusCode === 409,
+  );
+  assert.equal(state.persisted.name, "Original Owner");
+});
+
+test("rejects Phase A password reset when multiple active owners exist", async (t) => {
+  installMocks(t, {
+    ownerMemberships: [
+      {
+        _id: "64b000000000000000000005",
+        organizationId: ORGANIZATION_ID,
+        userId: USER_ID,
+        role: "owner",
+        status: "active",
+      },
+      {
+        _id: "64b000000000000000000006",
+        organizationId: ORGANIZATION_ID,
+        userId: OTHER_USER_ID,
+        role: "owner",
+        status: "active",
+      },
+    ],
+  });
+
+  await assert.rejects(
+    sendOrganizationOwnerPasswordReset({
+      actor: actor(),
+      organizationId: ORGANIZATION_ID,
+      issueReset: async () => assert.fail("reset should not be issued"),
+    }),
+    (error) => error.code === "ORGANIZATION_OWNER_INTEGRITY_ERROR" && error.statusCode === 409,
+  );
 });
 
 test("requires an active Organization owner and Platform authorization", async (t) => {

@@ -1,5 +1,4 @@
 import asyncHandler from "express-async-handler";
-import OrganizationMembership from "../models/organizationMembership.js";
 import App from "../models/app.js";
 import {
   isDistributorOrganization,
@@ -35,6 +34,11 @@ import {
   sendOrganizationOwnerPasswordReset,
   updateOrganizationOwner,
 } from "../services/organizationOwnerService.js";
+import {
+  ORGANIZATION_OWNER_INTEGRITY,
+  organizationOwnerIntegrityError,
+  resolveOrganizationOwnerIntegrity,
+} from "../services/organizationOwnerIntegrityService.js";
 
 export const organizationResponse = (organization) => ({
   organizationId: organization._id,
@@ -208,11 +212,18 @@ export const getPlatformOrganization = organizationHandler(
       actor: req.platformUser,
       organizationId: req.params.organizationId,
     });
-    const activeOwner = await OrganizationMembership.findOne({
+    const ownerIntegrity = await resolveOrganizationOwnerIntegrity({
       organizationId: organization._id,
-      role: "owner",
-      status: "active",
-    }).populate("userId", "_id name email");
+    });
+    if (ownerIntegrity.status === ORGANIZATION_OWNER_INTEGRITY.MULTIPLE_OWNERS) {
+      throw organizationOwnerIntegrityError(
+        "This Organization has multiple active owners and requires integrity review.",
+      );
+    }
+    const activeOwner = ownerIntegrity.ownerMembership;
+    if (activeOwner) {
+      await activeOwner.populate("userId", "_id name email");
+    }
     res.json({
       success: true,
       organization: organizationResponse(organization),

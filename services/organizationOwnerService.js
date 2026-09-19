@@ -1,11 +1,15 @@
 import mongoose from "mongoose";
 
 import Organization from "../models/organization.js";
-import OrganizationMembership from "../models/organizationMembership.js";
 import OrganizationOwnerAudit from "../models/organizationOwnerAudit.js";
 import User from "../models/user.js";
 import { issuePasswordReset } from "./userLifecycleService.js";
 import { databaseSupportsTransactions } from "./organizationService.js";
+import {
+  ORGANIZATION_OWNER_INTEGRITY,
+  organizationOwnerIntegrityError,
+  resolveOrganizationOwnerIntegrity,
+} from "./organizationOwnerIntegrityService.js";
 
 const PLATFORM_ADMIN_ROLES = new Set(["platform-owner", "platform-admin"]);
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -71,15 +75,17 @@ const resolveActiveOwner = async (organizationId, { session } = {}) => {
     throw ownerError(404, "ORGANIZATION_NOT_FOUND", "Organization not found.");
   }
 
-  const membership = await withSession(
-    OrganizationMembership.findOne({
-      organizationId: organization._id,
-      role: "owner",
-      status: "active",
-    }),
+  const ownerIntegrity = await resolveOrganizationOwnerIntegrity({
+    organizationId: organization._id,
     session,
-  );
-  if (!membership) {
+  });
+  if (ownerIntegrity.status === ORGANIZATION_OWNER_INTEGRITY.MULTIPLE_OWNERS) {
+    throw organizationOwnerIntegrityError(
+      "This Organization has multiple active owners and requires integrity review.",
+    );
+  }
+  const membership = ownerIntegrity.ownerMembership;
+  if (ownerIntegrity.status === ORGANIZATION_OWNER_INTEGRITY.OWNERLESS) {
     throw ownerError(
       404,
       "ORGANIZATION_ACTIVE_OWNER_NOT_FOUND",

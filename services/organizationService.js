@@ -15,6 +15,11 @@ import {
   isOrganizationType,
   ORGANIZATION_TYPES,
 } from "../utils/organizationTypes.js";
+import {
+  ORGANIZATION_OWNER_INTEGRITY,
+  organizationOwnerIntegrityError,
+  resolveOrganizationOwnerIntegrity,
+} from "./organizationOwnerIntegrityService.js";
 
 const PLATFORM_ORGANIZATION_ADMIN_ROLES = new Set([
   "platform-owner",
@@ -607,6 +612,22 @@ export const addOrganizationMember = async ({
     );
   }
 
+  if (input.role === "owner") {
+    const ownerIntegrity = await resolveOrganizationOwnerIntegrity({
+      organizationId: organization._id,
+    });
+    if (ownerIntegrity.status === ORGANIZATION_OWNER_INTEGRITY.MULTIPLE_OWNERS) {
+      throw organizationOwnerIntegrityError();
+    }
+    if (ownerIntegrity.status === ORGANIZATION_OWNER_INTEGRITY.VALID) {
+      throw serviceError(
+        409,
+        "ORGANIZATION_ALREADY_HAS_OWNER",
+        "This Organization already has an active owner.",
+      );
+    }
+  }
+
   const user = await findEligibleOrganizationUser(input.userId);
   assertOrganizationRole(input.role, user.platformRole || "none");
 
@@ -650,13 +671,13 @@ export const assignInitialOrganizationOwner = async ({
 }) => {
   assertPlatformOrganizationAdmin(actor);
   const organization = await getOrganizationOrThrow(organizationId);
-  const activeOwner = await OrganizationMembership.findOne({
+  const ownerIntegrity = await resolveOrganizationOwnerIntegrity({
     organizationId: organization._id,
-    role: "owner",
-    status: "active",
-  }).select("_id");
-
-  if (activeOwner) {
+  });
+  if (ownerIntegrity.status === ORGANIZATION_OWNER_INTEGRITY.MULTIPLE_OWNERS) {
+    throw organizationOwnerIntegrityError();
+  }
+  if (ownerIntegrity.status === ORGANIZATION_OWNER_INTEGRITY.VALID) {
     throw serviceError(
       409,
       "ORGANIZATION_OWNER_EXISTS",
@@ -780,6 +801,26 @@ export const updateOrganizationMember = async ({
       "ORGANIZATION_ROLE_REQUIRED",
       "Organization administrators cannot manage owners."
     );
+  }
+
+  const promotingToOwner =
+    target.role !== "owner" &&
+    nextRole === "owner" &&
+    nextStatus === "active";
+  if (promotingToOwner) {
+    const ownerIntegrity = await resolveOrganizationOwnerIntegrity({
+      organizationId: organization._id,
+    });
+    if (ownerIntegrity.status === ORGANIZATION_OWNER_INTEGRITY.MULTIPLE_OWNERS) {
+      throw organizationOwnerIntegrityError();
+    }
+    if (ownerIntegrity.status === ORGANIZATION_OWNER_INTEGRITY.VALID) {
+      throw serviceError(
+        409,
+        "ORGANIZATION_ALREADY_HAS_OWNER",
+        "This Organization already has an active owner.",
+      );
+    }
   }
 
   if (nextStatus === "active") {

@@ -7,6 +7,11 @@ import ChatbotSettings from "../models/chatbotSettings.js";
 import Contract from "../models/contract.js";
 import { createTrialContract } from "./contractService.js";
 import { provisionCompany } from "./companyProvisioningService.js";
+import {
+  ORGANIZATION_OWNER_INTEGRITY,
+  organizationOwnerIntegrityError,
+  resolveOrganizationOwnerIntegrity,
+} from "./organizationOwnerIntegrityService.js";
 
 const DEFAULT_TRIAL_DAYS = 30;
 const DEFAULT_TRIAL_CREDITS = 1000;
@@ -161,6 +166,7 @@ export async function onboardCustomerEnvironment({
   }
 
   let organization;
+  let organizationWasExisting = false;
 
   if (organizationMode === "existing") {
     organization = await Organization.findOne({
@@ -201,6 +207,28 @@ export async function onboardCustomerEnvironment({
       await organization.save();
     } else if (organization.status === "archived") {
       throw new Error("An archived Organization cannot be used for onboarding.");
+    } else {
+      organizationWasExisting = true;
+    }
+  }
+
+  if (organizationWasExisting) {
+    const ownerIntegrity = await resolveOrganizationOwnerIntegrity({
+      organizationId: organization._id,
+    });
+    if (ownerIntegrity.status === ORGANIZATION_OWNER_INTEGRITY.MULTIPLE_OWNERS) {
+      throw organizationOwnerIntegrityError();
+    }
+    if (
+      organizationMode === "create" &&
+      ownerIntegrity.status === ORGANIZATION_OWNER_INTEGRITY.VALID
+    ) {
+      const error = new Error(
+        "This Organization already has an active owner and cannot accept another onboarding owner.",
+      );
+      error.code = "ORGANIZATION_ALREADY_HAS_OWNER";
+      error.statusCode = 409;
+      throw error;
     }
   }
 
