@@ -154,9 +154,16 @@ export const validateOrganizationMembershipReferences = async (
 
   if (!membership.organizationId || !membership.userId) return;
 
+  const session = membership.$session?.();
+  const organizationQuery = OrganizationModel.exists({
+    _id: membership.organizationId,
+  });
+  const userQuery = UserModel.findById(membership.userId).select(
+    "_id platformRole",
+  );
   const [organizationExists, user] = await Promise.all([
-    OrganizationModel.exists({ _id: membership.organizationId }),
-    UserModel.findById(membership.userId).select("_id platformRole"),
+    session ? organizationQuery.session(session) : organizationQuery,
+    session ? userQuery.session(session) : userQuery,
   ]);
 
   if (!organizationExists) {
@@ -185,9 +192,13 @@ export const validateOrganizationMembershipOwnerRetention = async (
 ) => {
   if (membership.isNew || !membership._id) return;
 
-  const persisted = await MembershipModel.findById(membership._id).select(
-    "_id organizationId role status"
+  const session = membership.$session?.();
+  const persistedQuery = MembershipModel.findById(membership._id).select(
+    "_id organizationId role status",
   );
+  const persisted = await (session
+    ? persistedQuery.session(session)
+    : persistedQuery);
   const removesActiveOwner =
     persisted?.role === "owner" &&
     persisted.status === "active" &&
@@ -195,12 +206,15 @@ export const validateOrganizationMembershipOwnerRetention = async (
 
   if (!removesActiveOwner) return;
 
-  const replacementOwner = await MembershipModel.findOne({
+  const replacementQuery = MembershipModel.findOne({
     organizationId: persisted.organizationId,
     _id: { $ne: persisted._id },
     role: "owner",
     status: "active",
   }).select("_id");
+  const replacementOwner = await (session
+    ? replacementQuery.session(session)
+    : replacementQuery);
 
   if (!replacementOwner) {
     throw membershipWriteError(

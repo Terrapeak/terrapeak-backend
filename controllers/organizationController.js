@@ -35,6 +35,10 @@ import {
   updateOrganizationOwner,
 } from "../services/organizationOwnerService.js";
 import {
+  listEligibleOrganizationOwnerCandidates,
+  transferOrganizationOwner,
+} from "../services/organizationOwnerTransferService.js";
+import {
   ORGANIZATION_OWNER_INTEGRITY,
   organizationOwnerIntegrityError,
   resolveOrganizationOwnerIntegrity,
@@ -52,20 +56,21 @@ export const organizationResponse = (organization) => ({
   updatedAt: organization.updatedAt,
 });
 
-const membershipResponse = (membership) => {
+const membershipResponse = (membership, userOverride = null) => {
   const populatedUser =
     membership.userId && typeof membership.userId === "object"
       ? membership.userId
       : null;
+  const user = userOverride || populatedUser;
 
   return {
     membershipId: membership._id,
     organizationId: membership.organizationId?._id ||
       membership.organizationId,
     user: {
-      userId: populatedUser?._id || membership.userId,
-      name: populatedUser?.name || "",
-      email: populatedUser?.email || "",
+      userId: user?._id || membership.userId,
+      name: user?.name || "",
+      email: user?.email || "",
     },
     role: membership.role,
     status: membership.status,
@@ -452,6 +457,38 @@ export const postPlatformOrganizationOwnerPasswordReset = organizationHandler(
     res.json({
       success: true,
       message: "Password reset email sent.",
+    });
+  },
+);
+
+export const getPlatformOrganizationOwnerCandidates = organizationHandler(
+  async (req, res) => {
+    const candidates = await listEligibleOrganizationOwnerCandidates({
+      actor: req.platformUser,
+      organizationId: req.params.organizationId,
+    });
+    res.json({ success: true, candidates });
+  },
+);
+
+export const postPlatformOrganizationOwnerTransfer = organizationHandler(
+  async (req, res) => {
+    const result = await transferOrganizationOwner({
+      actor: req.platformUser,
+      organizationId: req.params.organizationId,
+      newOwner: req.body?.newOwner,
+      formerOwnerAction: req.body?.formerOwnerAction,
+    });
+    res.json({
+      success: true,
+      organization: organizationResponse(result.organization),
+      activeOwner: membershipResponse(result.ownerMembership, result.ownerUser),
+      formerOwner: membershipResponse(
+        result.formerOwnerMembership,
+        result.formerOwnerUser,
+      ),
+      notificationSent: result.notificationSent,
+      notificationPending: result.notificationPending,
     });
   },
 );

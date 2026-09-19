@@ -10,6 +10,8 @@ import {
   lookupPlatformOrganizationOwner,
   patchPlatformOrganizationOwner,
   postPlatformOrganizationOwnerPasswordReset,
+  getPlatformOrganizationOwnerCandidates,
+  postPlatformOrganizationOwnerTransfer,
   patchPlatformOrganization,
 } from "../controllers/organizationController.js";
 import {
@@ -32,6 +34,14 @@ router.patch("/:organizationId/owner", patchPlatformOrganizationOwner);
 router.post(
   "/:organizationId/owner/password-reset",
   postPlatformOrganizationOwnerPasswordReset,
+);
+router.get(
+  "/:organizationId/owner/candidates",
+  getPlatformOrganizationOwnerCandidates,
+);
+router.post(
+  "/:organizationId/owner/transfer",
+  postPlatformOrganizationOwnerTransfer,
 );
 router.get("/:organizationId/billing", getPlatformOrganizationBilling);
 router.patch("/:organizationId/billing", updatePlatformOrganizationBilling);

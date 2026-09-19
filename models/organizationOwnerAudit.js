@@ -7,6 +7,7 @@ const OrganizationOwnerAuditSchema = new mongoose.Schema(
       enum: [
         "organization_owner_details_updated",
         "organization_owner_password_reset_sent",
+        "organization_owner_transferred",
       ],
       required: true,
       index: true,
@@ -27,6 +28,21 @@ const OrganizationOwnerAuditSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
+    },
+    formerOwnerUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    newOwnerUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    formerOwnerAction: {
+      type: String,
+      enum: ["admin", "member", "remove", null],
+      default: null,
     },
     before: { type: mongoose.Schema.Types.Mixed, default: null },
     after: { type: mongoose.Schema.Types.Mixed, default: null },

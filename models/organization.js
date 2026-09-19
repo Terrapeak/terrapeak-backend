@@ -117,6 +117,12 @@ const OrganizationSchema = new mongoose.Schema(
       type: Object,
       default: {},
     },
+
+    ownerTransferVersion: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   {
     timestamps: true,
