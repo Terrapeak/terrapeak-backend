@@ -2,14 +2,12 @@ import asyncHandler from "express-async-handler";
 
 import Company from "../models/company.js";
 import ChatbotSettings from "../models/chatbotSettings.js";
-
-const ALLOWED_MODELS = new Set([
-  "gemini-2.5-flash",
-  "gemini-2.5-pro",
-  "gemini-2.5-flash-lite",
-  "gemini-3.5-flash",
-  "gemini-3.1-flash-lite",
-]);
+import {
+  DEFAULT_GEMINI_TEXT_MODEL,
+  GEMINI_TEXT_MODELS,
+  GEMINI_TEXT_MODEL_SET,
+  normalizeGeminiTextModel,
+} from "../config/geminiModels.js";
 
 const ACTIVITY_LIMIT = 50;
 const REQUEST_TIMEOUT_MS = 12000;
@@ -64,7 +62,7 @@ const getCompanyAndSettings = async (companyId) => {
 const buildSafeConfig = (settings = []) => {
   const primary = settings[0] || null;
   const configuredSettings = settings.filter((item) => Boolean(item.geminiKey));
-  const model = primary?.gemini_model || "gemini-2.5-flash";
+  const model = normalizeGeminiTextModel(primary?.gemini_model);
 
   return {
     provider: "Gemini",
@@ -74,7 +72,7 @@ const buildSafeConfig = (settings = []) => {
     maskedKey: maskKey(primary?.geminiKey),
     model,
     updatedAt: primary?.updatedAt || null,
-    allowedModels: Array.from(ALLOWED_MODELS),
+    allowedModels: GEMINI_TEXT_MODELS,
   };
 };
 
@@ -105,8 +103,8 @@ export const updatePlatformAIConfig = asyncHandler(async (req, res) => {
     });
   }
 
-  const nextModel = model || settings[0]?.gemini_model || "gemini-2.5-flash";
-  if (!ALLOWED_MODELS.has(nextModel)) {
+  const nextModel = model || normalizeGeminiTextModel(settings[0]?.gemini_model);
+  if (!GEMINI_TEXT_MODEL_SET.has(nextModel)) {
     return res.status(400).json({ success: false, message: "Unsupported Gemini model." });
   }
 
@@ -143,7 +141,7 @@ export const testPlatformAIConfig = asyncHandler(async (req, res) => {
     return res.status(409).json({ success: false, message: "Gemini API key is not configured." });
   }
 
-  const model = primary.gemini_model || "gemini-2.5-flash";
+  const model = normalizeGeminiTextModel(primary.gemini_model);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 

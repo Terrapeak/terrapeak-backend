@@ -245,6 +245,28 @@ test("callback persistence keeps rich staff context out of the customer reply", 
   assert.equal(getSession().bookingType, "reservation");
 });
 
+test("callback flow can be cancelled without continuing callback prompts", async (t) => {
+  const { getSession } = installChatbotMocks(t);
+
+  await sendMessage(t, "request callback");
+  await sendMessage(t, "Test Customer");
+
+  getSession().lastGeminiCall = 0;
+  const cancelled = await sendMessage(t, "cancel");
+
+  assert.match(cancelled.reply, /cancelled the current reservation process/i);
+  assert.equal(getSession().bookingType, null);
+  assert.equal(getSession().reservationCallbackStep, null);
+  assert.equal(getSession().reservationCallbackName, null);
+  assert.equal(getSession().reservationCallbackContact, null);
+
+  getSession().lastGeminiCall = 0;
+  const followUp = await sendMessage(t, "where is terrapeak based?");
+
+  assert.doesNotMatch(followUp.reply, /phone number|email|good time/i);
+  assert.equal(getSession().reservationCallbackStep, null);
+});
+
 test("meeting phrases select the scheduled appointment flow", () => {
   for (const message of [
     "meeting",

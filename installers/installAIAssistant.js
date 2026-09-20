@@ -1,4 +1,5 @@
 import ChatbotSettings from "../models/chatbotSettings.js";
+import { DEFAULT_GEMINI_TEXT_MODEL } from "../config/geminiModels.js";
 
 export default async function installAIAssistant({
   company,
@@ -26,7 +27,7 @@ export default async function installAIAssistant({
     reservationBusinessSlug:
       company.reservationBusinessSlug,
 
-    gemini_model: "gemini-2.5-flash",
+    gemini_model: DEFAULT_GEMINI_TEXT_MODEL,
   });
 
   await chatbotSettings.save();

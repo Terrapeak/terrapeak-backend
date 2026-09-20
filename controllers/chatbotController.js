@@ -30,6 +30,10 @@ import {
   isBareRescheduleMessage,
   isReservationLookupMessage,
 } from "../utils/reservationIntentService.js";
+import {
+  DEFAULT_GEMINI_FALLBACK_TEXT_MODEL,
+  GEMINI_TEXT_MODELS,
+} from "../config/geminiModels.js";
 
 // List of all fields allowed to be updated
 const ALLOWED_FIELDS = [
@@ -90,7 +94,7 @@ const ALLOWED_FIELDS = [
 ];
 // ====================== CONFIG ======================
 
-const MODEL = "gemini-2.5-flash-lite";
+const MODEL = DEFAULT_GEMINI_FALLBACK_TEXT_MODEL;
 const SAFE_SYSTEM_TOKEN_LIMIT = 500000; // Recommended safe limit for system instruction
 //const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
@@ -110,17 +114,9 @@ console.log("SAVE BODY brandName:", req.body.brandName);
     }
   });
 
-  let ALLOWED_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
-    "gemini-2.5-flash-lite",
-    "gemini-3.5-flash",
-    "gemini-3.1-flash-lite",
-  ];
-
   if (
     req.body?.gemini_model &&
-    !ALLOWED_MODELS.includes(req.body.gemini_model)
+    !GEMINI_TEXT_MODELS.includes(req.body.gemini_model)
   ) {
     res.status(404).json({
       message: "not a valid model",
@@ -711,6 +707,17 @@ const isReservationCallbackRequest =
 
 if (reservationEnabled && session.reservationCallbackStep) {
   reservationBookingUrl = await resolveReservationBookingUrl();
+}
+
+if (
+  !botReply &&
+  reservationEnabled &&
+  session.reservationCallbackStep &&
+  ["cancel", "stop", "exit", "quit"].includes(lowerMsg)
+) {
+  resetBookingSession(session);
+  clearReservationMutationFlows();
+  botReply = "Okay, I cancelled the current reservation process. How else can I help you?";
 }
 
 if (!botReply && reservationEnabled && session.reservationCallbackStep) {

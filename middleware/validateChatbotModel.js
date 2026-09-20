@@ -1,10 +1,4 @@
-const ALLOWED_CHATBOT_MODELS = new Set([
-  "gemini-2.5-flash",
-  "gemini-2.5-pro",
-  "gemini-2.5-flash-lite",
-  "gemini-3.5-flash",
-  "gemini-3.1-flash-lite",
-]);
+import { GEMINI_TEXT_MODEL_SET } from "../config/geminiModels.js";
 
 const validateChatbotModel = (req, res, next) => {
   const requestedModel = req.body?.gemini_model;
@@ -13,7 +7,7 @@ const validateChatbotModel = (req, res, next) => {
     return next();
   }
 
-  if (!ALLOWED_CHATBOT_MODELS.has(requestedModel)) {
+  if (!GEMINI_TEXT_MODEL_SET.has(requestedModel)) {
     return res.status(400).json({
       success: false,
       code: "INVALID_CHATBOT_MODEL",

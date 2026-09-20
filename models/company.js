@@ -1,4 +1,9 @@
 import mongoose from "mongoose";
+import {
+  DEFAULT_GEMINI_FALLBACK_TEXT_MODEL,
+  DEFAULT_GEMINI_IMAGE_MODEL,
+  DEFAULT_GEMINI_TEXT_MODEL,
+} from "../config/geminiModels.js";
 
 const CompanySchema = new mongoose.Schema(
   {
@@ -62,8 +67,8 @@ const CompanySchema = new mongoose.Schema(
         keyVersion: { type: Number, default: 1 },
         lastFour: { type: String, default: "" },
       },
-      model: { type: String, default: "gemini-2.5-flash" },
-      fallbackModel: { type: String, default: "gemini-2.5-flash-lite" },
+      model: { type: String, default: DEFAULT_GEMINI_TEXT_MODEL },
+      fallbackModel: { type: String, default: DEFAULT_GEMINI_FALLBACK_TEXT_MODEL },
       imageGeminiKey: { type: String, default: "" },
       imageGeminiKeyEncrypted: {
         ciphertext: { type: String, default: "" },
@@ -72,7 +77,7 @@ const CompanySchema = new mongoose.Schema(
         keyVersion: { type: Number, default: 1 },
         lastFour: { type: String, default: "" },
       },
-      imageModel: { type: String, default: "gemini-2.5-flash-image" },
+      imageModel: { type: String, default: DEFAULT_GEMINI_IMAGE_MODEL },
       updatedAt: { type: Date, default: null },
       credentialMigration: {
         migrationId: { type: String, default: "" },

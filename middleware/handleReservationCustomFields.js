@@ -35,6 +35,20 @@ const clearReservationDraft = (session) => {
   session.reservationCustomData = {};
 };
 
+const clearReservationCallbackDraft = (session) => {
+  session.set({
+    reservationCallbackStep: null,
+    reservationCallbackName: null,
+    reservationCallbackContact: null,
+    reservationCallbackPreferredTime: null,
+    reservationCallbackQuestion: null,
+    reservationCallbackServiceOrTeacher: null,
+    reservationCallbackSummary: null,
+    reservationCallbackBookingUrl: null,
+    reservationCallbackRequestedAt: null,
+  });
+};
+
 const getCustomFieldInput = (field) => {
   if (!field) return null;
 
@@ -118,6 +132,7 @@ export default async function handleReservationCustomFields(req, res, next) {
     const normalizedMessage = String(message).trim().toLowerCase();
     if (["cancel", "stop", "exit", "quit"].includes(normalizedMessage)) {
       clearReservationDraft(session);
+      clearReservationCallbackDraft(session);
       return sendReply({
         res,
         session,

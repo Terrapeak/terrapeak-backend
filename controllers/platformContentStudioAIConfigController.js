@@ -5,27 +5,17 @@ import {
   encryptContentStudioCredential,
   resolveCompanyContentStudioKeys,
 } from "../utils/contentStudioCredentialEncryption.js";
-
-const ALLOWED_MODELS = new Set([
-  "gemini-2.5-flash",
-  "gemini-2.5-pro",
-  "gemini-2.5-flash-lite",
-  "gemini-3.5-flash",
-  "gemini-3.1-flash-lite",
-]);
-
-const CURRENT_IMAGE_MODEL = "gemini-2.5-flash-image";
-const LEGACY_IMAGE_MODELS = new Set([
-  "imagen-4.0-generate-001",
-  "imagen-4.0-fast-generate-001",
-  "gemini-2.0-flash-preview-image-generation",
-]);
-const ALLOWED_IMAGE_MODELS = new Set([
-  CURRENT_IMAGE_MODEL,
-  ...LEGACY_IMAGE_MODELS,
-]);
-const normalizeImageModel = (model) =>
-  LEGACY_IMAGE_MODELS.has(model) ? CURRENT_IMAGE_MODEL : model;
+import {
+  DEFAULT_GEMINI_FALLBACK_TEXT_MODEL,
+  DEFAULT_GEMINI_IMAGE_MODEL,
+  DEFAULT_GEMINI_TEXT_MODEL,
+  GEMINI_IMAGE_MODELS,
+  GEMINI_IMAGE_MODEL_SET,
+  GEMINI_TEXT_MODELS,
+  GEMINI_TEXT_MODEL_SET,
+  normalizeGeminiImageModel,
+  normalizeGeminiTextModel,
+} from "../config/geminiModels.js";
 
 const REQUEST_TIMEOUT_MS = 12000;
 const ACTIVITY_LIMIT = 50;
@@ -43,16 +33,18 @@ const buildSafeConfig = (company) => {
     maskedKey: config.geminiKeyEncrypted?.lastFour
       ? `••••••••${config.geminiKeyEncrypted.lastFour}`
       : maskKey(config.geminiKey),
-    model: config.model || "gemini-2.5-flash",
-    fallbackModel: config.fallbackModel || "gemini-2.5-flash-lite",
+    model: normalizeGeminiTextModel(config.model),
+    fallbackModel: GEMINI_TEXT_MODEL_SET.has(config.fallbackModel)
+      ? config.fallbackModel
+      : DEFAULT_GEMINI_FALLBACK_TEXT_MODEL,
     imageConfigured: Boolean(config.imageGeminiKeyEncrypted?.ciphertext || config.imageGeminiKey),
     maskedImageKey: config.imageGeminiKeyEncrypted?.lastFour
       ? `••••••••${config.imageGeminiKeyEncrypted.lastFour}`
       : maskKey(config.imageGeminiKey),
-    imageModel: normalizeImageModel(config.imageModel || CURRENT_IMAGE_MODEL),
+    imageModel: normalizeGeminiImageModel(config.imageModel || DEFAULT_GEMINI_IMAGE_MODEL),
     updatedAt: config.updatedAt || null,
-    allowedModels: Array.from(ALLOWED_MODELS),
-    allowedImageModels: Array.from(ALLOWED_IMAGE_MODELS),
+    allowedModels: GEMINI_TEXT_MODELS,
+    allowedImageModels: GEMINI_IMAGE_MODELS,
   };
 };
 
@@ -115,19 +107,22 @@ export const updatePlatformContentStudioAIConfig = asyncHandler(async (req, res)
   }
 
   const current = company.contentStudioAiConfig || {};
-  const nextModel = req.body?.model || current.model || "gemini-2.5-flash";
+  const nextModel = req.body?.model || normalizeGeminiTextModel(current.model);
   const nextFallbackModel =
-    req.body?.fallbackModel || current.fallbackModel || "gemini-2.5-flash-lite";
+    req.body?.fallbackModel ||
+    (GEMINI_TEXT_MODEL_SET.has(current.fallbackModel)
+      ? current.fallbackModel
+      : DEFAULT_GEMINI_FALLBACK_TEXT_MODEL);
   const nextImageModel =
-    normalizeImageModel(
-      req.body?.imageModel || current.imageModel || CURRENT_IMAGE_MODEL,
+    normalizeGeminiImageModel(
+      req.body?.imageModel || current.imageModel || DEFAULT_GEMINI_IMAGE_MODEL,
     );
 
-  if (!ALLOWED_MODELS.has(nextModel) || !ALLOWED_MODELS.has(nextFallbackModel)) {
+  if (!GEMINI_TEXT_MODEL_SET.has(nextModel) || !GEMINI_TEXT_MODEL_SET.has(nextFallbackModel)) {
     return res.status(400).json({ success: false, message: "Unsupported Gemini text model." });
   }
 
-  if (!ALLOWED_IMAGE_MODELS.has(nextImageModel)) {
+  if (!GEMINI_IMAGE_MODEL_SET.has(nextImageModel)) {
     return res.status(400).json({ success: false, message: "Unsupported Gemini image model." });
   }
 
@@ -218,9 +213,9 @@ export const testPlatformContentStudioAIConfig = asyncHandler(async (req, res) =
     });
   }
 
-  const model = config.model || "gemini-2.5-flash";
-  const imageModel = normalizeImageModel(
-    config.imageModel || CURRENT_IMAGE_MODEL,
+  const model = normalizeGeminiTextModel(config.model);
+  const imageModel = normalizeGeminiImageModel(
+    config.imageModel || DEFAULT_GEMINI_IMAGE_MODEL,
   );
 
   try {
