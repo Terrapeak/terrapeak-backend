@@ -34,6 +34,7 @@ import {
   DEFAULT_GEMINI_FALLBACK_TEXT_MODEL,
   GEMINI_TEXT_MODELS,
 } from "../config/geminiModels.js";
+import { buildReservationResponse } from "../services/aiReservationFlowService.js";
 
 // List of all fields allowed to be updated
 const ALLOWED_FIELDS = [
@@ -102,10 +103,6 @@ export const saveChatbotSettings = asyncHandler(async (req, res) => {
   const userId = req.userId;
   const companyId = req.company._id;
 
-  //for debugging
-console.log("SAVE SETTINGS USER:", req.userId);
-console.log("SAVE BODY brandName:", req.body.brandName);
-
   // Extract only whitelisted fields from body
   const updateData = {};
   ALLOWED_FIELDS.forEach((field) => {
@@ -171,8 +168,6 @@ export const extractInstructions = asyncHandler(async (req, res) => {
   try {
     file = req.file;
 
-    console.log("file ", req.file);
-
     if (!file) {
       return res.status(400).json({
         success: false,
@@ -199,8 +194,6 @@ export const extractInstructions = asyncHandler(async (req, res) => {
     //     message: "Instruction too long. Please shorten the file.",
     //   });
     // }
-
-    console.log("conttett in backend ", content);
 
     return res.json({
       success: true,
@@ -249,9 +242,7 @@ async function fetchGeminiWithRetry(
   // }
 
   if (!response.ok) {
-    console.log(response.status);
     let res = await response.json();
-    console.log("hlo", res);
     const shortMessage = res?.error?.message
       ?.split("\n")[0]
       ?.replace(/\s+/g, " ")
@@ -299,7 +290,6 @@ export const askGemini = asyncHandler(async (req, res) => {
   const settings = await ChatbotSettings.findOne({ apiKey });
 
      // use only when debugging 
-  // console.log("setting ", settings);
 
   if (!settings) {
     return res.status(403).json({ success: false, error: "Invalid API key." });
@@ -1932,8 +1922,6 @@ if (!botReply && (session.bookingType === "appointment" || inAppointmentFlow)) {
         const startOfDayUTC = parsedDate.startOf("day").toUTC().toJSDate();
         const endOfDayUTC = parsedDate.endOf("day").toUTC().toJSDate();
 
-        console.log("start of ", startOfDayUTC);
-        console.log("end of  ", endOfDayUTC);
 
         const slots = await TimeSlot.find({
           start: {
@@ -1945,7 +1933,6 @@ if (!botReply && (session.bookingType === "appointment" || inAppointmentFlow)) {
           userId: settings.userId,
           isBooked: false,
         });
-        console.log(session.appointmentDate, slots);
 
         if (!slots.length) {
           botReply =
@@ -1965,7 +1952,6 @@ if (!botReply && (session.bookingType === "appointment" || inAppointmentFlow)) {
             formattedSlots.join("<br>\n") +
             "\n\nReply with the slot number.";
         }
-        console.log(botReply);
         break;
       }
 
@@ -2125,13 +2111,6 @@ botReply = buildAppointmentConfirmationReply({
   /* ===============================
      GEMINI FALLBACK
   ================================ */
-  console.log(
-  "Appointment Step:",
-  session.appointmentStep,
-  "Booking Type:",
-  session.bookingType
-);
-
   if (!botReply) {
     if (!settings?.geminiKey || !settings?.gemini_model) {
       botReply =
@@ -2241,7 +2220,6 @@ ${reservationConciergeInstruction}
      SAVE CHAT LOGS
   ================================ */
   if (chatHistory.length <= 3 && !session.chatLogs.length) {
-    console.log(chatHistory);
     session.chatLogs = chatHistory.map((msg) => {
       return {
         role: msg.role,
@@ -2268,36 +2246,29 @@ ${reservationConciergeInstruction}
   reservationStep: session.reservationStep,
   bookingType: session.bookingType,
   cancelStep: session.cancelStep,
+  ...(session.reservationFlow?.status && session.reservationFlow.status !== "idle"
+    ? {
+        reservation: buildReservationResponse({
+          reply: botReply,
+          flowStatus: session.reservationFlow.status,
+          journeyType: session.reservationFlow.journeyType,
+          summary: session.reservationFlow.confirmation?.summary || null,
+          confirmationRequired: session.reservationFlow.status === "awaiting_confirmation",
+        }).reservation,
+      }
+    : {}),
 });
 });
 
 export const getChatbotSettingsByKey = asyncHandler(async (req, res) => {
   const settings = req.chatbot;
 
-  console.log("apiKey received:", req.headers["x-api-key"]);
-  console.log("origin received:", req.headers["x-origin"]);
-  console.log("parent domain received:", req.headers["x-parent-domain"]);
-
-  //for debugging
-//console.log("GET BY KEY apiKey:", apiKey);
-//console.log("FOUND SETTINGS:", {
-  //id: settings?._id?.toString(),
-  //userId: settings?.userId?.toString(),
-  //companyId: settings?.companyId?.toString(),
-  //brandName: settings?.brandName,
-  //allowedDomains: settings?.allowedDomains,
-//});
-
   if (!settings) {
-    console.log("No settings found for this API key");
-
     return res.status(403).json({
       success: false,
       error: "Invalid API key",
     });
   }
-
-  console.log("Settings found:", settings._id.toString());
 
   res.json({ success: true, data: settings });
 });
@@ -2872,7 +2843,6 @@ async function countTokens(text) {
   }
 
   const data = await response.json();
-  console.log(data);
   return data.totalTokens;
 }
 

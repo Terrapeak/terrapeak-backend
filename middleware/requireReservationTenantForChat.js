@@ -1,5 +1,8 @@
-import ChatbotSettings from "../models/chatbotSettings.js";
 import Session from "../models/sessionModel.js";
+import {
+  ChatReservationContextError,
+  resolveChatReservationContext,
+} from "../services/chatReservationContextService.js";
 
 const RESERVATION_KEYWORDS = [
   "reservation",
@@ -64,19 +67,11 @@ export default async function requireReservationTenantForChat(req, res, next) {
 
     if (!apiKey || !chatbotId) return next();
 
-    const settings = await ChatbotSettings.findOne({ apiKey }).select(
-      "_id reservationBusinessSlug reservationEnabled",
-    );
-
-    if (!settings || String(settings._id) !== String(chatbotId)) {
-      return next();
-    }
-
     let session = null;
     if (sessionId) {
       session = await Session.findOne({
         sessionId,
-        chatbotId: settings._id,
+        chatbotId,
       }).select(
         "bookingType reservationStep cancelReservationStep reservationRescheduleStep rescheduleReservationId cancelReservationId",
       );
@@ -87,20 +82,17 @@ export default async function requireReservationTenantForChat(req, res, next) {
 
     if (!reservationRequested) return next();
 
-    const businessSlug = String(settings.reservationBusinessSlug || "").trim();
-
-    if (settings.reservationEnabled === false || !businessSlug) {
-      return res.json({
-        success: true,
-        reply:
-          "Reservations are not configured for this business. Please contact the business directly or try again later.",
-        code: "RESERVATIONS_NOT_CONFIGURED",
-      });
-    }
-
+    const context = await resolveChatReservationContext({ apiKey, chatbotId, sessionId });
+    req.chatReservationContext = context;
     return next();
   } catch (error) {
-    console.error("Reservation tenant guard error:", error);
+    if (error instanceof ChatReservationContextError) {
+      return res.json({
+        success: true,
+        reply: "Reservations are not available for this business right now. Please use the existing booking form or contact the business directly.",
+        code: error.code,
+      });
+    }
     return next(error);
   }
 }

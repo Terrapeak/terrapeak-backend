@@ -1,5 +1,39 @@
 import mongoose from "mongoose";
 
+const reservationFlowSchema = new mongoose.Schema(
+  {
+    version: { type: Number, default: 1 },
+    status: {
+      type: String,
+      enum: ["idle", "service_selection", "provider_selection", "date_selection", "slot_selection", "customer_form", "review", "awaiting_confirmation", "ready_to_commit", "completed", "cancelled", "failed"],
+      default: "idle",
+    },
+    journeyType: { type: String, enum: ["appointment", "restaurant", "scheduled_session", "cohort_enquiry", null], default: null },
+    companyId: { type: mongoose.Schema.Types.ObjectId, ref: "Company", default: null },
+    installationId: { type: mongoose.Schema.Types.ObjectId, ref: "CompanyAppInstallation", default: null },
+    businessId: { type: String, default: null },
+    businessSlug: { type: String, default: null },
+    templateKey: { type: String, default: null },
+    serviceId: { type: String, default: null },
+    serviceSlug: { type: String, default: null },
+    providerId: { type: String, default: null },
+    providerSlug: { type: String, default: null },
+    scheduledSessionId: { type: String, default: null },
+    localDate: { type: String, default: null },
+    startsAt: { type: Date, default: null },
+    timezone: { type: String, default: null },
+    quantity: { type: Number, default: 1 },
+    customer: { type: mongoose.Schema.Types.Mixed, default: {} },
+    customData: { type: mongoose.Schema.Types.Mixed, default: {} },
+    customerFormSnapshot: { type: mongoose.Schema.Types.Mixed, default: [] },
+    displaySnapshot: { type: mongoose.Schema.Types.Mixed, default: {} },
+    confirmation: { type: mongoose.Schema.Types.Mixed, default: {} },
+    bookingAttemptId: { type: String, default: null },
+    idempotencyKey: { type: String, default: null },
+  },
+  { _id: false },
+);
+
 const sessionSchema = new mongoose.Schema(
   {
     sessionId: {
@@ -149,6 +183,12 @@ const sessionSchema = new mongoose.Schema(
     // appointmentAddress: String,
     tempSlots: Array,
     selectedSlot: String,
+
+    // R2A typed foundation. Legacy fields above remain for compatibility.
+    reservationFlow: {
+      type: reservationFlowSchema,
+      default: () => ({ status: "idle", version: 1 }),
+    },
   },
   {
     timestamps: true,
