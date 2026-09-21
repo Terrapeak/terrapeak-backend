@@ -1,5 +1,6 @@
 import { resolveChatReservationJourney } from "./chatReservationJourneyService.js";
 import { initializeReservationFlow, prepareReservationConfirmation, confirmReservationFoundation, buildReservationResponse } from "./aiReservationFlowService.js";
+import { parseCustomerFormInput, validateCustomerFormValue } from "../utils/aiReservationCustomerForm.js";
 
 const supportedTemplates = new Set(["general", "physiotherapy", "dental", "salon"]);
 const isStartMessage = (message) => /\b(book|booking|schedule|appointment)\b/i.test(String(message));
@@ -145,8 +146,17 @@ export async function handleAiReservationConversation({
         return { handled: true, reply: first.label, reservation: reservationPayload(session, flow, "") };
       }
     } else if (flow.currentCustomField) {
-      flow.customData = { ...(flow.customData || {}), [flow.currentCustomField]: String(message).trim() };
       const fields = Array.isArray(flow.customerFormSnapshot) ? flow.customerFormSnapshot : [];
+      const field = fields.find((item) => String(item.id) === String(flow.currentCustomField));
+      const activeField = field || { id: flow.currentCustomField, label: flow.currentCustomField, type: "text", options: [] };
+      const parsed = parseCustomerFormInput(activeField, message);
+      const validation = parsed.valid
+        ? validateCustomerFormValue(activeField, parsed.value)
+        : parsed;
+      if (!validation.valid) {
+        return { handled: true, reply: `${validation.message} Please try again.`, reservation: reservationPayload(session, flow, "") };
+      }
+      flow.customData = { ...(flow.customData || {}), [flow.currentCustomField]: parsed.value };
       const next = fields.slice(Number(flow.customFieldIndex || 0) + 1).find((field) => field.active);
       if (next) {
         flow.customFieldIndex = fields.indexOf(next);

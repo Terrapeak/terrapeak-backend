@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   CUSTOMER_FIELD_TYPES,
   normalizeCustomerForm,
+  parseCustomerFormInput,
   serializeCustomerFormAnswers,
   validateCustomerForm,
 } from "../utils/aiReservationCustomerForm.js";
@@ -37,4 +38,31 @@ test("serializes custom data by stable IDs and excludes system fields", () => {
   assert.equal(result["2"], "Check-up");
   assert.equal(result["3"], undefined);
   assert.equal(result._field_labels["2"], "Visit type");
+});
+
+test("parses customer form values into canonical field types", () => {
+  const normalized = normalizeCustomerForm([
+    { id: "dropdown", field_label: "Dropdown", field_type: "dropdown", field_options: ["Option A", "Option B"] },
+    { id: "checkbox", field_label: "Checkbox", field_type: "checkbox" },
+    { id: "number", field_label: "Number", field_type: "number" },
+    { id: "date", field_label: "Date", field_type: "date" },
+  ]);
+  const byId = Object.fromEntries(normalized.map((field) => [field.id, field]));
+
+  assert.equal(parseCustomerFormInput(byId.dropdown, "option a").value, "Option A");
+  assert.equal(parseCustomerFormInput(byId.checkbox, "No").value, false);
+  assert.equal(parseCustomerFormInput(byId.checkbox, "yes").value, true);
+  assert.equal(parseCustomerFormInput(byId.number, "10").value, 10);
+  assert.equal(parseCustomerFormInput(byId.date, "2026-09-22").value, "2026-09-22");
+  assert.match(parseCustomerFormInput(byId.dropdown, "Option C").message, /Option A, Option B/);
+  assert.match(parseCustomerFormInput(byId.checkbox, "maybe").message, /yes or no/);
+  assert.match(parseCustomerFormInput(byId.number, "ten").message, /valid number/);
+  assert.match(parseCustomerFormInput(byId.date, "22\/09\/2026").message, /YYYY-MM-DD/);
+});
+
+test("required checkbox still rejects false after parsing", () => {
+  const field = normalizeCustomerForm([{ id: "consent", field_label: "Consent", field_type: "checkbox", is_required: true }])[0];
+  const parsed = parseCustomerFormInput(field, "No");
+  assert.equal(parsed.valid, true);
+  assert.match(validateCustomerForm([field], { consent: parsed.value }), /Consent is required/);
 });

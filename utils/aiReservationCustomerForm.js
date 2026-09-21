@@ -46,6 +46,39 @@ export function normalizeCustomerForm(fields = [], { activeOnly = true } = {}) {
 
 const invalid = (message) => ({ valid: false, message });
 
+export function parseCustomerFormInput(field, rawValue) {
+  const value = String(rawValue ?? "").trim();
+  if (!value) return { valid: true, value: "", message: null };
+
+  if (field.type === "checkbox") {
+    const normalized = value.toLowerCase();
+    if (["yes", "y", "true", "checked", "1"].includes(normalized)) return { valid: true, value: true, message: null };
+    if (["no", "n", "false", "unchecked", "0"].includes(normalized)) return { valid: true, value: false, message: null };
+    return invalid(`${field.label} must be answered with yes or no.`);
+  }
+
+  if (field.type === "dropdown") {
+    const option = field.options.find((candidate) => candidate.toLowerCase() === value.toLowerCase());
+    return option
+      ? { valid: true, value: option, message: null }
+      : invalid(`${field.label} must be one of: ${field.options.join(", ")}.`);
+  }
+
+  if (field.type === "number") {
+    if (!/^-?[0-9]+([.][0-9]+)?$/.test(value)) return invalid(`${field.label} must be a valid number.`);
+    const number = Number(value);
+    return Number.isFinite(number)
+      ? { valid: true, value: number, message: null }
+      : invalid(`${field.label} must be a valid number.`);
+  }
+
+  if (field.type === "date" && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return invalid(`${field.label} must use YYYY-MM-DD format.`);
+  }
+
+  return { valid: true, value, message: null };
+}
+
 export function validateCustomerFormValue(field, value) {
   const empty = value === undefined || value === null || value === "";
   if (field.required && (empty || (field.type === "checkbox" && value !== true))) {
