@@ -267,6 +267,19 @@ test("callback flow can be cancelled without continuing callback prompts", async
   assert.equal(getSession().reservationCallbackStep, null);
 });
 
+test("reservation booking requests do not require Gemini configuration", async (t) => {
+  const { settings, getSession } = installChatbotMocks(t);
+  settings.geminiKey = "";
+  settings.gemini_model = "";
+
+  const result = await sendMessage(t, "i want to make a booking");
+
+  assert.equal(result.success, true);
+  assert.match(result.reply, /Reservations form/i);
+  assert.doesNotMatch(result.reply, /Configuration required/i);
+  assert.equal(getSession().bookingType, "reservation");
+});
+
 test("meeting phrases select the scheduled appointment flow", () => {
   for (const message of [
     "meeting",
@@ -283,5 +296,7 @@ test("meeting phrases select the scheduled appointment flow", () => {
 test("appointment intent does not replace Reservations reservation intent", () => {
   assert.equal(detectBookingIntent("book a table"), "reservation");
   assert.equal(detectBookingIntent("restaurant reservation"), "reservation");
+  assert.equal(detectBookingIntent("i want to make a booking"), "reservation");
+  assert.equal(detectBookingIntent("how do i sign up"), "reservation");
 });
 

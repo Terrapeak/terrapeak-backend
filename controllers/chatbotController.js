@@ -310,14 +310,6 @@ export const askGemini = asyncHandler(async (req, res) => {
       .status(400)
       .json({ success: false, error: "Invalid chatbotId." });
   }
-  if (!settings?.geminiKey || !settings?.gemini_model) {
-    return res.status(400).json({
-      success: false,
-      error:
-        "Configuration required: Please set your Gemini API key and model.",
-    });
-  }
-
   const [reservationCompany, reservationsInstallation] = settings.companyId
     ? await Promise.all([
         Company.findById(settings.companyId)
@@ -1800,6 +1792,18 @@ if (
   botReply = `Online booking is not available for this business yet. ${reservationContactReply()}`;
 }
 
+if (
+  !botReply &&
+  !inAnyBookingFlow &&
+  reservationEnabled &&
+  detectedBookingType === "reservation"
+) {
+  resetBookingSession(session);
+  clearReservationMutationFlows();
+  session.bookingType = "reservation";
+  botReply = reservationChoicesReply();
+}
+
 const cancelRequested = isSimpleCancel || isAppointmentCancelRequest;
 
 if (!botReply && isAppointmentRescheduleRequest) {
@@ -2129,6 +2133,10 @@ botReply = buildAppointmentConfirmationReply({
 );
 
   if (!botReply) {
+    if (!settings?.geminiKey || !settings?.gemini_model) {
+      botReply =
+        "Configuration required: Please set your Gemini API key and model.";
+    } else {
     const trimmedHistory = formatGeminiHistory(chatHistory);
     const reservationConciergeContext = reservationEnabled
       ? await getReservationConciergeContext({
@@ -2225,6 +2233,7 @@ ${reservationConciergeInstruction}
       console.error("Gemini Error:", err);
       if (isPreview) botReply = err.message;
       else botReply = "⚠️ Gemini API is busy. Please try again.";
+    }
     }
   }
 
@@ -2652,7 +2661,16 @@ export function detectBookingIntent(lowerMsg) {
     "reservation",
     "reserve",
     "appointment",
+    "sign up",
+    "signup",
+    "register",
+    "enrol",
+    "enroll",
+    "join class",
     "book a table",
+    "booking form",
+    "make a booking",
+    "make booking",
     "table",
     "restaurant",
     "dinner",
