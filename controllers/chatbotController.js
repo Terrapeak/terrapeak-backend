@@ -35,6 +35,10 @@ import {
   GEMINI_TEXT_MODELS,
 } from "../config/geminiModels.js";
 import { buildReservationResponse } from "../services/aiReservationFlowService.js";
+import { resolveChatReservationContext } from "../services/chatReservationContextService.js";
+import { reservationsReadAdapter } from "../services/reservationReadAdapter.js";
+import { reservationWriteAdapter } from "../services/reservationWriteAdapter.js";
+import { handleAiReservationConversation } from "../services/aiReservationConversationService.js";
 
 // List of all fields allowed to be updated
 const ALLOWED_FIELDS = [
@@ -410,6 +414,45 @@ if (!session.rescheduleReservationData) {
     ? "callback/video meeting"
     : "appointment";
   let botReply = null;
+  let typedReservationResponse = null;
+
+  const shouldHandleTypedAppointment =
+    reservationEnabled &&
+    !/\b(cancel|reschedul|change|move|lookup|callback|table|restaurant)\b/i.test(lowerMsg) &&
+    (
+      /\bappointment\b/i.test(lowerMsg) ||
+      /\b(schedule|book)\s+(an?\s+)?appointment\b/i.test(lowerMsg) ||
+      (session.reservationFlow?.status && session.reservationFlow.status !== "idle")
+    );
+  if (shouldHandleTypedAppointment) {
+    try {
+      const typedContext = await resolveChatReservationContext({
+        apiKey,
+        chatbotId,
+        sessionId,
+      });
+      typedReservationResponse = await handleAiReservationConversation({
+        context: typedContext,
+        session,
+        message,
+        apiKey,
+        readAdapter: reservationsReadAdapter,
+        writeAdapter: reservationWriteAdapter,
+      });
+      if (typedReservationResponse.handled) botReply = typedReservationResponse.reply;
+    } catch (error) {
+      botReply = "I could not safely continue that appointment booking. Please use the Reservations form or request a callback.";
+      typedReservationResponse = {
+        handled: true,
+        reservation: buildReservationResponse({
+          reply: botReply,
+          flowStatus: session.reservationFlow?.status || "failed",
+          journeyType: session.reservationFlow?.journeyType || "appointment",
+          errorCode: error.code || "RESERVATION_FLOW_FAILED",
+        }).reservation,
+      };
+    }
+  }
 
   const hasActiveReservationFlow = Boolean(
     session.bookingType === "reservation" ||
@@ -2248,7 +2291,7 @@ ${reservationConciergeInstruction}
   cancelStep: session.cancelStep,
   ...(session.reservationFlow?.status && session.reservationFlow.status !== "idle"
     ? {
-        reservation: buildReservationResponse({
+        reservation: typedReservationResponse?.reservation || buildReservationResponse({
           reply: botReply,
           flowStatus: session.reservationFlow.status,
           journeyType: session.reservationFlow.journeyType,

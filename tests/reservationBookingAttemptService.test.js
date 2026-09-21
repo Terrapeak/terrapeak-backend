@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getOrCreateReservationBookingAttempt, fingerprintReservationRequest } from "../services/reservationBookingAttemptService.js";
+import { claimReservationBookingAttempt, getOrCreateReservationBookingAttempt, fingerprintReservationRequest } from "../services/reservationBookingAttemptService.js";
 
 const context = { companyId: "company-1", chatbotId: "chatbot-1", sessionId: "session-1", reservationBusinessId: 42 };
 
@@ -112,4 +112,21 @@ test("the model prepares a tenant-scoped unique index without enabling auto-inde
     { companyId: 1, idempotencyKey: 1 },
     { unique: true, name: "reservation_booking_attempt_company_key_unique", background: true },
   ]]);
+});
+
+test("confirmed attempts have one atomic processing claimant", async () => {
+  const row = { companyId: "company-1", chatbotId: "chatbot-1", sessionId: "session-1", idempotencyKey: "company-1:attempt-claim", status: "confirmed" };
+  const model = {
+    async findOneAndUpdate(query, update) {
+      if (row.status !== query.status) return null;
+      row.status = update.$set.status;
+      return row;
+    },
+  };
+  const [first, second] = await Promise.all([
+    claimReservationBookingAttempt({ context, bookingAttemptId: "attempt-claim", model }),
+    claimReservationBookingAttempt({ context, bookingAttemptId: "attempt-claim", model }),
+  ]);
+  assert.equal(Boolean(first) + Boolean(second), 1);
+  assert.equal(row.status, "processing");
 });

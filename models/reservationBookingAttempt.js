@@ -9,7 +9,7 @@ const ReservationBookingAttemptSchema = new mongoose.Schema(
     reservationBusinessId: { type: Number, required: true },
     idempotencyKey: { type: String, required: true },
     journeyType: { type: String, required: true },
-    status: { type: String, enum: ["draft", "confirmed", "processing", "completed", "failed", "cancelled"], default: "draft" },
+    status: { type: String, enum: ["draft", "confirmed", "processing", "completed", "failed", "cancelled", "unknown"], default: "draft" },
     requestFingerprint: { type: String, default: "" },
     result: { type: mongoose.Schema.Types.Mixed, default: null },
     errorCode: { type: String, default: null },
