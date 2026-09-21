@@ -416,15 +416,12 @@ if (!session.rescheduleReservationData) {
   let botReply = null;
   let typedReservationResponse = null;
 
-  const shouldHandleTypedAppointment =
-    reservationEnabled &&
-    !/\b(cancel|reschedul|change|move|lookup|callback|table|restaurant)\b/i.test(lowerMsg) &&
-    (
-      /\bappointment\b/i.test(lowerMsg) ||
-      /\b(schedule|book)\s+(an?\s+)?appointment\b/i.test(lowerMsg) ||
-      (session.reservationFlow?.status && session.reservationFlow.status !== "idle")
-    );
-  if (shouldHandleTypedAppointment) {
+  const shouldHandleTypedAppointmentRequest = shouldHandleTypedAppointment({
+    reservationEnabled,
+    message: lowerMsg,
+    session,
+  });
+  if (shouldHandleTypedAppointmentRequest) {
     try {
       const typedContext = await resolveChatReservationContext({
         apiKey,
@@ -2731,6 +2728,30 @@ export function detectBookingIntent(lowerMsg) {
   if (hasGeneralBookingIntent) return "unknown";
 
   return null;
+}
+
+export function isSpecificAppointmentRequest(message) {
+  const match = String(message || "").trim().match(
+    /\b(?:book|schedule)\s+(?:(?:an?|the)\s+)?(.+)/i,
+  );
+  if (!match) return false;
+  return !/^(?:appointment|booking|reservation|table|restaurant|meeting|call)\b/i.test(
+    match[1].trim(),
+  );
+}
+
+export function shouldHandleTypedAppointment({ reservationEnabled, message, session } = {}) {
+  const lowerMsg = String(message || "").toLowerCase().trim();
+  return Boolean(
+    reservationEnabled &&
+      !/\b(cancel|reschedul|change|move|lookup|callback|table|restaurant)\b/i.test(lowerMsg) &&
+      (
+        /\bappointment\b/i.test(lowerMsg) ||
+        /\b(schedule|book)\s+(an?\s+)?appointment\b/i.test(lowerMsg) ||
+        isSpecificAppointmentRequest(lowerMsg) ||
+        (session?.reservationFlow?.status && session.reservationFlow.status !== "idle")
+      ),
+  );
 }
 
 export function resetBookingSession(session) {

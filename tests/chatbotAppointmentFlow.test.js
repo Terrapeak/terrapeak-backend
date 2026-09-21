@@ -11,7 +11,12 @@ globalThis.fetch = async () =>
     headers: { "content-type": "application/json" },
   });
 
-const { askGemini, detectBookingIntent } = await import(
+const {
+  askGemini,
+  detectBookingIntent,
+  isSpecificAppointmentRequest,
+  shouldHandleTypedAppointment,
+} = await import(
   "../controllers/chatbotController.js"
 );
 const ChatbotSettings = (await import("../models/chatbotSettings.js")).default;
@@ -31,6 +36,9 @@ const chatbotId = new mongoose.Types.ObjectId();
 
 function chain(value) {
   return {
+    then(resolve, reject) {
+      return Promise.resolve(value).then(resolve, reject);
+    },
     select() {
       return this;
     },
@@ -278,6 +286,73 @@ test("reservation booking requests do not require Gemini configuration", async (
   assert.match(result.reply, /Reservations form/i);
   assert.doesNotMatch(result.reply, /Configuration required/i);
   assert.equal(getSession().bookingType, "reservation");
+});
+
+test("service-specific appointment requests enter the typed Reservations flow", () => {
+  assert.equal(isSpecificAppointmentRequest("I want to book Acceptance Test Service"), true);
+  assert.equal(isSpecificAppointmentRequest("schedule the Acceptance Test Service"), true);
+  assert.equal(isSpecificAppointmentRequest("I want to make a booking"), false);
+  assert.equal(isSpecificAppointmentRequest("book a table"), false);
+  assert.equal(isSpecificAppointmentRequest("schedule a meeting"), false);
+  assert.equal(
+    shouldHandleTypedAppointment({
+      reservationEnabled: true,
+      message: "I want to book Acceptance Test Service",
+      session: {},
+    }),
+    true,
+  );
+  assert.equal(
+    shouldHandleTypedAppointment({
+      reservationEnabled: true,
+      message: "I want to book a table",
+      session: {},
+    }),
+    false,
+  );
+});
+
+test("controller routes a service-specific request to canonical R2B service selection", async (t) => {
+  const previousFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+  });
+  installChatbotMocks(t);
+
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.includes("/rpc/get_public_reservations_configuration")) {
+      return new Response(JSON.stringify([{
+        business_id: 42,
+        template_key: "general",
+        capabilities: { services: true },
+        terminology: {},
+        booking_behavior: "immediate",
+      }]), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (target.includes("/rest/v1/services")) {
+      return new Response(JSON.stringify([{
+        id: 101,
+        business_id: 42,
+        name: "Acceptance Test Service",
+        slug: "acceptance-test-service",
+        booking_type: "appointment",
+        duration_minutes: 60,
+        is_active: true,
+        is_published: true,
+        is_internal: false,
+      }]), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`Unexpected Reservations read: ${target}`);
+  };
+
+  const result = await sendMessage(t, "I want to book Acceptance Test Service");
+
+  assert.ok(result.reservation, JSON.stringify(result));
+  assert.equal(result.reservation.flowStatus, "service_selection");
+  assert.match(result.reply, /1\. Acceptance Test Service/);
+  assert.doesNotMatch(result.reply, /reservation or meeting|Reservations form/i);
+  assert.equal(result.bookingType, null);
 });
 
 test("meeting phrases select the scheduled appointment flow", () => {
