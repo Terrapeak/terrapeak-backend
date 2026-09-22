@@ -50,6 +50,12 @@ const clearReservationCallbackDraft = (session) => {
   });
 };
 
+const isTypedReservationFlow = (flow) => Boolean(
+  flow?.journeyType === "appointment" &&
+  flow.status &&
+  flow.status !== "idle",
+);
+
 const getCustomFieldInput = (field) => {
   if (!field) return null;
 
@@ -270,7 +276,17 @@ export default async function handleReservationCustomFields(req, res, next) {
       chatbotId: settings._id,
     });
 
-    if (!session || session.bookingType !== "reservation") {
+    if (!session) {
+      return next();
+    }
+
+    // A typed R2B appointment owns the conversation, including terminal
+    // states, until a new journey explicitly replaces or clears the flow.
+    if (isTypedReservationFlow(session.reservationFlow)) {
+      return next();
+    }
+
+    if (session.bookingType !== "reservation") {
       return next();
     }
 
