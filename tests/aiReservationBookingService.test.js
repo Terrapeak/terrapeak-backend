@@ -168,6 +168,69 @@ test("slot revalidation rejects a raced-away time before the provider write", as
   );
 });
 
+test("slot revalidation accepts the same instant in a different timezone representation", async () => {
+  const normalizedBookingFingerprint = fingerprintReservationBookingRequest({
+    reservationBusinessSlug: "terrapeak", serviceSlug: "consultation", providerSlug: "dr-a",
+    startsAt: "2026-09-22T01:00:00.000Z", customerName: "Aisha", customerEmail: "aisha@example.com",
+    customerPhone: "+31612345678", customData: {},
+  }).fingerprint;
+  const model = makeModel({ companyId: "company-1", chatbotId: "chatbot-1", sessionId: "session-1", bookingAttemptId: "attempt-1", idempotencyKey: flow.idempotencyKey, requestFingerprint: normalizedBookingFingerprint, status: "draft" });
+  let writes = 0;
+  const readAdapter = {
+    ...makeReadAdapter(),
+    async listAppointmentAvailability() {
+      return [{ startsAt: "2026-09-22T09:00:00+08:00", endsAt: "2026-09-22T10:00:00+08:00" }];
+    },
+  };
+  const result = await executeAiReservationBooking({
+    context: { ...context, reservationBusinessSlug: "terrapeak" },
+    session: { reservationFlow: { ...flow, startsAt: "2026-09-22T01:00:00.000Z", localDate: "2026-09-22", timezone: "Asia/Kuala_Lumpur" } },
+    model,
+    contextResolver: async () => ({ ...freshContext, reservationBusinessSlug: "terrapeak" }),
+    readAdapter,
+    writeAdapter: { async createAppointment() { writes += 1; return { bookingId: "booking-1", reference: "BK-1" }; } },
+  });
+  assert.equal(result.bookingCreated, true);
+  assert.equal(writes, 1);
+  assert.equal(model.rows[0].status, "completed");
+});
+
+test("slot revalidation rejects a different instant without writing", async () => {
+  const model = makeModel({ companyId: "company-1", chatbotId: "chatbot-1", sessionId: "session-1", bookingAttemptId: "attempt-1", idempotencyKey: flow.idempotencyKey, requestFingerprint: bookingFingerprint, status: "draft" });
+  let writes = 0;
+  await assert.rejects(
+    executeAiReservationBooking({
+      context,
+      session: { reservationFlow: { ...flow, startsAt: "2026-09-22T01:00:00.000Z", localDate: "2026-09-22", timezone: "Asia/Kuala_Lumpur" } },
+      model,
+      contextResolver: async () => freshContext,
+      readAdapter: { ...makeReadAdapter(), async listAppointmentAvailability() { return [{ startsAt: "2026-09-22T01:30:00.000Z" }]; } },
+      writeAdapter: { async createAppointment() { writes += 1; } },
+    }),
+    (error) => error.code === "RESERVATION_SLOT_CHANGED",
+  );
+  assert.equal(writes, 0);
+  assert.equal(model.rows[0].status, "draft");
+});
+
+test("invalid slot timestamps fail closed without writing", async () => {
+  const model = makeModel({ companyId: "company-1", chatbotId: "chatbot-1", sessionId: "session-1", bookingAttemptId: "attempt-1", idempotencyKey: flow.idempotencyKey, requestFingerprint: bookingFingerprint, status: "draft" });
+  let writes = 0;
+  await assert.rejects(
+    executeAiReservationBooking({
+      context,
+      session: { reservationFlow: { ...flow, startsAt: "not-a-date" } },
+      model,
+      contextResolver: async () => freshContext,
+      readAdapter: makeReadAdapter(),
+      writeAdapter: { async createAppointment() { writes += 1; } },
+    }),
+    (error) => error.code === "RESERVATION_SLOT_CHANGED",
+  );
+  assert.equal(writes, 0);
+  assert.equal(model.rows[0].status, "draft");
+});
+
 test("a changed canonical payload fails closed before claiming or writing", async () => {
   const model = makeModel({ companyId: "company-1", chatbotId: "chatbot-1", sessionId: "session-1", bookingAttemptId: "attempt-1", idempotencyKey: flow.idempotencyKey, requestFingerprint: "different", status: "draft" });
   let writes = 0;

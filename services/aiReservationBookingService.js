@@ -18,6 +18,16 @@ const supportedTemplates = new Set(["general", "physiotherapy", "dental", "salon
 
 const sameId = (left, right) => String(left ?? "") === String(right ?? "");
 
+const toValidEpochMillis = (value) => {
+  if (value instanceof Date) {
+    const milliseconds = value.valueOf();
+    return Number.isFinite(milliseconds) ? milliseconds : null;
+  }
+  if (typeof value !== "string" || !value.trim()) return null;
+  const milliseconds = new Date(value).valueOf();
+  return Number.isFinite(milliseconds) ? milliseconds : null;
+};
+
 const fail = (code, message) => {
   const error = new Error(message);
   error.code = code;
@@ -117,7 +127,11 @@ export async function executeAiReservationBooking({
     localDate: flow.localDate,
     timezone: flow.timezone,
   });
-  const slot = slots.find((item) => String(item.startsAt) === String(flow.startsAt));
+  const selectedStartMs = toValidEpochMillis(flow.startsAt);
+  const slot = slots.find((item) => {
+    const freshStartMs = toValidEpochMillis(item.startsAt);
+    return selectedStartMs !== null && freshStartMs !== null && freshStartMs === selectedStartMs;
+  });
   if (!slot) throw fail("RESERVATION_SLOT_CHANGED", "The selected time is no longer available.");
   logStage(stage);
 
