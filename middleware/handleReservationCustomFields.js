@@ -9,10 +9,10 @@ import {
 import {
   buildCustomFieldPrompt,
   getActiveBookingCustomFields,
+  getCustomFieldIdentityKey,
   normalizeCustomFieldOptions,
   validateCustomFieldAnswer,
 } from "../utils/reservationCustomFieldService.js";
-import { restaurantFieldsOnly } from "../utils/reservationFieldScope.js";
 
 const appendChatExchange = (session, message, reply) => {
   session.chatLogs.push(
@@ -28,6 +28,7 @@ const clearReservationDraft = (session) => {
   session.reservationTime = null;
   session.reservationPartySize = null;
   session.reservationName = null;
+  session.reservationEmail = null;
   session.reservationPhone = null;
   session.reservationSpecialRequest = null;
   session.reservationCustomFields = [];
@@ -103,6 +104,150 @@ const formatCustomData = (customData = {}) =>
     .map(([label, value]) => `**${label}:** ${value}`)
     .join("  \n");
 
+const normalizeDateAnswer = (value) => {
+  const text = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  const date = new Date(`${text}T00:00:00.000Z`);
+  return Number.isNaN(date.getTime()) ? null : text;
+};
+
+const normalizeTimeAnswer = (value) => {
+  const text = String(value || "").trim().toLowerCase();
+  const match = text.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
+  if (!match) return null;
+
+  let hour = Number(match[1]);
+  const minute = Number(match[2] || "0");
+  const meridiem = match[3];
+  if (minute < 0 || minute > 59) return null;
+  if (meridiem) {
+    if (hour < 1 || hour > 12) return null;
+    if (meridiem === "pm" && hour !== 12) hour += 12;
+    if (meridiem === "am" && hour === 12) hour = 0;
+  } else if (hour < 0 || hour > 23) {
+    return null;
+  }
+
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+};
+
+const fieldIdentityKey = getCustomFieldIdentityKey;
+
+const applyFieldAnswerToSession = (session, field, value) => {
+  const identity = fieldIdentityKey(field);
+  if (identity === "name") {
+    session.reservationName = value;
+    return;
+  }
+  if (identity === "phone") {
+    session.reservationPhone = value;
+    return;
+  }
+  if (identity === "email") {
+    session.reservationEmail = value;
+    return;
+  }
+
+  session.reservationCustomData = {
+    ...(session.reservationCustomData || {}),
+    [field.field_label]: value,
+  };
+};
+
+const completeReservationFromSession = async ({
+  businessId,
+  session,
+  res,
+  message,
+}) => {
+  const fields = session.reservationCustomFields || [];
+  const customData = session.reservationCustomData || {};
+
+  if (!session.reservationDate) {
+    session.reservationStep = "askDate";
+    return sendReply({
+      res,
+      session,
+      message,
+      reply: "What date would you like? Please use YYYY-MM-DD format.",
+    });
+  }
+
+  if (!session.reservationTime) {
+    session.reservationStep = "askTime";
+    return sendReply({
+      res,
+      session,
+      message,
+      reply: "What time would you like? Please use HH:MM, for example 14:30.",
+    });
+  }
+
+  for (const field of fields) {
+    const identity = fieldIdentityKey(field);
+    const storedValue = identity === "name"
+      ? session.reservationName
+      : identity === "phone"
+        ? session.reservationPhone
+        : identity === "email"
+          ? session.reservationEmail
+          : customData[field.field_label];
+    const validation = validateCustomFieldAnswer(field, storedValue);
+
+    if (!validation.valid) {
+      session.reservationCustomFieldIndex = fields.findIndex(
+        (item) => String(item.id) === String(field.id),
+      );
+      session.reservationStep = "askCustomField";
+      return sendReply({
+        res,
+        session,
+        message,
+        reply: `${validation.error}\n\n${buildCustomFieldPrompt(field)}`,
+        input: getCustomFieldInput(field),
+      });
+    }
+  }
+
+  const available = await checkReservationAvailability({
+    businessId,
+    reservationDate: session.reservationDate,
+    reservationTime: session.reservationTime,
+    partySize: session.reservationPartySize || 1,
+  });
+
+  if (!available) {
+    session.reservationStep = "askTime";
+    return sendReply({
+      res,
+      session,
+      message,
+      reply:
+        "Sorry, that reservation slot is no longer available. Please choose another time in HH:MM format.",
+    });
+  }
+
+  const reservation = await createReservation({
+    businessId,
+    customerName: session.reservationName,
+    email: session.reservationEmail,
+    phone: session.reservationPhone,
+    reservationDate: session.reservationDate,
+    reservationTime: session.reservationTime,
+    partySize: session.reservationPartySize || 1,
+    specialRequest: session.reservationSpecialRequest,
+    customData,
+  });
+
+  const customSummary = formatCustomData(customData);
+  const reply = `✅ Reservation confirmed!\n\n**Reference:** ${reservation.reservation_reference}  \n**Name:** ${reservation.customer_name}  \n**Date:** ${reservation.reservation_date}  \n**Time:** ${reservation.reservation_time}  \n**Party size:** ${reservation.party_size}${customSummary ? `  \n${customSummary}` : ""}\n\nYour reservation has been added to the reservation dashboard.`;
+
+  session.lastReservationReference = reservation.reservation_reference;
+  session.lastReservationPhone = reservation.phone;
+  clearReservationDraft(session);
+  return sendReply({ res, session, message, reply });
+};
+
 export default async function handleReservationCustomFields(req, res, next) {
   try {
     const { sessionId, chatbotId, message } = req.body || {};
@@ -142,9 +287,11 @@ export default async function handleReservationCustomFields(req, res, next) {
     }
 
     const handledSteps = new Set([
+      "askDate",
+      "askTime",
+      "askPartySize",
       "askPhone",
       "askCustomField",
-      "askSpecialRequest",
     ]);
 
     if (!handledSteps.has(session.reservationStep)) {
@@ -154,7 +301,7 @@ export default async function handleReservationCustomFields(req, res, next) {
     const [company, installation] = settings.companyId
       ? await Promise.all([
           Company.findById(settings.companyId)
-            .select("reservationBusinessId isActive")
+            .select("reservationBusinessId reservationTemplate isActive")
             .lean(),
           CompanyAppInstallation.findOne({
             companyId: settings.companyId,
@@ -186,22 +333,103 @@ export default async function handleReservationCustomFields(req, res, next) {
       });
     }
 
-    if (session.reservationStep === "askPhone") {
-      const phone = String(message).trim();
+    const isRestaurant = (company?.reservationTemplate || "general") === "restaurant";
 
-      if (phone.length < 8) {
+    if (session.reservationStep === "askDate") {
+      const date = normalizeDateAnswer(message);
+      if (!date) {
         return sendReply({
           res,
           session,
           message,
-          reply: "Please provide a valid phone number.",
+          reply: "Please enter the booking date in YYYY-MM-DD format.",
         });
       }
 
-      const fields = restaurantFieldsOnly(
-        await getActiveBookingCustomFields(businessId),
-      );
-      session.reservationPhone = phone;
+      session.reservationDate = date;
+      session.reservationStep = "askTime";
+      return sendReply({
+        res,
+        session,
+        message,
+        reply: "What time would you like? Please use HH:MM, for example 14:30.",
+      });
+    }
+
+    if (session.reservationStep === "askTime") {
+      const time = normalizeTimeAnswer(message);
+      if (!time) {
+        return sendReply({
+          res,
+          session,
+          message,
+          reply: "Please enter a valid time, for example 14:30 or 2:30 PM.",
+        });
+      }
+
+      session.reservationTime = time;
+      if (isRestaurant) {
+        session.reservationStep = "askPartySize";
+        return sendReply({
+          res,
+          session,
+          message,
+          reply: "How many guests should the reservation be for?",
+        });
+      }
+
+      session.reservationPartySize = 1;
+      const existingFields = session.reservationCustomFields || [];
+      const existingIndex = Number(session.reservationCustomFieldIndex || 0);
+      if (existingFields.length && existingIndex >= existingFields.length) {
+        return completeReservationFromSession({
+          businessId,
+          session,
+          res,
+          message,
+        });
+      }
+
+      const fields = existingFields.length
+        ? existingFields
+        : await getActiveBookingCustomFields(businessId);
+      session.reservationCustomFields = fields;
+      session.reservationCustomFieldIndex = existingFields.length ? existingIndex : 0;
+      session.reservationCustomData = session.reservationCustomData || {};
+
+      if (fields.length > 0) {
+        session.reservationStep = "askCustomField";
+        const field = fields[session.reservationCustomFieldIndex] || fields[0];
+        return sendReply({
+          res,
+          session,
+          message,
+          reply: buildCustomFieldPrompt(field),
+          input: getCustomFieldInput(field),
+        });
+      }
+
+      return completeReservationFromSession({
+        businessId,
+        session,
+        res,
+        message,
+      });
+    }
+
+    if (session.reservationStep === "askPartySize") {
+      const partySize = Number.parseInt(String(message).trim(), 10);
+      if (!Number.isFinite(partySize) || partySize < 1) {
+        return sendReply({
+          res,
+          session,
+          message,
+          reply: "Please enter a valid number of guests.",
+        });
+      }
+
+      session.reservationPartySize = partySize;
+      const fields = await getActiveBookingCustomFields(businessId);
       session.reservationCustomFields = fields;
       session.reservationCustomFieldIndex = 0;
       session.reservationCustomData = {};
@@ -217,29 +445,39 @@ export default async function handleReservationCustomFields(req, res, next) {
         });
       }
 
-      session.reservationStep = "askSpecialRequest";
-      return sendReply({
-        res,
+      return completeReservationFromSession({
+        businessId,
         session,
+        res,
         message,
-        reply:
-          "Any special requests? Type **none** if there are no special requests.",
       });
     }
 
+    if (session.reservationStep === "askPhone") {
+      session.reservationStep = "askCustomField";
+      session.reservationCustomFields = await getActiveBookingCustomFields(businessId);
+      const phoneIndex = session.reservationCustomFields.findIndex(
+        (field) => fieldIdentityKey(field) === "phone",
+      );
+      session.reservationCustomFieldIndex = phoneIndex >= 0 ? phoneIndex : 0;
+    }
+
     if (session.reservationStep === "askCustomField") {
-      const fields = session.reservationCustomFields || [];
+      let fields = session.reservationCustomFields || [];
+      if (!fields.length) {
+        fields = await getActiveBookingCustomFields(businessId);
+        session.reservationCustomFields = fields;
+      }
+
       const index = Number(session.reservationCustomFieldIndex || 0);
       const field = fields[index];
 
       if (!field) {
-        session.reservationStep = "askSpecialRequest";
-        return sendReply({
-          res,
+        return completeReservationFromSession({
+          businessId,
           session,
+          res,
           message,
-          reply:
-            "Any special requests? Type **none** if there are no special requests.",
         });
       }
 
@@ -255,10 +493,8 @@ export default async function handleReservationCustomFields(req, res, next) {
         });
       }
 
-      session.reservationCustomData = {
-        ...(session.reservationCustomData || {}),
-        [field.field_label]: validation.value,
-      };
+      applyFieldAnswerToSession(session, field, validation.value);
+
       session.reservationCustomFieldIndex = index + 1;
 
       const nextField = fields[index + 1];
@@ -272,95 +508,15 @@ export default async function handleReservationCustomFields(req, res, next) {
         });
       }
 
-      session.reservationStep = "askSpecialRequest";
-      return sendReply({
-        res,
+      return completeReservationFromSession({
+        businessId,
         session,
+        res,
         message,
-        reply:
-          "Any special requests? Type **none** if there are no special requests.",
       });
     }
 
-    const lowerMessage = String(message).trim().toLowerCase();
-    session.reservationSpecialRequest =
-      lowerMessage === "none" || lowerMessage === "skip"
-        ? ""
-        : String(message).trim();
-
-    const latestFields = restaurantFieldsOnly(
-      await getActiveBookingCustomFields(businessId),
-    );
-    const latestByLabel = new Map(
-      latestFields.map((field) => [field.field_label, field]),
-    );
-    const customData = session.reservationCustomData || {};
-
-    for (const field of latestFields) {
-      const validation = validateCustomFieldAnswer(
-        field,
-        customData[field.field_label],
-      );
-
-      if (!validation.valid) {
-        session.reservationCustomFields = latestFields;
-        session.reservationCustomFieldIndex = latestFields.findIndex(
-          (item) => item.field_label === field.field_label,
-        );
-        session.reservationStep = "askCustomField";
-
-        return sendReply({
-          res,
-          session,
-          message,
-          reply: `${validation.error}\n\n${buildCustomFieldPrompt(field)}`,
-          input: getCustomFieldInput(field),
-        });
-      }
-
-      customData[field.field_label] = validation.value;
-    }
-
-    Object.keys(customData).forEach((label) => {
-      if (!latestByLabel.has(label)) delete customData[label];
-    });
-
-    const available = await checkReservationAvailability({
-      businessId,
-      reservationDate: session.reservationDate,
-      reservationTime: session.reservationTime,
-      partySize: session.reservationPartySize,
-    });
-
-    if (!available) {
-      session.reservationStep = "askTime";
-      return sendReply({
-        res,
-        session,
-        message,
-        reply:
-          "Sorry, that reservation slot is no longer available. Please choose another time in HH:MM format.",
-      });
-    }
-
-    const reservation = await createReservation({
-      businessId,
-      customerName: session.reservationName,
-      phone: session.reservationPhone,
-      reservationDate: session.reservationDate,
-      reservationTime: session.reservationTime,
-      partySize: session.reservationPartySize,
-      specialRequest: session.reservationSpecialRequest,
-      customData,
-    });
-
-    const customSummary = formatCustomData(customData);
-    const reply = `✅ Reservation confirmed!\n\n**Reference:** ${reservation.reservation_reference}  \n**Name:** ${reservation.customer_name}  \n**Date:** ${reservation.reservation_date}  \n**Time:** ${reservation.reservation_time}  \n**Party size:** ${reservation.party_size}${customSummary ? `  \n${customSummary}` : ""}\n\nYour reservation has been added to the reservation dashboard.`;
-
-    session.lastReservationReference = reservation.reservation_reference;
-    session.lastReservationPhone = reservation.phone;
-    clearReservationDraft(session);
-    return sendReply({ res, session, message, reply });
+    return next();
   } catch (error) {
     console.error("Reservation custom-field integration error:", error);
     return next(error);

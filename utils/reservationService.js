@@ -589,6 +589,7 @@ export async function createReservation({
   businessId,
   customerName,
   phone,
+  email = null,
   reservationDate,
   reservationTime,
   partySize,
@@ -607,7 +608,7 @@ export async function createReservation({
       p_quantity: Number(partySize),
       p_notes: specialRequest || null,
       p_custom_data: customData || {},
-      p_customer_email: null,
+      p_customer_email: email || null,
     },
   );
 

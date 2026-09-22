@@ -95,10 +95,23 @@ export const buildCustomFieldPrompt = (field) => {
   return `${label}?${optionalHint}`;
 };
 
+export const getCustomFieldIdentityKey = (field = {}) => {
+  const key = String(field.system_key || field.key || "").toLowerCase();
+  const label = String(field.field_label || field.label || "").toLowerCase();
+  const combined = `${key} ${label}`;
+
+  if (/\b(email|e-mail)\b/.test(combined)) return "email";
+  if (/\b(phone|mobile|telephone|contact number)\b/.test(combined)) return "phone";
+  if (/\b(full name|customer name|name)\b/.test(combined)) return "name";
+
+  return null;
+};
+
 export const validateCustomFieldAnswer = (field, rawAnswer) => {
   const answer = String(rawAnswer || "").trim();
   const normalized = answer.toLowerCase();
   const skipped = SKIP_VALUES.has(normalized);
+  const identityKey = getCustomFieldIdentityKey(field);
 
   if (!answer || skipped) {
     if (field?.is_required) {
@@ -109,6 +122,14 @@ export const validateCustomFieldAnswer = (field, rawAnswer) => {
     }
 
     return { valid: true, value: "" };
+  }
+
+  if (identityKey === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(answer)) {
+    return { valid: false, error: "Please enter a valid email address." };
+  }
+
+  if (identityKey === "phone" && answer.replace(/[^0-9]/g, "").length < 8) {
+    return { valid: false, error: "Please enter a valid phone number." };
   }
 
   if (field?.field_type === "dropdown") {
