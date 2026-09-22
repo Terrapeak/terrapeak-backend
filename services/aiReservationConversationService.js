@@ -8,9 +8,21 @@ const isCancelMessage = (message) => /^(cancel|stop|exit|quit)$/i.test(String(me
 
 const selectOption = (message, options, labelKey = "name") => {
   const value = String(message || "").trim();
-  const numeric = Number.parseInt(value, 10);
-  if (Number.isInteger(numeric) && numeric >= 1 && numeric <= options.length) return options[numeric - 1];
-  return options.find((option) => [option.slug, option[labelKey], option.id].some((candidate) => String(candidate || "").toLowerCase() === value.toLowerCase())) || null;
+  const normalizedValue = value.toLowerCase();
+  const exact = options.find((option) => [
+    option.slug,
+    option[labelKey],
+    option.name,
+    option.displayName,
+    option.localTime,
+    option.id,
+  ].some((candidate) => String(candidate || "").toLowerCase() === normalizedValue));
+  if (exact) return exact;
+  if (/^\d+$/.test(value)) {
+    const numeric = Number.parseInt(value, 10);
+    if (numeric >= 1 && numeric <= options.length) return options[numeric - 1];
+  }
+  return null;
 };
 
 const optionReply = (label, options) => `Please choose a ${label}:\n\n${options.map((option, index) => `${index + 1}. ${option.name || option.displayName || option.localTime}`).join("\n")}`;

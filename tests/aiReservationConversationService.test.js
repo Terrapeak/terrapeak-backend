@@ -25,6 +25,13 @@ const acceptanceForm = [
   { id: "acceptance-reason", label: "acceptance reason 2", type: "text", active: true },
 ];
 
+const makeSlot = (localTime, startsAt) => ({
+  startsAt,
+  endsAt: "2026-09-23T02:00:00.000Z",
+  localTime,
+  timezone: "Asia/Kuala_Lumpur",
+});
+
 function makeAttemptModel() {
   const rows = [];
   return {
@@ -68,6 +75,52 @@ test("appointment conversation collects an explicit summary before confirmation"
   assert.equal(confirmation.handled, true);
   assert.equal(session.reservationFlow.status, "awaiting_confirmation");
   assert.equal(confirmation.reservation.confirmationRequired, true);
+});
+
+test("time labels match exactly before numeric ordinal fallback", async () => {
+  const slots = [
+    makeSlot("09:00:00", "2026-09-23T01:00:00.000Z"),
+    ...Array.from({ length: 7 }, (_, index) => makeSlot(`0${10 + index}:00:00`, `2026-09-23T03:00:00.000Z`)),
+    makeSlot("13:00:00", "2026-09-23T05:00:00.000Z"),
+  ];
+
+  const exactSession = { reservationFlow: { status: "slot_selection", selectionOptions: slots } };
+  await handleAiReservationConversation({ context, session: exactSession, message: "09:00:00", readAdapter });
+  assert.equal(exactSession.reservationFlow.startsAt, "2026-09-23T01:00:00.000Z");
+  assert.equal(exactSession.reservationFlow.status, "customer_form");
+
+  const ordinalSession = { reservationFlow: { status: "slot_selection", selectionOptions: slots } };
+  await handleAiReservationConversation({ context, session: ordinalSession, message: "9", readAdapter });
+  assert.equal(ordinalSession.reservationFlow.startsAt, "2026-09-23T05:00:00.000Z");
+
+  for (const message of ["09:00", "9:00", "9abc", "9 PM"]) {
+    const invalidSession = { reservationFlow: { status: "slot_selection", selectionOptions: slots } };
+    await handleAiReservationConversation({ context, session: invalidSession, message, readAdapter });
+    assert.equal(invalidSession.reservationFlow.status, "slot_selection", message);
+    assert.equal(invalidSession.reservationFlow.startsAt, undefined, message);
+  }
+});
+
+test("service and provider labels remain exact case-insensitive matches", async () => {
+  const serviceSession = {
+    reservationFlow: {
+      status: "service_selection",
+      selectionOptions: [{ id: 1, slug: "acceptance-test-service", name: "Acceptance Test Service" }],
+    },
+  };
+  await handleAiReservationConversation({ context, session: serviceSession, message: "ACCEPTANCE-TEST-SERVICE", readAdapter });
+  assert.equal(serviceSession.reservationFlow.serviceId, 1);
+  assert.equal(serviceSession.reservationFlow.status, "provider_selection");
+
+  const providerSession = {
+    reservationFlow: {
+      status: "provider_selection",
+      selectionOptions: [{ id: 2, slug: "acceptance-test-team-member", displayName: "Acceptance Test Team Member" }],
+    },
+  };
+  await handleAiReservationConversation({ context, session: providerSession, message: "ACCEPTANCE-TEST-TEAM-MEMBER", readAdapter });
+  assert.equal(providerSession.reservationFlow.providerId, 2);
+  assert.equal(providerSession.reservationFlow.status, "date_selection");
 });
 
 test("unsupported restaurant journeys stay outside the appointment write flow", async () => {
