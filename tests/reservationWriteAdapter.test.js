@@ -5,6 +5,9 @@ import { fingerprintReservationBookingRequest } from "../utils/reservationReques
 
 test("appointment write adapter calls only the canonical idempotent appointment RPC", async () => {
   const calls = [];
+  const events = [];
+  const originalInfo = console.info;
+  console.info = (value) => events.push(JSON.parse(value));
   const adapter = createReservationWriteAdapter({
     clientFactory: () => ({
       async rpc(name, args) {
@@ -13,11 +16,16 @@ test("appointment write adapter calls only the canonical idempotent appointment 
       },
     }),
   });
-  const result = await adapter.createAppointment({
-    reservationBusinessSlug: "tenant-a", serviceSlug: "consultation", providerSlug: "dr-a",
-    startsAt: "2099-01-15T09:00:00Z", customerName: "Aisha", customerEmail: "aisha@example.com",
-    customerPhone: "+31612345678", customData: { "7": "First visit" }, idempotencyKey: "company-1:attempt-1",
-  });
+  let result;
+  try {
+    result = await adapter.createAppointment({
+      reservationBusinessSlug: "tenant-a", serviceSlug: "consultation", providerSlug: "dr-a",
+      startsAt: "2099-01-15T09:00:00Z", customerName: "Aisha", customerEmail: "aisha@example.com",
+      customerPhone: "+31612345678", customData: { "7": "First visit" }, idempotencyKey: "company-1:attempt-1",
+    });
+  } finally {
+    console.info = originalInfo;
+  }
   assert.equal(result.reference, "BK-1");
   assert.deepEqual(calls, [{
     name: "create_public_booking_idempotent",
@@ -33,6 +41,9 @@ test("appointment write adapter calls only the canonical idempotent appointment 
       }).fingerprint,
     },
   }]);
+  assert.deepEqual(events.map(({ event }) => event), ["reservation_write_rpc_start", "reservation_write_rpc_success"]);
+  assert.equal(events[0].idempotencyKeyHash, "60aaccc7aac265c4");
+  assert.doesNotMatch(JSON.stringify(events), /Aisha|aisha@example.com|31612345678|First visit/);
 });
 
 test("same idempotency key with a different payload is mapped to a stable conflict", async () => {
@@ -58,11 +69,21 @@ test("ambiguous lookup returns the stored fingerprint for reconciliation", async
 });
 
 test("ambiguous adapter failures are explicitly marked and not converted to success", async () => {
+  const events = [];
+  const originalInfo = console.info;
+  console.info = (value) => events.push(JSON.parse(value));
   const adapter = createReservationWriteAdapter({
     clientFactory: () => ({ async rpc() { return { data: null, error: { message: "timeout" } }; } }),
   });
-  await assert.rejects(
-    adapter.createAppointment({ reservationBusinessSlug: "tenant-a", serviceSlug: "s", providerSlug: "p", startsAt: "2099-01-15T09:00:00Z", customerName: "A", customerPhone: "123456", idempotencyKey: "company-1:attempt-1" }),
-    (error) => error.code === "RESERVATIONS_WRITE_AMBIGUOUS" && error.ambiguous === true,
-  );
+  try {
+    await assert.rejects(
+      adapter.createAppointment({ reservationBusinessSlug: "tenant-a", serviceSlug: "s", providerSlug: "p", startsAt: "2099-01-15T09:00:00Z", customerName: "A", customerPhone: "123456", idempotencyKey: "company-1:attempt-1" }),
+      (error) => error.code === "RESERVATIONS_WRITE_AMBIGUOUS" && error.ambiguous === true,
+    );
+  } finally {
+    console.info = originalInfo;
+  }
+  assert.equal(events.at(-1).event, "reservation_write_rpc_failed");
+  assert.equal(events.at(-1).mappedErrorCode, "RESERVATIONS_WRITE_AMBIGUOUS");
+  assert.equal(events.at(-1).ambiguous, true);
 });

@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { fingerprintReservationBookingRequest } from "../utils/reservationRequestFingerprint.js";
+import { hashOperationalIdentifier, logAiReservationEvent } from "../utils/aiReservationLogger.js";
 
 export class ReservationBookingWriteError extends Error {
   constructor(code, message, { ambiguous = false, cause } = {}) {
@@ -98,22 +99,57 @@ export const createReservationWriteAdapter = ({ clientFactory = getClient } = {}
       notes,
       customData,
     });
-    const { data, error } = await clientFactory().rpc("create_public_booking_idempotent", {
-      p_business_slug: reservationBusinessSlug,
-      p_service_slug: serviceSlug,
-      p_staff_slug: providerSlug,
-      p_starts_at: startsAt,
-      p_customer_name: customerName,
-      p_customer_email: customerEmail || null,
-      p_customer_phone: customerPhone || null,
-      p_notes: notes || null,
-      p_custom_data: customData || {},
-      p_idempotency_key: idempotencyKey,
-      p_request_fingerprint: fingerprint,
-    });
-    if (!error) return normalizeResult(data);
+    const rpcMetadata = {
+      businessSlug: reservationBusinessSlug,
+      serviceSlug,
+      providerSlug,
+      idempotencyKeyHash: hashOperationalIdentifier(idempotencyKey),
+      requestFingerprint: fingerprint,
+    };
+    logAiReservationEvent("reservation_write_rpc_start", rpcMetadata);
+
+    let data;
+    let error;
+    try {
+      ({ data, error } = await clientFactory().rpc("create_public_booking_idempotent", {
+        p_business_slug: reservationBusinessSlug,
+        p_service_slug: serviceSlug,
+        p_staff_slug: providerSlug,
+        p_starts_at: startsAt,
+        p_customer_name: customerName,
+        p_customer_email: customerEmail || null,
+        p_customer_phone: customerPhone || null,
+        p_notes: notes || null,
+        p_custom_data: customData || {},
+        p_idempotency_key: idempotencyKey,
+        p_request_fingerprint: fingerprint,
+      }));
+    } catch (rpcError) {
+      logAiReservationEvent("reservation_write_rpc_failed", {
+        ...rpcMetadata,
+        supabaseErrorCode: rpcError?.code,
+        mappedErrorCode: rpcError?.code || "RESERVATIONS_WRITE_AMBIGUOUS",
+        ambiguous: Boolean(rpcError?.ambiguous ?? true),
+      });
+      throw rpcError;
+    }
+    if (!error) {
+      const result = normalizeResult(data);
+      logAiReservationEvent("reservation_write_rpc_success", {
+        businessSlug: reservationBusinessSlug,
+        bookingId: result.bookingId,
+        reference: result.reference,
+      });
+      return result;
+    }
 
     if (isIdempotencyConflict(error)) {
+      logAiReservationEvent("reservation_write_rpc_failed", {
+        ...rpcMetadata,
+        supabaseErrorCode: error.code,
+        mappedErrorCode: "IDEMPOTENCY_REQUEST_CONFLICT",
+        ambiguous: false,
+      });
       throw new ReservationBookingWriteError(
         "IDEMPOTENCY_REQUEST_CONFLICT",
         "The booking key was already used for a different request.",
@@ -121,13 +157,26 @@ export const createReservationWriteAdapter = ({ clientFactory = getClient } = {}
       );
     }
     if (isKnownRejectedWrite(error)) {
+      const mappedErrorCode = error.code === "23P01" ? "RESERVATION_SLOT_UNAVAILABLE" : "RESERVATIONS_WRITE_REJECTED";
+      logAiReservationEvent("reservation_write_rpc_failed", {
+        ...rpcMetadata,
+        supabaseErrorCode: error.code,
+        mappedErrorCode,
+        ambiguous: false,
+      });
       throw new ReservationBookingWriteError(
-        error.code === "23P01" ? "RESERVATION_SLOT_UNAVAILABLE" : "RESERVATIONS_WRITE_REJECTED",
+        mappedErrorCode,
         error.message || "Reservations rejected the booking.",
         { cause: error },
       );
     }
 
+    logAiReservationEvent("reservation_write_rpc_failed", {
+      ...rpcMetadata,
+      supabaseErrorCode: error.code,
+      mappedErrorCode: "RESERVATIONS_WRITE_AMBIGUOUS",
+      ambiguous: true,
+    });
     throw new ReservationBookingWriteError(
       "RESERVATIONS_WRITE_AMBIGUOUS",
       "The booking result could not be confirmed safely.",

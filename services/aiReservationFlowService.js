@@ -132,6 +132,15 @@ export async function confirmReservationFoundation({
     return { flowStatus: flow?.status || "idle", confirmationRequired: true, errorCode: "CONFIRMATION_REQUIRED" };
   }
   const decision = parseReservationConfirmation(message);
+  logAiReservationEvent("reservation_confirmation_received", {
+    companyId: context.companyId,
+    chatbotId: context.chatbotId,
+    businessId: context.reservationBusinessId,
+    journeyType: flow.journeyType,
+    attemptId: flow.bookingAttemptId,
+    flowStatus: flow.status,
+    confirmationDecision: decision,
+  });
   if (decision === "reject") {
     session.reservationFlow.status = "cancelled";
     return { flowStatus: "cancelled", confirmationRequired: false };
@@ -139,7 +148,16 @@ export async function confirmReservationFoundation({
   if (decision !== "confirm") {
     return { flowStatus: "awaiting_confirmation", confirmationRequired: true, errorCode: "CONFIRMATION_REQUIRED" };
   }
-  if (!isTransactionalAiReservationsEnabled(env)) {
+  const transactionalBookingEnabled = isTransactionalAiReservationsEnabled(env);
+  logAiReservationEvent("reservation_transaction_gate_checked", {
+    companyId: context.companyId,
+    chatbotId: context.chatbotId,
+    businessId: context.reservationBusinessId,
+    journeyType: flow.journeyType,
+    attemptId: flow.bookingAttemptId,
+    enabled: transactionalBookingEnabled,
+  });
+  if (!transactionalBookingEnabled) {
     logAiReservationEvent("reservation_booking_gate_blocked", {
       companyId: context.companyId,
       chatbotId: context.chatbotId,

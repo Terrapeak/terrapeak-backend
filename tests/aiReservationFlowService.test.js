@@ -88,3 +88,51 @@ test("negative or ambiguous confirmation never becomes write-authorized", async 
   session.reservationFlow.status = "awaiting_confirmation";
   assert.equal((await confirmReservationFoundation({ context, session, message: "maybe", env: { AI_RESERVATIONS_TRANSACTIONAL_BOOKING_ENABLED: "true" } })).errorCode, "CONFIRMATION_REQUIRED");
 });
+
+test("transaction gate emits a safe decision and blocks execution when disabled", async () => {
+  const events = [];
+  const originalInfo = console.info;
+  console.info = (value) => events.push(JSON.parse(value));
+  let executionCalls = 0;
+  try {
+    const result = await confirmReservationFoundation({
+      context,
+      session: { reservationFlow: { status: "awaiting_confirmation", journeyType: "appointment", bookingAttemptId: "attempt-disabled", confirmation: { summary: {} } } },
+      message: "yes",
+      env: { AI_RESERVATIONS_TRANSACTIONAL_BOOKING_ENABLED: "false" },
+      contextResolver: async () => { executionCalls += 1; return context; },
+    });
+    assert.equal(result.errorCode, "TRANSACTIONAL_BOOKING_DISABLED");
+    assert.equal(executionCalls, 0);
+  } finally {
+    console.info = originalInfo;
+  }
+  assert.deepEqual(events.map(({ event, enabled }) => ({ event, enabled })), [
+    { event: "reservation_confirmation_received", enabled: undefined },
+    { event: "reservation_transaction_gate_checked", enabled: false },
+    { event: "reservation_booking_gate_blocked", enabled: undefined },
+  ]);
+});
+
+test("transaction gate emits enabled=true before entering execution", async () => {
+  const events = [];
+  const originalInfo = console.info;
+  console.info = (value) => events.push(JSON.parse(value));
+  try {
+    const result = await confirmReservationFoundation({
+      context,
+      session: { reservationFlow: { status: "awaiting_confirmation", journeyType: "appointment", confirmation: { summary: {} } } },
+      message: "yes",
+      env: { AI_RESERVATIONS_TRANSACTIONAL_BOOKING_ENABLED: "true" },
+    });
+    assert.equal(result.errorCode, "BOOKING_ATTEMPT_ID_REQUIRED");
+  } finally {
+    console.info = originalInfo;
+  }
+  assert.deepEqual(events.map(({ event, enabled }) => ({ event, enabled })), [
+    { event: "reservation_confirmation_received", enabled: undefined },
+    { event: "reservation_transaction_gate_checked", enabled: true },
+    { event: "reservation_booking_failed", enabled: undefined },
+  ]);
+  assert.equal(events.at(-1).stage, "execution_started");
+});

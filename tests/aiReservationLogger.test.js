@@ -16,3 +16,17 @@ test("AI Reservations events allow only redacted operational metadata", () => {
   assert.match(output, /company-1/);
   assert.doesNotMatch(output, /aisha@example.com|31612345678|private message|secret/);
 });
+
+test("AI Reservations events write to the production console transport", () => {
+  const originalInfo = console.info;
+  const calls = [];
+  console.info = (value) => calls.push(value);
+  try {
+    logAiReservationEvent("test_event", { enabled: true, stage: "execution_started" });
+  } finally {
+    console.info = originalInfo;
+  }
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /"event":"test_event"/);
+  assert.match(calls[0], /"enabled":true/);
+});

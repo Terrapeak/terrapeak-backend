@@ -41,10 +41,23 @@ export async function executeAiReservationBooking({
   writeAdapter = reservationWriteAdapter,
   contextResolver = resolveChatReservationContext,
 }) {
-  if (!flow?.bookingAttemptId) throw fail("BOOKING_ATTEMPT_ID_REQUIRED", "The booking attempt is incomplete.");
-  if (flow.journeyType !== "appointment") throw fail("RESERVATION_JOURNEY_UNSUPPORTED", "This Reservations journey is not supported for automated booking.");
+  let stage = "execution_started";
+  const logStage = (name) => logAiReservationEvent("reservation_booking_stage", {
+    companyId: context.companyId,
+    chatbotId: context.chatbotId,
+    businessId: context.reservationBusinessId,
+    attemptId: flow?.bookingAttemptId,
+    stage: name,
+  });
 
-  const storedBeforeConfirmation = await getStoredAttempt(context, flow.bookingAttemptId, model);
+  try {
+    if (!flow?.bookingAttemptId) throw fail("BOOKING_ATTEMPT_ID_REQUIRED", "The booking attempt is incomplete.");
+    if (flow.journeyType !== "appointment") throw fail("RESERVATION_JOURNEY_UNSUPPORTED", "This Reservations journey is not supported for automated booking.");
+    logStage(stage);
+
+    const storedBeforeConfirmation = await getStoredAttempt(context, flow.bookingAttemptId, model);
+    stage = "stored_attempt_checked";
+    logStage(stage);
   if (storedBeforeConfirmation?.status === "completed" && storedBeforeConfirmation.result) {
     session.reservationFlow = { ...flow, status: "completed", confirmation: { ...flow.confirmation, result: storedBeforeConfirmation.result } };
     return { bookingCreated: true, replayed: true, result: storedBeforeConfirmation.result, flowStatus: "completed" };
@@ -74,6 +87,8 @@ export async function executeAiReservationBooking({
     sessionId: context.sessionId,
   });
   assertReservationSessionBinding(flow, freshContext);
+  stage = "context_revalidated";
+  logStage(stage);
   if (!supportedTemplates.has(freshContext.configuration.templateKey) || freshContext.configuration.capabilities.services !== true) {
     throw fail("RESERVATION_JOURNEY_UNSUPPORTED", "Automated booking is not available for this Reservations template.");
   }
@@ -81,14 +96,19 @@ export async function executeAiReservationBooking({
     throw fail("RESERVATION_TENANT_MISMATCH", "The Reservations business changed before booking.");
   }
 
+  stage = "service_revalidated";
   const services = await readAdapter.listBookableServices(freshContext);
   const service = services.find((item) => sameId(item.id, flow.serviceId) || item.slug === flow.serviceSlug);
   if (!service) throw fail("RESERVATION_SERVICE_CHANGED", "The selected service is no longer available.");
+  logStage(stage);
 
+  stage = "provider_revalidated";
   const providers = await readAdapter.listBookableProviders(freshContext, service);
   const provider = providers.find((item) => sameId(item.id, flow.providerId) || item.slug === flow.providerSlug);
   if (!provider) throw fail("RESERVATION_PROVIDER_CHANGED", "The selected provider is no longer available.");
+  logStage(stage);
 
+  stage = "slot_revalidated";
   const slots = await readAdapter.listAppointmentAvailability(freshContext, {
     serviceId: service.id,
     serviceSlug: service.slug,
@@ -99,7 +119,9 @@ export async function executeAiReservationBooking({
   });
   const slot = slots.find((item) => String(item.startsAt) === String(flow.startsAt));
   if (!slot) throw fail("RESERVATION_SLOT_CHANGED", "The selected time is no longer available.");
+  logStage(stage);
 
+  stage = "customer_form_validated";
   const form = normalizeCustomerForm(await readAdapter.getCustomerForm(freshContext));
   const customer = flow.customer || {};
   const customData = flow.customData || {};
@@ -108,6 +130,7 @@ export async function executeAiReservationBooking({
   if (!String(customer.name || "").trim() || String(customer.phone || "").replace(/\D/g, "").length < 6) {
     throw fail("RESERVATION_CUSTOMER_FORM_INVALID", "Customer name and phone are required.");
   }
+  logStage(stage);
 
   const request = {
     reservationBusinessSlug: freshContext.reservationBusinessSlug,
@@ -122,20 +145,28 @@ export async function executeAiReservationBooking({
     idempotencyKey: flow.idempotencyKey,
   };
   const { fingerprint: requestFingerprint } = fingerprintReservationBookingRequest(request);
+  stage = "fingerprint_verified";
   const currentAttempt = await getStoredAttempt(freshContext, flow.bookingAttemptId, model);
   if (!currentAttempt?.requestFingerprint || currentAttempt.requestFingerprint !== requestFingerprint) {
     throw fail("BOOKING_ATTEMPT_CONFLICT", "The booking request changed and cannot be safely submitted.");
   }
+  logStage(stage);
   await markReservationBookingAttemptConfirmed({
     context: freshContext,
     bookingAttemptId: flow.bookingAttemptId,
     model,
   });
+  stage = "attempt_confirmed";
+  logStage(stage);
   const claimedAttempt = await claimReservationBookingAttempt({
     context: freshContext,
     bookingAttemptId: flow.bookingAttemptId,
     model,
   });
+  if (claimedAttempt) {
+    stage = "attempt_claimed";
+    logStage(stage);
+  }
   if (!claimedAttempt) {
     const existing = await getStoredAttempt(freshContext, flow.bookingAttemptId, model);
     if (existing?.status === "completed" && existing.result) {
@@ -147,7 +178,11 @@ export async function executeAiReservationBooking({
   }
 
   try {
+    stage = "write_adapter_start";
+    logStage(stage);
     const result = await writeAdapter.createAppointment(request);
+    stage = "write_adapter_success";
+    logStage(stage);
     try {
       const completed = await completeReservationBookingAttempt({ context: freshContext, bookingAttemptId: flow.bookingAttemptId, result, model });
       if (!completed) throw new Error("The booking attempt could not be finalized.");
@@ -157,6 +192,8 @@ export async function executeAiReservationBooking({
       error.ambiguous = true;
       throw error;
     }
+    stage = "attempt_completed";
+    logStage(stage);
     session.reservationFlow = { ...flow, status: "completed", confirmation: { ...flow.confirmation, result } };
     logAiReservationEvent("reservation_booking_completed", {
       companyId: freshContext.companyId,
@@ -202,14 +239,19 @@ export async function executeAiReservationBooking({
       await failReservationBookingAttempt({ context: freshContext, bookingAttemptId: flow.bookingAttemptId, errorCode, model });
     }
     session.reservationFlow = { ...flow, status: error.ambiguous ? "unknown" : "failed" };
-    logAiReservationEvent("reservation_booking_failed", {
-      companyId: freshContext.companyId,
-      chatbotId: freshContext.chatbotId,
-      businessId: freshContext.reservationBusinessId,
-      journeyType: "appointment",
-      attemptId: flow.bookingAttemptId,
-      errorCode,
-    });
     throw Object.assign(error, { code: errorCode });
+  }
+  } catch (error) {
+    logAiReservationEvent("reservation_booking_failed", {
+      companyId: context.companyId,
+      chatbotId: context.chatbotId,
+      businessId: context.reservationBusinessId,
+      journeyType: flow?.journeyType,
+      attemptId: flow?.bookingAttemptId,
+      stage,
+      errorCode: error.code || "RESERVATIONS_WRITE_FAILED",
+      ambiguous: Boolean(error.ambiguous),
+    });
+    throw error;
   }
 }

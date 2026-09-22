@@ -70,24 +70,37 @@ test("supported appointment booking is revalidated and written once", async () =
     bookingAttemptId: "attempt-1", idempotencyKey: flow.idempotencyKey, requestFingerprint: bookingFingerprint, status: "draft",
   });
   let writes = 0;
-  const result = await executeAiReservationBooking({
-    context,
-    session: { reservationFlow: flow },
-    apiKey: "key",
-    model,
-    contextResolver: async () => freshContext,
-    readAdapter: makeReadAdapter(),
-    writeAdapter: {
-      async createAppointment(request) {
-        writes += 1;
-        assert.equal(request.idempotencyKey, flow.idempotencyKey);
-        return { bookingId: "booking-1", reference: "BK-1", startsAt: flow.startsAt, endsAt: "2099-01-15T10:00:00.000Z" };
+  const events = [];
+  const originalInfo = console.info;
+  console.info = (value) => events.push(JSON.parse(value));
+  let result;
+  try {
+    result = await executeAiReservationBooking({
+      context,
+      session: { reservationFlow: flow },
+      apiKey: "key",
+      model,
+      contextResolver: async () => freshContext,
+      readAdapter: makeReadAdapter(),
+      writeAdapter: {
+        async createAppointment(request) {
+          writes += 1;
+          assert.equal(request.idempotencyKey, flow.idempotencyKey);
+          return { bookingId: "booking-1", reference: "BK-1", startsAt: flow.startsAt, endsAt: "2099-01-15T10:00:00.000Z" };
+        },
       },
-    },
-  });
+    });
+  } finally {
+    console.info = originalInfo;
+  }
   assert.equal(result.bookingCreated, true);
   assert.equal(writes, 1);
   assert.equal(model.rows[0].status, "completed");
+  assert.deepEqual(events.filter(({ event }) => event === "reservation_booking_stage").map(({ stage }) => stage), [
+    "execution_started", "stored_attempt_checked", "context_revalidated", "service_revalidated",
+    "provider_revalidated", "slot_revalidated", "customer_form_validated", "fingerprint_verified",
+    "attempt_confirmed", "attempt_claimed", "write_adapter_start", "write_adapter_success", "attempt_completed",
+  ]);
 });
 
 test("completed attempts replay the stored booking without another provider write", async () => {
@@ -171,4 +184,30 @@ test("a changed canonical payload fails closed before claiming or writing", asyn
   );
   assert.equal(writes, 0);
   assert.equal(model.rows[0].status, "draft");
+});
+
+test("fingerprint conflict emits the pre-write failure stage", async () => {
+  const model = makeModel({ companyId: "company-1", chatbotId: "chatbot-1", sessionId: "session-1", bookingAttemptId: "attempt-1", idempotencyKey: flow.idempotencyKey, requestFingerprint: "different", status: "draft" });
+  const events = [];
+  const originalInfo = console.info;
+  console.info = (value) => events.push(JSON.parse(value));
+  try {
+    await assert.rejects(
+      executeAiReservationBooking({
+        context,
+        session: { reservationFlow: flow },
+        model,
+        contextResolver: async () => freshContext,
+        readAdapter: makeReadAdapter(),
+        writeAdapter: { async createAppointment() { assert.fail("write must not run"); } },
+      }),
+      (error) => error.code === "BOOKING_ATTEMPT_CONFLICT",
+    );
+  } finally {
+    console.info = originalInfo;
+  }
+  const failure = events.find(({ event }) => event === "reservation_booking_failed");
+  assert.equal(failure.stage, "fingerprint_verified");
+  assert.equal(failure.errorCode, "BOOKING_ATTEMPT_CONFLICT");
+  assert.equal(failure.ambiguous, false);
 });
