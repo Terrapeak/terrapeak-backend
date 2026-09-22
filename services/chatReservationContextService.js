@@ -4,6 +4,7 @@ import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import { isCompanyOperational } from "../utils/companyLifecycle.js";
 import { resolveReservationsConfiguration } from "../utils/reservationConfiguration.js";
 import { reservationsReadAdapter } from "./reservationReadAdapter.js";
+import { measureAiReservationStage } from "../utils/aiReservationLogger.js";
 
 export class ChatReservationContextError extends Error {
   constructor(code, message, statusCode = 409) {
@@ -78,7 +79,10 @@ export async function resolveChatReservationContext({
     fail("RESERVATION_CONTEXT_INVALID", "Reservation context is incomplete.", 400);
   }
 
-  const settings = asPlainObject(await store.findChatbot(apiKey));
+  const settings = asPlainObject(await measureAiReservationStage({
+    stage: "context_chatbot_read",
+    operation: "mongo_context_chatbot_read",
+  }, () => store.findChatbot(apiKey)));
   if (!settings) fail("INVALID_CHATBOT_API_KEY", "Invalid chatbot API key.", 403);
   if (String(settings._id) !== String(chatbotId)) {
     fail("INVALID_CHATBOT_ID", "Invalid chatbot ID.", 400);
@@ -92,7 +96,10 @@ export async function resolveChatReservationContext({
     fail("RESERVATIONS_NOT_CONFIGURED", "Reservations are not configured for this business.");
   }
 
-  const company = asPlainObject(await store.findCompany(companyId));
+  const company = asPlainObject(await measureAiReservationStage({
+    stage: "context_company_read",
+    operation: "mongo_context_company_read",
+  }, () => store.findCompany(companyId)));
   if (!company) fail("COMPANY_NOT_FOUND", "The Company could not be found.", 404);
   if (company.lifecycleStatus === "archived") {
     fail("COMPANY_ARCHIVED", "This Company is archived.");
@@ -101,7 +108,10 @@ export async function resolveChatReservationContext({
     fail("COMPANY_INACTIVE", "This Company is inactive.");
   }
 
-  const installation = asPlainObject(await store.findInstallation(company._id || companyId));
+  const installation = asPlainObject(await measureAiReservationStage({
+    stage: "context_installation_read",
+    operation: "mongo_context_installation_read",
+  }, () => store.findInstallation(company._id || companyId)));
   if (!installation) {
     fail("RESERVATIONS_APP_DISABLED", "Reservations are not enabled for this Company.");
   }

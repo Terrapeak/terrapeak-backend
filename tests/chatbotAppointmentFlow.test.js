@@ -90,13 +90,12 @@ function installChatbotMocks(t, { reservationEnabled = true, timeSlot } = {}) {
   return { settings, getSession: () => sessionDocument };
 }
 
-async function sendMessage(t, message, userId = null) {
+async function sendMessage(t, message, userId = null, chatReservationContext = null) {
   const response = {};
   response.json = (body) => {
     response.body = body;
   };
-  await askGemini(
-    {
+  const request = {
       body: {
         sessionId: "anonymous-appointment-session",
         chatbotId: chatbotId.toString(),
@@ -107,8 +106,9 @@ async function sendMessage(t, message, userId = null) {
         isPreview: true,
       },
       headers: { "x-api-key": "test-api-key" },
-    },
-    response,
+  };
+  if (chatReservationContext) request.chatReservationContext = chatReservationContext;
+  await askGemini(request, response,
     (error) => {
       throw error;
     },
@@ -318,10 +318,12 @@ test("controller routes a service-specific request to canonical R2B service sele
     globalThis.fetch = previousFetch;
   });
   installChatbotMocks(t);
+  let configurationCalls = 0;
 
   globalThis.fetch = async (url) => {
     const target = String(url);
     if (target.includes("/rpc/get_public_reservations_configuration")) {
+      configurationCalls += 1;
       return new Response(JSON.stringify([{
         business_id: 42,
         template_key: "general",
@@ -353,6 +355,121 @@ test("controller routes a service-specific request to canonical R2B service sele
   assert.match(result.reply, /1\. Acceptance Test Service/);
   assert.doesNotMatch(result.reply, /reservation or meeting|Reservations form/i);
   assert.equal(result.bookingType, null);
+  assert.equal(configurationCalls, 1);
+});
+
+test("first typed R2B turn reuses a correctly bound middleware context", async (t) => {
+  const previousFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+  });
+  const { settings } = installChatbotMocks(t);
+  const telemetry = [];
+  t.mock.method(console, "info", (line) => {
+    const event = JSON.parse(line);
+    if (event.event === "reservation_context_source") telemetry.push(event);
+  });
+  let configurationCalls = 0;
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.includes("/rest/v1/services")) {
+      return new Response(JSON.stringify([{
+        id: 101,
+        business_id: 42,
+        name: "Acceptance Test Service",
+        slug: "acceptance-test-service",
+        booking_type: "appointment",
+        duration_minutes: 60,
+        is_active: true,
+        is_published: true,
+        is_internal: false,
+      }]), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (target.includes("get_public_reservations_configuration")) {
+      configurationCalls += 1;
+      return new Response(JSON.stringify([{
+        business_id: 42,
+        template_key: "general",
+        capabilities: { services: true },
+        terminology: {},
+        booking_behavior: "immediate",
+      }]), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`Unexpected Reservations read: ${target}`);
+  };
+  const middlewareContext = {
+    sessionId: "anonymous-appointment-session",
+    chatbotId: chatbotId.toString(),
+    companyId: settings.companyId.toString(),
+    installationId: "installation-1",
+    reservationBusinessId: 42,
+    reservationBusinessSlug: "test-business",
+    configuration: {
+      templateKey: "general",
+      capabilities: { services: true },
+      bookingBehavior: { booking_behavior: "immediate" },
+    },
+  };
+  const result = await sendMessage(t, "I want to book Acceptance Test Service", null, middlewareContext);
+
+  assert.equal(result.reservation.flowStatus, "service_selection");
+  assert.equal(configurationCalls, 0);
+  assert.equal(telemetry.at(-1)?.contextSource, "middleware");
+});
+
+test("invalid middleware context falls back to one fresh controller resolution", async (t) => {
+  const previousFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+  });
+  const { settings } = installChatbotMocks(t);
+  let configurationCalls = 0;
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.includes("/rest/v1/services")) {
+      return new Response(JSON.stringify([{
+        id: 101,
+        business_id: 42,
+        name: "Acceptance Test Service",
+        slug: "acceptance-test-service",
+        booking_type: "appointment",
+        duration_minutes: 60,
+        is_active: true,
+        is_published: true,
+        is_internal: false,
+      }]), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (target.includes("get_public_reservations_configuration")) {
+      configurationCalls += 1;
+      return new Response(JSON.stringify([{
+        business_id: 42,
+        template_key: "general",
+        capabilities: { services: true },
+        terminology: {},
+        booking_behavior: "immediate",
+      }]), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`Unexpected Reservations read: ${target}`);
+  };
+  const middlewareContext = {
+    sessionId: "anonymous-appointment-session",
+    chatbotId: chatbotId.toString(),
+    companyId: settings.companyId.toString(),
+    installationId: "installation-1",
+    reservationBusinessId: 42,
+    reservationBusinessSlug: "test-business",
+    configuration: {
+      templateKey: "general",
+      capabilities: { services: true },
+      bookingBehavior: { booking_behavior: "immediate" },
+    },
+  };
+  const mismatchedContext = { ...middlewareContext, reservationBusinessId: 999 };
+
+  const result = await sendMessage(t, "I want to book Acceptance Test Service", null, mismatchedContext);
+
+  assert.equal(result.reservation.flowStatus, "service_selection");
+  assert.equal(configurationCalls, 1);
 });
 
 test("meeting phrases select the scheduled appointment flow", () => {

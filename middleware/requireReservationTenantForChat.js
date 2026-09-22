@@ -1,8 +1,11 @@
+import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import Session from "../models/sessionModel.js";
 import {
   ChatReservationContextError,
   resolveChatReservationContext,
 } from "../services/chatReservationContextService.js";
+import { logAiReservationEvent, measureAiReservationStage, setAiReservationTrace } from "../utils/aiReservationLogger.js";
 
 const RESERVATION_KEYWORDS = [
   "reservation",
@@ -62,6 +65,8 @@ const reservationSessionActive = (session) =>
 
 export default async function requireReservationTenantForChat(req, res, next) {
   try {
+    req.aiReservationTraceId ||= randomUUID();
+    setAiReservationTrace(req.aiReservationTraceId);
     const apiKey = req.headers["x-api-key"];
     const { sessionId, chatbotId, message } = req.body || {};
 
@@ -69,20 +74,33 @@ export default async function requireReservationTenantForChat(req, res, next) {
 
     let session = null;
     if (sessionId) {
-      session = await Session.findOne({
+      session = await measureAiReservationStage({
+        stage: "middleware_session_load",
+        operation: "mongo_middleware_session_load",
+      }, () => Session.findOne({
         sessionId,
         chatbotId,
       }).select(
         "bookingType reservationStep cancelReservationStep reservationRescheduleStep rescheduleReservationId cancelReservationId",
-      );
+      ));
     }
 
+    const intentStartedAt = performance.now();
     const reservationRequested =
       reservationIntent(message) || reservationSessionActive(session);
+    logAiReservationEvent("reservation_performance_stage", {
+      stage: "middleware_intent_detection",
+      operation: "reservation_intent_detection",
+      durationMs: Math.round(performance.now() - intentStartedAt),
+      success: true,
+    });
 
     if (!reservationRequested) return next();
 
-    const context = await resolveChatReservationContext({ apiKey, chatbotId, sessionId });
+    const context = await measureAiReservationStage({
+      stage: "middleware_context_resolution",
+      operation: "resolve_chat_reservation_context",
+    }, () => resolveChatReservationContext({ apiKey, chatbotId, sessionId }));
     req.chatReservationContext = context;
     return next();
   } catch (error) {

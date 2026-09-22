@@ -264,7 +264,8 @@ async function fetchGeminiWithRetry(
    ASK GEMINI CONTROLLER
 ================================ */
 export const askGemini = asyncHandler(async (req, res) => {
-  setAiReservationTrace(randomUUID());
+  req.aiReservationTraceId ||= randomUUID();
+  setAiReservationTrace(req.aiReservationTraceId);
   const requestStartedAt = performance.now();
   let handledBy = "other";
   let modelCalled = false;
@@ -505,13 +506,32 @@ if (!session.rescheduleReservationData) {
         });
         if (cachedContext) {
           logAiReservationEvent("reservation_context_cache", { outcome: "hit", companyId: settings.companyId, chatbotId, businessId: reservationBusinessId });
+          logAiReservationEvent("reservation_context_source", { contextSource: "session_cache", companyId: settings.companyId, chatbotId, businessId: reservationBusinessId });
           typedContext = cachedContext;
         } else {
           logAiReservationEvent("reservation_context_cache", { outcome: "miss", companyId: settings.companyId, chatbotId, businessId: reservationBusinessId });
           typedContext = await resolveFreshTypedContext();
+          logAiReservationEvent("reservation_context_source", { contextSource: "fresh_resolution", companyId: settings.companyId, chatbotId, businessId: reservationBusinessId });
+        }
+      } else if (activeFlowStatus === undefined || activeFlowStatus === "idle") {
+        const middlewareContext = getReusableReservationConversationContext({
+          snapshot: req.chatReservationContext,
+          sessionId,
+          chatbotId,
+          companyId: settings.companyId,
+          reservationBusinessId,
+          reservationBusinessSlug: reservationCompany?.reservationBusinessSlug || settings.reservationBusinessSlug,
+        });
+        if (middlewareContext) {
+          logAiReservationEvent("reservation_context_source", { contextSource: "middleware", companyId: settings.companyId, chatbotId, businessId: reservationBusinessId });
+          typedContext = middlewareContext;
+        } else {
+          logAiReservationEvent("reservation_context_source", { contextSource: "fresh_resolution", companyId: settings.companyId, chatbotId, businessId: reservationBusinessId });
+          typedContext = await resolveFreshTypedContext();
         }
       } else {
         logAiReservationEvent("reservation_context_cache", { outcome: "not_eligible", companyId: settings.companyId, chatbotId, businessId: reservationBusinessId });
+        logAiReservationEvent("reservation_context_source", { contextSource: "fresh_resolution", companyId: settings.companyId, chatbotId, businessId: reservationBusinessId });
         typedContext = await resolveFreshTypedContext();
       }
       typedReservationResponse = await handleAiReservationConversation({
