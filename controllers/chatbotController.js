@@ -438,6 +438,9 @@ if (!session.rescheduleReservationData) {
             snapshot: session.reservationFlow.contextSnapshot,
             sessionId,
             chatbotId,
+            companyId: settings.companyId,
+            reservationBusinessId,
+            reservationBusinessSlug: reservationCompany?.reservationBusinessSlug || settings.reservationBusinessSlug,
           }) || await resolveChatReservationContext({ apiKey, chatbotId, sessionId })
         : await resolveChatReservationContext({ apiKey, chatbotId, sessionId });
       typedReservationResponse = await handleAiReservationConversation({

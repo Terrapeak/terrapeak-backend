@@ -123,7 +123,7 @@ test("transactional booking remains disabled by default", () => {
   assert.equal(isTransactionalAiReservationsEnabled({ AI_RESERVATIONS_TRANSACTIONAL_BOOKING_ENABLED: "true" }), true);
 });
 
-test("conversation context snapshots reuse only the bound session and chatbot", () => {
+test("conversation context snapshots require every authoritative tenant binding", () => {
   const snapshot = buildReservationConversationContextSnapshot({
     sessionId: "session-a",
     chatbotId: "chatbot-1",
@@ -132,9 +132,17 @@ test("conversation context snapshots reuse only the bound session and chatbot", 
     reservationBusinessSlug: "tenant-a",
     configuration: { templateKey: "general" },
   });
-  assert.ok(getReusableReservationConversationContext({ snapshot, sessionId: "session-a", chatbotId: "chatbot-1" }));
-  assert.equal(getReusableReservationConversationContext({ snapshot, sessionId: "session-b", chatbotId: "chatbot-1" }), null);
-  assert.equal(getReusableReservationConversationContext({ snapshot, sessionId: "session-a", chatbotId: "chatbot-2" }), null);
+  const current = { sessionId: "session-a", chatbotId: "chatbot-1", companyId: "company-1", reservationBusinessId: 42, reservationBusinessSlug: "tenant-a" };
+  assert.ok(getReusableReservationConversationContext({ snapshot, ...current }));
+  assert.equal(getReusableReservationConversationContext({ snapshot, ...current, sessionId: "session-b" }), null);
+  assert.equal(getReusableReservationConversationContext({ snapshot, ...current, chatbotId: "chatbot-2" }), null);
+  assert.equal(getReusableReservationConversationContext({ snapshot, ...current, companyId: "company-2" }), null);
+  assert.equal(getReusableReservationConversationContext({ snapshot, ...current, reservationBusinessId: 20 }), null);
+  assert.equal(getReusableReservationConversationContext({ snapshot, ...current, reservationBusinessSlug: "tenant-b" }), null);
+  assert.equal(getReusableReservationConversationContext({ snapshot, ...current, companyId: undefined }), null);
+  assert.equal(getReusableReservationConversationContext({ snapshot, ...current, companyId: "" }), null);
+  assert.equal(getReusableReservationConversationContext({ snapshot, ...current, reservationBusinessId: undefined }), null);
+  assert.equal(getReusableReservationConversationContext({ snapshot, ...current, reservationBusinessId: "" }), null);
 });
 
 test("typed context code contains no global Reservations business fallback", () => {

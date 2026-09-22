@@ -148,9 +148,26 @@ export const buildReservationConversationContextSnapshot = (context = {}) => ({
   configuration: context.configuration,
 });
 
-export const getReusableReservationConversationContext = ({ snapshot, sessionId, chatbotId } = {}) => {
-  if (!snapshot || String(snapshot.sessionId || "") !== String(sessionId || "")) return null;
-  if (String(snapshot.chatbotId || "") !== String(chatbotId || "")) return null;
+export const getReusableReservationConversationContext = ({
+  snapshot,
+  sessionId,
+  chatbotId,
+  companyId,
+  reservationBusinessId,
+  reservationBusinessSlug,
+} = {}) => {
+  if (!snapshot) return null;
+  const hasBinding = (value) => value !== undefined && value !== null && String(value).trim() !== "";
+  const bindings = [
+    [snapshot.sessionId, sessionId],
+    [snapshot.chatbotId, chatbotId],
+    [snapshot.companyId, companyId],
+    [snapshot.reservationBusinessId, reservationBusinessId],
+  ];
+  if (bindings.some(([cached, current]) => !hasBinding(cached) || !hasBinding(current) || String(cached) !== String(current))) return null;
+  if (hasBinding(reservationBusinessSlug)) {
+    if (!hasBinding(snapshot.reservationBusinessSlug) || String(snapshot.reservationBusinessSlug) !== String(reservationBusinessSlug)) return null;
+  }
   return snapshot;
 };
 
