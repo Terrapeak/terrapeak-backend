@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { fingerprintReservationBookingRequest } from "../utils/reservationRequestFingerprint.js";
-import { hashOperationalIdentifier, logAiReservationEvent } from "../utils/aiReservationLogger.js";
+import { hashOperationalIdentifier, logAiReservationEvent, measureAiReservationStage } from "../utils/aiReservationLogger.js";
 
 export class ReservationBookingWriteError extends Error {
   constructor(code, message, { ambiguous = false, cause } = {}) {
@@ -58,10 +58,10 @@ const isIdempotencyConflict = (error) =>
 
 export const createReservationWriteAdapter = ({ clientFactory = getClient } = {}) => ({
   async findByIdempotencyKey({ reservationBusinessSlug, idempotencyKey }) {
-    const { data, error } = await clientFactory().rpc("get_public_booking_by_idempotency_key", {
+    const { data, error } = await measureAiReservationStage({ stage: "supabase_lookup_rpc", operation: "get_public_booking_by_idempotency_key", context: { reservationBusinessId: null, reservationBusinessSlug } }, () => clientFactory().rpc("get_public_booking_by_idempotency_key", {
       p_business_slug: reservationBusinessSlug,
       p_idempotency_key: idempotencyKey,
-    });
+    }));
     if (error) throw new ReservationBookingWriteError(
       "RESERVATIONS_WRITE_LOOKUP_FAILED",
       "Reservations booking result could not be verified.",
@@ -111,7 +111,7 @@ export const createReservationWriteAdapter = ({ clientFactory = getClient } = {}
     let data;
     let error;
     try {
-      ({ data, error } = await clientFactory().rpc("create_public_booking_idempotent", {
+      ({ data, error } = await measureAiReservationStage({ stage: "supabase_write_rpc", operation: "create_public_booking_idempotent", context: { reservationBusinessSlug } }, () => clientFactory().rpc("create_public_booking_idempotent", {
         p_business_slug: reservationBusinessSlug,
         p_service_slug: serviceSlug,
         p_staff_slug: providerSlug,
@@ -123,7 +123,7 @@ export const createReservationWriteAdapter = ({ clientFactory = getClient } = {}
         p_custom_data: customData || {},
         p_idempotency_key: idempotencyKey,
         p_request_fingerprint: fingerprint,
-      }));
+      })));
     } catch (rpcError) {
       logAiReservationEvent("reservation_write_rpc_failed", {
         ...rpcMetadata,

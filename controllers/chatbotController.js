@@ -1,4 +1,6 @@
 import asyncHandler from "express-async-handler";
+import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import ChatbotSettings from "../models/chatbotSettings.js";
 import ChatbotAction from "../models/ChatbotAction.js";
 import WebsiteInfo from "../models/WebsiteInfo.js";
@@ -39,6 +41,7 @@ import { getReusableReservationConversationContext, resolveChatReservationContex
 import { reservationsReadAdapter } from "../services/reservationReadAdapter.js";
 import { reservationWriteAdapter } from "../services/reservationWriteAdapter.js";
 import { handleAiReservationConversation } from "../services/aiReservationConversationService.js";
+import { logAiReservationEvent, measureAiReservationStage, setAiReservationTrace } from "../utils/aiReservationLogger.js";
 
 // List of all fields allowed to be updated
 const ALLOWED_FIELDS = [
@@ -261,6 +264,35 @@ async function fetchGeminiWithRetry(
    ASK GEMINI CONTROLLER
 ================================ */
 export const askGemini = asyncHandler(async (req, res) => {
+  setAiReservationTrace(randomUUID());
+  const requestStartedAt = performance.now();
+  let handledBy = "other";
+  let modelCalled = false;
+  let modelDurationMs = null;
+  let modelStartedAt = null;
+  let measuredStageMs = 0;
+  const recordMeasuredStage = ({ durationMs }) => {
+    measuredStageMs += durationMs;
+  };
+  let timingLogged = false;
+  const originalJson = res.json.bind(res);
+  res.json = (body) => {
+    if (!timingLogged) {
+      timingLogged = true;
+      const totalMs = Math.round(performance.now() - requestStartedAt);
+      logAiReservationEvent("chatbot_request_timing", {
+        totalMs,
+        unattributedMs: Math.max(0, totalMs - measuredStageMs),
+        handledBy,
+        modelCalled,
+        modelDurationMs,
+        r2bStatus: body?.reservation?.flowStatus,
+        r2bStep: body?.reservation?.step,
+        success: body?.success !== false,
+      });
+    }
+    return originalJson(body);
+  };
   const {
     sessionId,
     chatbotId,
@@ -291,7 +323,11 @@ export const askGemini = asyncHandler(async (req, res) => {
   /* ===============================
      CHATBOT SETTINGS VALIDATION
   ================================ */
-  const settings = await ChatbotSettings.findOne({ apiKey });
+  const settings = await measureAiReservationStage({
+    stage: "chatbot_settings_load",
+    operation: "mongo_chatbot_settings_load",
+    onMeasured: recordMeasuredStage,
+  }, () => ChatbotSettings.findOne({ apiKey }));
 
      // use only when debugging 
 
@@ -305,7 +341,12 @@ export const askGemini = asyncHandler(async (req, res) => {
       .json({ success: false, error: "Invalid chatbotId." });
   }
   const [reservationCompany, reservationsInstallation] = settings.companyId
-    ? await Promise.all([
+    ? await measureAiReservationStage({
+      stage: "reservation_tenant_context",
+      operation: "mongo_reservation_tenant_context",
+      context: { companyId: settings.companyId, chatbotId, reservationBusinessId: null },
+      onMeasured: recordMeasuredStage,
+    }, () => Promise.all([
         Company.findById(settings.companyId)
           .select(
             "reservationBusinessId reservationBusinessSlug reservationTemplate isActive email phone reservationCancellationPolicyHours reservationCancellationPolicyText reservationCancellationRequiresStaffApprovalWithinWindow",
@@ -319,7 +360,7 @@ export const askGemini = asyncHandler(async (req, res) => {
         })
           .select("_id")
           .lean(),
-      ])
+      ]))
     : [null, null];
 
   const reservationBusinessId = Number(
@@ -350,10 +391,10 @@ export const askGemini = asyncHandler(async (req, res) => {
   /* ===============================
      SESSION HANDLING
   ================================ */
-  let session = await Session.findOne({
+  let session = await measureAiReservationStage({ stage: "session_load", operation: "mongo_session_load", onMeasured: recordMeasuredStage }, () => Session.findOne({
     sessionId,
     chatbotId: settings._id,
-  });
+  }));
 
   if (!session) {
     session = new Session({
@@ -416,11 +457,23 @@ if (!session.rescheduleReservationData) {
   let botReply = null;
   let typedReservationResponse = null;
 
+  const routingStartedAt = performance.now();
   const shouldHandleTypedAppointmentRequest = shouldHandleTypedAppointment({
     reservationEnabled,
     message: lowerMsg,
     session,
   });
+  logAiReservationEvent("reservation_performance_stage", {
+    stage: "typed_r2b_routing",
+    operation: "should_handle_typed_appointment",
+    durationMs: Math.round(performance.now() - routingStartedAt),
+    companyId: settings.companyId,
+    chatbotId,
+    businessId: reservationBusinessId,
+    flowStatus: session.reservationFlow?.status,
+    success: true,
+  });
+  measuredStageMs += Math.round(performance.now() - routingStartedAt);
   if (shouldHandleTypedAppointmentRequest) {
     try {
       const activeFlowStatus = session.reservationFlow?.status;
@@ -433,16 +486,34 @@ if (!session.rescheduleReservationData) {
         activeFlowStatus !== "failed" &&
         activeFlowStatus !== "unknown",
       );
-      const typedContext = canReuseConversationContext
-        ? getReusableReservationConversationContext({
+      const resolveFreshTypedContext = () => measureAiReservationStage({
+        stage: "context_resolution",
+        operation: "resolve_chat_reservation_context",
+        context: { companyId: settings.companyId, chatbotId, reservationBusinessId },
+        flow: session.reservationFlow,
+        onMeasured: recordMeasuredStage,
+      }, () => resolveChatReservationContext({ apiKey, chatbotId, sessionId }));
+      let typedContext;
+      if (canReuseConversationContext) {
+        const cachedContext = getReusableReservationConversationContext({
             snapshot: session.reservationFlow.contextSnapshot,
             sessionId,
             chatbotId,
             companyId: settings.companyId,
             reservationBusinessId,
             reservationBusinessSlug: reservationCompany?.reservationBusinessSlug || settings.reservationBusinessSlug,
-          }) || await resolveChatReservationContext({ apiKey, chatbotId, sessionId })
-        : await resolveChatReservationContext({ apiKey, chatbotId, sessionId });
+        });
+        if (cachedContext) {
+          logAiReservationEvent("reservation_context_cache", { outcome: "hit", companyId: settings.companyId, chatbotId, businessId: reservationBusinessId });
+          typedContext = cachedContext;
+        } else {
+          logAiReservationEvent("reservation_context_cache", { outcome: "miss", companyId: settings.companyId, chatbotId, businessId: reservationBusinessId });
+          typedContext = await resolveFreshTypedContext();
+        }
+      } else {
+        logAiReservationEvent("reservation_context_cache", { outcome: "not_eligible", companyId: settings.companyId, chatbotId, businessId: reservationBusinessId });
+        typedContext = await resolveFreshTypedContext();
+      }
       typedReservationResponse = await handleAiReservationConversation({
         context: typedContext,
         session,
@@ -451,7 +522,10 @@ if (!session.rescheduleReservationData) {
         readAdapter: reservationsReadAdapter,
         writeAdapter: reservationWriteAdapter,
       });
-      if (typedReservationResponse.handled) botReply = typedReservationResponse.reply;
+      if (typedReservationResponse.handled) {
+        botReply = typedReservationResponse.reply;
+        handledBy = "typed_r2b";
+      }
     } catch (error) {
       botReply = "I could not safely continue that appointment booking. Please use the Reservations form or request a callback.";
       typedReservationResponse = {
@@ -2254,16 +2328,22 @@ ${reservationConciergeInstruction}
     try {
       let gemini_key = settings?.geminiKey;
       let gemini_model = settings?.gemini_model;
-      const data = await fetchGeminiWithRetry(
+      modelCalled = true;
+      modelStartedAt = performance.now();
+      const data = await measureAiReservationStage({ stage: "model_call", operation: "gemini_request", onMeasured: recordMeasuredStage }, () => fetchGeminiWithRetry(
         gemini_key,
         gemini_model,
-        payload
-      );
+        payload,
+      ));
+      modelDurationMs = Math.round(performance.now() - modelStartedAt);
 
       botReply =
         data?.candidates?.[0]?.content?.parts?.[0]?.text ||
         "I couldn't generate a response.";
     } catch (err) {
+      if (modelCalled && modelDurationMs === null) {
+        modelDurationMs = Math.round(performance.now() - modelStartedAt);
+      }
       console.error("Gemini Error:", err);
       if (isPreview) botReply = err.message;
       else botReply = "⚠️ Gemini API is busy. Please try again.";
@@ -2289,7 +2369,13 @@ ${reservationConciergeInstruction}
     { role: "model", text: botReply, timestamp: new Date() }
   );
 
-  await session.save();
+  if (handledBy === "other") {
+    handledBy = session.reservationStep || session.bookingType === "reservation"
+      ? "legacy_reservation"
+      : "general_chat";
+  }
+
+  await measureAiReservationStage({ stage: "session_save", operation: "mongo_session_save", context: { companyId: settings.companyId, chatbotId, reservationBusinessId }, flow: session.reservationFlow, onMeasured: recordMeasuredStage }, () => session.save());
 
   /* ===============================
      RESPONSE

@@ -145,5 +145,6 @@ test("the post-middleware final yes reaches the typed confirmation handler", asy
     "reservation_confirmation_received",
     "reservation_transaction_gate_checked",
     "reservation_booking_gate_blocked",
+    "reservation_performance_stage",
   ]);
 });

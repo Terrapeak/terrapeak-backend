@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { normalizeCustomerForm } from "../utils/aiReservationCustomerForm.js";
+import { measureAiReservationStage } from "../utils/aiReservationLogger.js";
 
 const serviceFields = [
   "id", "business_id", "name", "slug", "description", "booking_type",
@@ -104,35 +105,35 @@ export const reservationReadStore = {
 export function createReservationReadAdapter(store = reservationReadStore) {
   return {
     async getConfiguration(context) {
-      const rows = await resultOrThrow("configuration", store.getConfiguration(context.reservationBusinessSlug));
+      const rows = await measureAiReservationStage({ context, stage: "configuration_read", operation: "supabase_configuration" }, () => resultOrThrow("configuration", store.getConfiguration(context.reservationBusinessSlug)));
       const configuration = Array.isArray(rows) ? rows[0] : rows;
       if (!configuration) throw new Error("Reservations configuration is not ready.");
       return configuration;
     },
 
     async listBookableServices(context) {
-      const rows = await resultOrThrow("services", store.listServices(context.reservationBusinessId));
+      const rows = await measureAiReservationStage({ context, stage: "services_read", operation: "supabase_services" }, () => resultOrThrow("services", store.listServices(context.reservationBusinessId)));
       return rows.map(normalizeService);
     },
 
     async listBookableProviders(context, service) {
       if (!service?.id) return [];
-      const assignments = await resultOrThrow("provider assignments", store.listProviderAssignments(context.reservationBusinessId, service.id));
+      const assignments = await measureAiReservationStage({ context, stage: "provider_assignments_read", operation: "supabase_provider_assignments" }, () => resultOrThrow("provider assignments", store.listProviderAssignments(context.reservationBusinessId, service.id)));
       const ids = assignments.map((item) => item.staff_id).filter(Boolean);
       if (!ids.length) return [];
-      const providers = await resultOrThrow("providers", store.listProviders(context.reservationBusinessId, ids));
+      const providers = await measureAiReservationStage({ context, stage: "providers_read", operation: "supabase_providers" }, () => resultOrThrow("providers", store.listProviders(context.reservationBusinessId, ids)));
       const byId = new Map(assignments.map((item) => [String(item.staff_id), item]));
       return providers.map((provider) => normalizeProvider(provider, byId.get(String(provider.id))));
     },
 
     async listAppointmentAvailability(context, { serviceId, serviceSlug, providerId, providerSlug, localDate, timezone } = {}) {
       if (!serviceSlug || !localDate) throw new Error("A service and valid date are required.");
-      const slots = await resultOrThrow("availability", store.getAvailableSlots({
-        p_business_slug: context.reservationBusinessSlug,
-        p_service_slug: serviceSlug,
-        p_staff_slug: providerSlug,
-        p_local_date: localDate,
-      }));
+      const slots = await measureAiReservationStage({ context, stage: "availability_read", operation: "supabase_availability" }, () => resultOrThrow("availability", store.getAvailableSlots({
+          p_business_slug: context.reservationBusinessSlug,
+          p_service_slug: serviceSlug,
+          p_staff_slug: providerSlug,
+          p_local_date: localDate,
+        })));
       return slots.map((slot) => normalizeSlot(slot, context, {
         serviceId: serviceId || serviceSlug,
         providerId: providerId || providerSlug,
@@ -171,7 +172,7 @@ export function createReservationReadAdapter(store = reservationReadStore) {
     },
 
     async getCustomerForm(context) {
-      const rows = await resultOrThrow("customer form", store.getCustomerForm(context.reservationBusinessSlug));
+      const rows = await measureAiReservationStage({ context, stage: "customer_form_read", operation: "supabase_customer_form" }, () => resultOrThrow("customer form", store.getCustomerForm(context.reservationBusinessSlug)));
       return normalizeCustomerForm(rows);
     },
   };

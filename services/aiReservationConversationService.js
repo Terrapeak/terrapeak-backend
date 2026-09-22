@@ -1,6 +1,7 @@
 import { resolveChatReservationJourney } from "./chatReservationJourneyService.js";
 import { initializeReservationFlow, prepareReservationConfirmation, confirmReservationFoundation, buildReservationResponse } from "./aiReservationFlowService.js";
 import { parseCustomerFormInput, validateCustomerFormValue } from "../utils/aiReservationCustomerForm.js";
+import { measureAiReservationStage } from "../utils/aiReservationLogger.js";
 
 const supportedTemplates = new Set(["general", "physiotherapy", "dental", "salon"]);
 const isStartMessage = (message) => /\b(book|booking|schedule|appointment)\b/i.test(String(message));
@@ -50,10 +51,10 @@ export async function handleAiReservationConversation({
   const current = session.reservationFlow;
   if (!current?.status || current.status === "idle") {
     if (!isStartMessage(message)) return { handled: false };
-    const journey = resolveChatReservationJourney({ configuration: context.configuration });
+    const journey = await measureAiReservationStage({ context, stage: "journey_resolution", operation: "resolve_reservation_journey" }, async () => resolveChatReservationJourney({ configuration: context.configuration }));
     if (journey.journeyType !== "appointment" || !supportedTemplates.has(journey.templateKey)) return { handled: false };
     const flow = initializeReservationFlow({ context, session, journeyType: "appointment" });
-    const services = await readAdapter.listBookableServices(context);
+    const services = await measureAiReservationStage({ context, flow, stage: "services_read", operation: "list_bookable_services" }, () => readAdapter.listBookableServices(context));
     if (!services.length) return { handled: true, reply: "No appointment services are available right now.", reservation: reservationPayload(session, flow, "") };
     flow.selectionOptions = services.map(({ id, slug, name }) => ({ id, slug, name }));
     session.reservationFlow = flow;
@@ -67,7 +68,7 @@ export async function handleAiReservationConversation({
   }
 
   if (flow.status === "awaiting_confirmation") {
-    const result = await confirmReservationFoundation({
+    const result = await measureAiReservationStage({ context, flow, stage: "confirmation_execution", operation: "confirm_reservation_foundation" }, () => confirmReservationFoundation({
       context,
       session,
       message,
@@ -76,7 +77,7 @@ export async function handleAiReservationConversation({
       readAdapter,
       writeAdapter,
       contextResolver,
-    });
+    }));
     const reply = result.errorCode === "BOOKING_RESULT_UNKNOWN"
       ? "We’re checking whether your appointment was created. Please don’t submit it again yet."
       : result.errorCode === "BOOKING_IN_PROGRESS"
@@ -95,7 +96,7 @@ export async function handleAiReservationConversation({
     flow.serviceId = service.id;
     flow.serviceSlug = service.slug;
     flow.serviceName = service.name;
-    const providers = await readAdapter.listBookableProviders(context, service);
+    const providers = await measureAiReservationStage({ context, flow, stage: "providers_read", operation: "list_bookable_providers" }, () => readAdapter.listBookableProviders(context, service));
     if (!providers.length) return { handled: true, reply: "No providers are available for that service.", reservation: reservationPayload(session, flow, "") };
     flow.status = "provider_selection";
     flow.selectionOptions = providers.map(({ id, slug, displayName }) => ({ id, slug, displayName }));
@@ -114,7 +115,7 @@ export async function handleAiReservationConversation({
 
   if (flow.status === "date_selection") {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(message).trim())) return { handled: true, reply: "Please provide a valid date in YYYY-MM-DD format.", reservation: reservationPayload(session, flow, "") };
-    const slots = await readAdapter.listAppointmentAvailability(context, { serviceId: flow.serviceId, serviceSlug: flow.serviceSlug, providerId: flow.providerId, providerSlug: flow.providerSlug, localDate: String(message).trim() });
+    const slots = await measureAiReservationStage({ context, flow, stage: "availability_read", operation: "list_appointment_availability" }, () => readAdapter.listAppointmentAvailability(context, { serviceId: flow.serviceId, serviceSlug: flow.serviceSlug, providerId: flow.providerId, providerSlug: flow.providerSlug, localDate: String(message).trim() }));
     if (!slots.length) return { handled: true, reply: "No appointment times are available on that date. Please choose another date.", reservation: reservationPayload(session, flow, "") };
     flow.localDate = String(message).trim();
     flow.selectionOptions = slots;
@@ -148,7 +149,7 @@ export async function handleAiReservationConversation({
     if (index === 2) {
       if (String(message).replace(/\D/g, "").length < 6) return { handled: true, reply: "Please provide a valid phone number.", reservation: reservationPayload(session, flow, "") };
       flow.customer = { ...(flow.customer || {}), phone: String(message).trim() };
-      const form = await readAdapter.getCustomerForm(context);
+      const form = await measureAiReservationStage({ context, flow, stage: "customer_form_read", operation: "get_customer_form" }, () => readAdapter.getCustomerForm(context));
       flow.customerFormSnapshot = form;
       const first = form.find((field) => field.required || field.active);
       if (first) {
@@ -188,7 +189,7 @@ export async function handleAiReservationConversation({
       };
     }
 
-    const summary = await prepareReservationConfirmation({
+    const summary = await measureAiReservationStage({ context, flow, stage: "confirmation_preparation", operation: "prepare_reservation_confirmation" }, () => prepareReservationConfirmation({
       context,
       session,
       flow,
@@ -198,7 +199,7 @@ export async function handleAiReservationConversation({
       customer: flow.customer,
       form: flow.customerFormSnapshot,
       model,
-    });
+    }));
     return { handled: true, reply: `${summary.summary.serviceName || "Your appointment"} is ready. Reply **yes** to confirm or **no** to cancel.`, reservation: reservationPayload(session, session.reservationFlow, "") };
   }
 

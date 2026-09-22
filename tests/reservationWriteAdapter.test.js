@@ -41,7 +41,7 @@ test("appointment write adapter calls only the canonical idempotent appointment 
       }).fingerprint,
     },
   }]);
-  assert.deepEqual(events.map(({ event }) => event), ["reservation_write_rpc_start", "reservation_write_rpc_success"]);
+  assert.deepEqual(events.map(({ event }) => event), ["reservation_write_rpc_start", "reservation_performance_stage", "reservation_write_rpc_success"]);
   assert.equal(events[0].idempotencyKeyHash, "60aaccc7aac265c4");
   assert.doesNotMatch(JSON.stringify(events), /Aisha|aisha@example.com|31612345678|First visit/);
 });

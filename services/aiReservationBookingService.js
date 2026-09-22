@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import { resolveChatReservationContext, assertReservationSessionBinding } from "./chatReservationContextService.js";
 import { resolveChatReservationJourney } from "./chatReservationJourneyService.js";
 import { reservationsReadAdapter } from "./reservationReadAdapter.js";
@@ -12,7 +13,7 @@ import { reconcileReservationBookingAttempt } from "./reservationBookingReconcil
 import { fingerprintReservationBookingRequest } from "../utils/reservationRequestFingerprint.js";
 import ReservationBookingAttempt from "../models/reservationBookingAttempt.js";
 import { normalizeCustomerForm, serializeCustomerFormAnswers, validateCustomerForm } from "../utils/aiReservationCustomerForm.js";
-import { logAiReservationEvent } from "../utils/aiReservationLogger.js";
+import { logAiReservationEvent, measureAiReservationStage } from "../utils/aiReservationLogger.js";
 
 const supportedTemplates = new Set(["general", "physiotherapy", "dental", "salon"]);
 
@@ -34,12 +35,16 @@ const fail = (code, message) => {
   return error;
 };
 
-const getStoredAttempt = async (context, bookingAttemptId, model) => model.findOne({
+const getStoredAttempt = async (context, bookingAttemptId, model) => measureAiReservationStage({
+  stage: "attempt_read",
+  operation: "mongo_booking_attempt_read",
+  context,
+}, () => model.findOne({
   companyId: context.companyId,
   chatbotId: context.chatbotId,
   sessionId: context.sessionId,
   bookingAttemptId,
-});
+}));
 
 export async function executeAiReservationBooking({
   context,
@@ -91,11 +96,16 @@ export async function executeAiReservationBooking({
     throw fail(storedBeforeConfirmation.errorCode || "BOOKING_ATTEMPT_FAILED", "This booking attempt cannot be retried safely.");
   }
 
-  const freshContext = await contextResolver({
-    apiKey,
-    chatbotId: context.chatbotId,
-    sessionId: context.sessionId,
-  });
+    const freshContext = await measureAiReservationStage({
+      stage: "context_revalidation",
+      operation: "resolve_chat_reservation_context",
+      context,
+      flow,
+    }, () => contextResolver({
+      apiKey,
+      chatbotId: context.chatbotId,
+      sessionId: context.sessionId,
+    }));
   assertReservationSessionBinding(flow, freshContext);
   stage = "context_revalidated";
   logStage(stage);
@@ -107,26 +117,26 @@ export async function executeAiReservationBooking({
   }
 
   stage = "service_revalidated";
-  const services = await readAdapter.listBookableServices(freshContext);
+  const services = await measureAiReservationStage({ stage: "service_revalidation", operation: "list_bookable_services", context: freshContext, flow }, () => readAdapter.listBookableServices(freshContext));
   const service = services.find((item) => sameId(item.id, flow.serviceId) || item.slug === flow.serviceSlug);
   if (!service) throw fail("RESERVATION_SERVICE_CHANGED", "The selected service is no longer available.");
   logStage(stage);
 
   stage = "provider_revalidated";
-  const providers = await readAdapter.listBookableProviders(freshContext, service);
+  const providers = await measureAiReservationStage({ stage: "provider_revalidation", operation: "list_bookable_providers", context: freshContext, flow }, () => readAdapter.listBookableProviders(freshContext, service));
   const provider = providers.find((item) => sameId(item.id, flow.providerId) || item.slug === flow.providerSlug);
   if (!provider) throw fail("RESERVATION_PROVIDER_CHANGED", "The selected provider is no longer available.");
   logStage(stage);
 
   stage = "slot_revalidated";
-  const slots = await readAdapter.listAppointmentAvailability(freshContext, {
+  const slots = await measureAiReservationStage({ stage: "slot_revalidation", operation: "list_appointment_availability", context: freshContext, flow }, () => readAdapter.listAppointmentAvailability(freshContext, {
     serviceId: service.id,
     serviceSlug: service.slug,
     providerId: provider.id,
     providerSlug: provider.slug,
     localDate: flow.localDate,
     timezone: flow.timezone,
-  });
+  }));
   const selectedStartMs = toValidEpochMillis(flow.startsAt);
   const slot = slots.find((item) => {
     const freshStartMs = toValidEpochMillis(item.startsAt);
@@ -136,7 +146,7 @@ export async function executeAiReservationBooking({
   logStage(stage);
 
   stage = "customer_form_validated";
-  const form = normalizeCustomerForm(await readAdapter.getCustomerForm(freshContext));
+  const form = normalizeCustomerForm(await measureAiReservationStage({ stage: "customer_form_revalidation", operation: "get_customer_form", context: freshContext, flow }, () => readAdapter.getCustomerForm(freshContext)));
   const customer = flow.customer || {};
   const customData = flow.customData || {};
   const formError = validateCustomerForm(form, customData);
@@ -158,25 +168,37 @@ export async function executeAiReservationBooking({
     customData: serializeCustomerFormAnswers(form, customData),
     idempotencyKey: flow.idempotencyKey,
   };
+  const fingerprintStartedAt = performance.now();
   const { fingerprint: requestFingerprint } = fingerprintReservationBookingRequest(request);
+  logAiReservationEvent("reservation_performance_stage", {
+    stage: "fingerprint_calculation",
+    operation: "fingerprint_reservation_request",
+    durationMs: Math.round(performance.now() - fingerprintStartedAt),
+    companyId: freshContext.companyId,
+    chatbotId: freshContext.chatbotId,
+    businessId: freshContext.reservationBusinessId,
+    flowStatus: flow.status,
+    attemptId: flow.bookingAttemptId,
+    success: true,
+  });
   stage = "fingerprint_verified";
   const currentAttempt = await getStoredAttempt(freshContext, flow.bookingAttemptId, model);
   if (!currentAttempt?.requestFingerprint || currentAttempt.requestFingerprint !== requestFingerprint) {
     throw fail("BOOKING_ATTEMPT_CONFLICT", "The booking request changed and cannot be safely submitted.");
   }
   logStage(stage);
-  await markReservationBookingAttemptConfirmed({
+  await measureAiReservationStage({ stage: "attempt_confirm", operation: "mongo_booking_attempt_confirm", context: freshContext, flow }, () => markReservationBookingAttemptConfirmed({
     context: freshContext,
     bookingAttemptId: flow.bookingAttemptId,
     model,
-  });
+  }));
   stage = "attempt_confirmed";
   logStage(stage);
-  const claimedAttempt = await claimReservationBookingAttempt({
+  const claimedAttempt = await measureAiReservationStage({ stage: "attempt_claim", operation: "mongo_booking_attempt_claim", context: freshContext, flow }, () => claimReservationBookingAttempt({
     context: freshContext,
     bookingAttemptId: flow.bookingAttemptId,
     model,
-  });
+  }));
   if (claimedAttempt) {
     stage = "attempt_claimed";
     logStage(stage);
@@ -194,11 +216,11 @@ export async function executeAiReservationBooking({
   try {
     stage = "write_adapter_start";
     logStage(stage);
-    const result = await writeAdapter.createAppointment(request);
+    const result = await measureAiReservationStage({ stage: "write_adapter", operation: "reservation_write_adapter", context: freshContext, flow }, () => writeAdapter.createAppointment(request));
     stage = "write_adapter_success";
     logStage(stage);
     try {
-      const completed = await completeReservationBookingAttempt({ context: freshContext, bookingAttemptId: flow.bookingAttemptId, result, model });
+      const completed = await measureAiReservationStage({ stage: "attempt_complete", operation: "mongo_booking_attempt_complete", context: freshContext, flow }, () => completeReservationBookingAttempt({ context: freshContext, bookingAttemptId: flow.bookingAttemptId, result, model }));
       if (!completed) throw new Error("The booking attempt could not be finalized.");
     } catch (error) {
       // The external booking already exists; treat a Mongo finalization error
