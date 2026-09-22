@@ -136,6 +136,24 @@ export async function resolveChatReservationContext({
   });
 }
 
+export const buildReservationConversationContextSnapshot = (context = {}) => ({
+  sessionId: String(context.sessionId || ""),
+  chatbotId: String(context.chatbotId || ""),
+  companyId: String(context.companyId || ""),
+  installationId: String(context.installationId || ""),
+  reservationBusinessId: context.reservationBusinessId,
+  reservationBusinessSlug: context.reservationBusinessSlug,
+  companyLifecycleStatus: context.companyLifecycleStatus || "active",
+  reservationTemplate: context.reservationTemplate || "general",
+  configuration: context.configuration,
+});
+
+export const getReusableReservationConversationContext = ({ snapshot, sessionId, chatbotId } = {}) => {
+  if (!snapshot || String(snapshot.sessionId || "") !== String(sessionId || "")) return null;
+  if (String(snapshot.chatbotId || "") !== String(chatbotId || "")) return null;
+  return snapshot;
+};
+
 export function assertReservationSessionBinding(flow, context) {
   if (!flow) return;
   const fields = [

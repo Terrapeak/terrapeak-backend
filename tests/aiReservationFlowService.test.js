@@ -30,6 +30,17 @@ test("initializes a typed draft bound to the verified tenant", () => {
   assert.equal(flow.companyId, "company-1");
   assert.equal(flow.businessId, "42");
   assert.equal(flow.businessSlug, "tenant-a");
+  assert.deepEqual(flow.contextSnapshot, {
+    sessionId: "session-1",
+    chatbotId: "chatbot-1",
+    companyId: "company-1",
+    installationId: "",
+    reservationBusinessId: 42,
+    reservationBusinessSlug: "tenant-a",
+    companyLifecycleStatus: "active",
+    reservationTemplate: "general",
+    configuration: context.configuration,
+  });
 });
 
 test("prepares a server-owned summary and awaits explicit confirmation", async () => {

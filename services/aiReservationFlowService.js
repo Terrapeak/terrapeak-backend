@@ -1,4 +1,4 @@
-import { isTransactionalAiReservationsEnabled } from "./chatReservationContextService.js";
+import { buildReservationConversationContextSnapshot, isTransactionalAiReservationsEnabled } from "./chatReservationContextService.js";
 import { getOrCreateReservationBookingAttempt } from "./reservationBookingAttemptService.js";
 import { logAiReservationEvent } from "../utils/aiReservationLogger.js";
 import { randomUUID } from "node:crypto";
@@ -34,6 +34,7 @@ export function initializeReservationFlow({ context, journeyType = "appointment"
     confirmation: {},
     bookingAttemptId: randomUUID(),
     idempotencyKey: null,
+    contextSnapshot: buildReservationConversationContextSnapshot(context),
   };
   session.reservationFlow = flow;
   return flow;

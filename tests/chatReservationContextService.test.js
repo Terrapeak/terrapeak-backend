@@ -3,6 +3,8 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import {
   assertReservationSessionBinding,
+  buildReservationConversationContextSnapshot,
+  getReusableReservationConversationContext,
   isTransactionalAiReservationsEnabled,
   resolveChatReservationContext,
 } from "../services/chatReservationContextService.js";
@@ -119,6 +121,20 @@ test("transactional booking remains disabled by default", () => {
   assert.equal(isTransactionalAiReservationsEnabled({}), false);
   assert.equal(isTransactionalAiReservationsEnabled({ AI_RESERVATIONS_TRANSACTIONAL_BOOKING_ENABLED: "false" }), false);
   assert.equal(isTransactionalAiReservationsEnabled({ AI_RESERVATIONS_TRANSACTIONAL_BOOKING_ENABLED: "true" }), true);
+});
+
+test("conversation context snapshots reuse only the bound session and chatbot", () => {
+  const snapshot = buildReservationConversationContextSnapshot({
+    sessionId: "session-a",
+    chatbotId: "chatbot-1",
+    companyId: "company-1",
+    reservationBusinessId: 42,
+    reservationBusinessSlug: "tenant-a",
+    configuration: { templateKey: "general" },
+  });
+  assert.ok(getReusableReservationConversationContext({ snapshot, sessionId: "session-a", chatbotId: "chatbot-1" }));
+  assert.equal(getReusableReservationConversationContext({ snapshot, sessionId: "session-b", chatbotId: "chatbot-1" }), null);
+  assert.equal(getReusableReservationConversationContext({ snapshot, sessionId: "session-a", chatbotId: "chatbot-2" }), null);
 });
 
 test("typed context code contains no global Reservations business fallback", () => {

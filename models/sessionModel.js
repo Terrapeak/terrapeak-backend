@@ -31,6 +31,7 @@ const reservationFlowSchema = new mongoose.Schema(
     displaySnapshot: { type: mongoose.Schema.Types.Mixed, default: {} },
     confirmation: { type: mongoose.Schema.Types.Mixed, default: {} },
     selectionOptions: { type: mongoose.Schema.Types.Mixed, default: [] },
+    contextSnapshot: { type: mongoose.Schema.Types.Mixed, default: null },
     formFieldIndex: { type: Number, default: 0 },
     currentCustomField: { type: String, default: null },
     customFieldIndex: { type: Number, default: 0 },

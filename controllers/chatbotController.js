@@ -35,7 +35,7 @@ import {
   GEMINI_TEXT_MODELS,
 } from "../config/geminiModels.js";
 import { buildReservationResponse } from "../services/aiReservationFlowService.js";
-import { resolveChatReservationContext } from "../services/chatReservationContextService.js";
+import { getReusableReservationConversationContext, resolveChatReservationContext } from "../services/chatReservationContextService.js";
 import { reservationsReadAdapter } from "../services/reservationReadAdapter.js";
 import { reservationWriteAdapter } from "../services/reservationWriteAdapter.js";
 import { handleAiReservationConversation } from "../services/aiReservationConversationService.js";
@@ -423,11 +423,23 @@ if (!session.rescheduleReservationData) {
   });
   if (shouldHandleTypedAppointmentRequest) {
     try {
-      const typedContext = await resolveChatReservationContext({
-        apiKey,
-        chatbotId,
-        sessionId,
-      });
+      const activeFlowStatus = session.reservationFlow?.status;
+      const canReuseConversationContext = Boolean(
+        activeFlowStatus &&
+        activeFlowStatus !== "idle" &&
+        activeFlowStatus !== "awaiting_confirmation" &&
+        activeFlowStatus !== "completed" &&
+        activeFlowStatus !== "cancelled" &&
+        activeFlowStatus !== "failed" &&
+        activeFlowStatus !== "unknown",
+      );
+      const typedContext = canReuseConversationContext
+        ? getReusableReservationConversationContext({
+            snapshot: session.reservationFlow.contextSnapshot,
+            sessionId,
+            chatbotId,
+          }) || await resolveChatReservationContext({ apiKey, chatbotId, sessionId })
+        : await resolveChatReservationContext({ apiKey, chatbotId, sessionId });
       typedReservationResponse = await handleAiReservationConversation({
         context: typedContext,
         session,
