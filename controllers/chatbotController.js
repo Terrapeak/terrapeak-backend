@@ -324,11 +324,23 @@ export const askGemini = asyncHandler(async (req, res) => {
   /* ===============================
      CHATBOT SETTINGS VALIDATION
   ================================ */
-  const settings = await measureAiReservationStage({
-    stage: "chatbot_settings_load",
-    operation: "mongo_chatbot_settings_load",
-    onMeasured: recordMeasuredStage,
-  }, () => ChatbotSettings.findOne({ apiKey }));
+  const requestContext = req.chatRequestContext;
+  const middlewareSettings = requestContext?.settings;
+  const settingsFromMiddleware = Boolean(
+    middlewareSettings &&
+    String(middlewareSettings._id) === String(chatbotId) &&
+    String(middlewareSettings.apiKey || "") === String(apiKey),
+  );
+  const settings = settingsFromMiddleware
+    ? middlewareSettings
+    : await measureAiReservationStage({
+      stage: "chatbot_settings_load",
+      operation: "mongo_chatbot_settings_load",
+      onMeasured: recordMeasuredStage,
+    }, () => ChatbotSettings.findOne({ apiKey }));
+  logAiReservationEvent("reservation_request_context", {
+    settingsSource: settingsFromMiddleware ? "middleware" : "controller",
+  });
 
      // use only when debugging 
 
@@ -341,28 +353,57 @@ export const askGemini = asyncHandler(async (req, res) => {
       .status(400)
       .json({ success: false, error: "Invalid chatbotId." });
   }
-  const [reservationCompany, reservationsInstallation] = settings.companyId
-    ? await measureAiReservationStage({
-      stage: "reservation_tenant_context",
-      operation: "mongo_reservation_tenant_context",
-      context: { companyId: settings.companyId, chatbotId, reservationBusinessId: null },
-      onMeasured: recordMeasuredStage,
-    }, () => Promise.all([
-        Company.findById(settings.companyId)
-          .select(
-            "reservationBusinessId reservationBusinessSlug reservationTemplate isActive email phone reservationCancellationPolicyHours reservationCancellationPolicyText reservationCancellationRequiresStaffApprovalWithinWindow",
-          )
-          .lean(),
-        CompanyAppInstallation.findOne({
-          companyId: settings.companyId,
-          appSlug: "reservations",
-          enabled: true,
-          status: "active",
-        })
-          .select("_id")
-          .lean(),
-      ]))
-    : [null, null];
+  const middlewareReservationContext = requestContext?.reservationContext || req.chatReservationContext;
+  const middlewareCompany = requestContext?.company;
+  const middlewareInstallation = requestContext?.installation;
+  const middlewareCompanyId = middlewareCompany?._id || middlewareCompany?.id;
+  const middlewareCompanyBindingValid = Boolean(
+    middlewareCompany &&
+    middlewareCompanyId &&
+    String(middlewareCompanyId) === String(settings.companyId),
+  );
+  const middlewareInstallationBindingValid = Boolean(
+    middlewareInstallation &&
+    (!middlewareInstallation.companyId || String(middlewareInstallation.companyId) === String(settings.companyId)),
+  );
+  const middlewareTenantContext = middlewareCompanyBindingValid && middlewareInstallationBindingValid
+    ? getReusableReservationConversationContext({
+      snapshot: middlewareReservationContext,
+      sessionId,
+      chatbotId,
+      companyId: settings.companyId,
+      reservationBusinessId: middlewareCompany.reservationBusinessId,
+      reservationBusinessSlug: middlewareCompany.reservationBusinessSlug,
+    })
+    : null;
+  const tenantContextFromMiddleware = Boolean(middlewareTenantContext);
+  const [reservationCompany, reservationsInstallation] = tenantContextFromMiddleware
+    ? [middlewareCompany, middlewareInstallation]
+    : settings.companyId
+      ? await measureAiReservationStage({
+        stage: "reservation_tenant_context",
+        operation: "mongo_reservation_tenant_context",
+        context: { companyId: settings.companyId, chatbotId, reservationBusinessId: null },
+        onMeasured: recordMeasuredStage,
+      }, () => Promise.all([
+          Company.findById(settings.companyId)
+            .select(
+              "reservationBusinessId reservationBusinessSlug reservationTemplate isActive email phone reservationCancellationPolicyHours reservationCancellationPolicyText reservationCancellationRequiresStaffApprovalWithinWindow",
+            )
+            .lean(),
+          CompanyAppInstallation.findOne({
+            companyId: settings.companyId,
+            appSlug: "reservations",
+            enabled: true,
+            status: "active",
+          })
+            .select("_id")
+            .lean(),
+        ]))
+      : [null, null];
+  logAiReservationEvent("reservation_request_context", {
+    tenantContextSource: tenantContextFromMiddleware ? "middleware" : "controller",
+  });
 
   const reservationBusinessId = Number(
     reservationCompany?.reservationBusinessId,
@@ -392,10 +433,29 @@ export const askGemini = asyncHandler(async (req, res) => {
   /* ===============================
      SESSION HANDLING
   ================================ */
-  let session = await measureAiReservationStage({ stage: "session_load", operation: "mongo_session_load", onMeasured: recordMeasuredStage }, () => Session.findOne({
-    sessionId,
-    chatbotId: settings._id,
-  }));
+  const middlewareSession = requestContext?.session;
+  const middlewareSessionValid = Boolean(
+    middlewareSession &&
+    String(middlewareSession.sessionId) === String(sessionId) &&
+    String(middlewareSession.chatbotId) === String(chatbotId) &&
+    typeof middlewareSession.save === "function",
+  );
+  let session;
+  let sessionSource;
+  if (middlewareSessionValid) {
+    session = middlewareSession;
+    sessionSource = "middleware";
+  } else if (requestContext?.sessionFound === false) {
+    session = null;
+    sessionSource = "new";
+  } else {
+    session = await measureAiReservationStage({ stage: "session_load", operation: "mongo_session_load", onMeasured: recordMeasuredStage }, () => Session.findOne({
+      sessionId,
+      chatbotId: settings._id,
+    }));
+    sessionSource = session ? "controller" : "new";
+  }
+  logAiReservationEvent("reservation_request_context", { sessionSource });
 
   if (!session) {
     session = new Session({

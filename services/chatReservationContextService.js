@@ -74,6 +74,7 @@ export async function resolveChatReservationContext({
   sessionId,
   configuration,
   store = defaultStore,
+  onResolved,
 } = {}) {
   if (!apiKey || !chatbotId || !sessionId) {
     fail("RESERVATION_CONTEXT_INVALID", "Reservation context is incomplete.", 400);
@@ -133,7 +134,7 @@ export async function resolveChatReservationContext({
     fail("RESERVATION_TENANT_MISMATCH", "The Reservations business does not match the Company.");
   }
 
-  return Object.freeze({
+  const context = Object.freeze({
     sessionId: String(sessionId),
     chatbotId: String(chatbotId),
     companyId: String(company._id || companyId),
@@ -144,6 +145,8 @@ export async function resolveChatReservationContext({
     reservationTemplate: company.reservationTemplate || "general",
     configuration: normalizeReservationContextConfiguration(canonicalConfiguration, company),
   });
+  onResolved?.({ settings, company, installation });
+  return context;
 }
 
 export const buildReservationConversationContextSnapshot = (context = {}) => ({

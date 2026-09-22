@@ -13,7 +13,7 @@ const SAFE_KEYS = new Set([
   "idempotencyKeyHash", "durationMs", "totalMs", "handledBy", "r2bStatus", "r2bStep",
   "operation", "success",
   "traceId", "modelCalled", "modelDurationMs", "unattributedMs",
-  "contextSource",
+  "contextSource", "settingsSource", "sessionSource", "tenantContextSource",
 ]);
 
 export const hashOperationalIdentifier = (value) => createHash("sha256")

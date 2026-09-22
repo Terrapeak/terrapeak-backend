@@ -19,6 +19,9 @@ const {
 } = await import(
   "../controllers/chatbotController.js"
 );
+const requireReservationTenantForChat = (await import(
+  "../middleware/requireReservationTenantForChat.js"
+)).default;
 const ChatbotSettings = (await import("../models/chatbotSettings.js")).default;
 const Company = (await import("../models/company.js")).default;
 const CompanyAppInstallation = (await import(
@@ -47,6 +50,7 @@ function chain(value) {
 }
 
 function installChatbotMocks(t, { reservationEnabled = true, timeSlot } = {}) {
+  const calls = { settings: 0, company: 0, installation: 0, session: 0, saves: 0 };
   const settings = {
     _id: chatbotId,
     userId: ownerId,
@@ -59,19 +63,22 @@ function installChatbotMocks(t, { reservationEnabled = true, timeSlot } = {}) {
     botName: "Test bot",
   };
   const company = {
+    _id: null,
     reservationBusinessId: 42,
     reservationBusinessSlug: "test-business",
     reservationTemplate: "general",
     isActive: true,
   };
-  const installation = { _id: new mongoose.Types.ObjectId() };
+  company._id = settings.companyId;
+  const installation = { _id: new mongoose.Types.ObjectId(), companyId: settings.companyId };
   let sessionDocument = null;
 
-  t.mock.method(ChatbotSettings, "findOne", async () => settings);
-  t.mock.method(Company, "findById", () => chain(company));
-  t.mock.method(CompanyAppInstallation, "findOne", () => chain(installation));
-  t.mock.method(Session, "findOne", async () => sessionDocument);
+  t.mock.method(ChatbotSettings, "findOne", async () => { calls.settings += 1; return settings; });
+  t.mock.method(Company, "findById", () => { calls.company += 1; return chain(company); });
+  t.mock.method(CompanyAppInstallation, "findOne", () => { calls.installation += 1; return chain(installation); });
+  t.mock.method(Session, "findOne", async () => { calls.session += 1; return sessionDocument; });
   t.mock.method(Session.prototype, "save", async function save() {
+    calls.saves += 1;
     sessionDocument = this;
   });
   t.mock.method(Appointment.prototype, "save", async function save() {
@@ -87,10 +94,10 @@ function installChatbotMocks(t, { reservationEnabled = true, timeSlot } = {}) {
   });
   t.mock.method(TimeSlot, "findById", async () => timeSlot);
 
-  return { settings, getSession: () => sessionDocument };
+  return { settings, company, installation, calls, getSession: () => sessionDocument };
 }
 
-async function sendMessage(t, message, userId = null, chatReservationContext = null) {
+async function sendMessage(t, message, userId = null, chatReservationContext = null, chatRequestContext = null) {
   const response = {};
   response.json = (body) => {
     response.body = body;
@@ -108,6 +115,7 @@ async function sendMessage(t, message, userId = null, chatReservationContext = n
       headers: { "x-api-key": "test-api-key" },
   };
   if (chatReservationContext) request.chatReservationContext = chatReservationContext;
+  if (chatRequestContext) request.chatRequestContext = chatRequestContext;
   await askGemini(request, response,
     (error) => {
       throw error;
@@ -317,7 +325,7 @@ test("controller routes a service-specific request to canonical R2B service sele
   t.after(() => {
     globalThis.fetch = previousFetch;
   });
-  installChatbotMocks(t);
+  const { calls } = installChatbotMocks(t);
   let configurationCalls = 0;
 
   globalThis.fetch = async (url) => {
@@ -356,6 +364,166 @@ test("controller routes a service-specific request to canonical R2B service sele
   assert.doesNotMatch(result.reply, /reservation or meeting|Reservations form/i);
   assert.equal(result.bookingType, null);
   assert.equal(configurationCalls, 1);
+  assert.deepEqual(calls, { settings: 2, company: 2, installation: 2, session: 1, saves: 1 });
+});
+
+test("controller reuses same-request middleware Mongo objects without rereading them", async (t) => {
+  const previousFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+  });
+  const { settings, company, installation, calls } = installChatbotMocks(t);
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.includes("/rest/v1/services")) {
+      return new Response(JSON.stringify([{
+        id: 101,
+        business_id: 42,
+        name: "Acceptance Test Service",
+        slug: "acceptance-test-service",
+        booking_type: "appointment",
+        duration_minutes: 60,
+        is_active: true,
+        is_published: true,
+        is_internal: false,
+      }]), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`Unexpected Reservations read: ${target}`);
+  };
+  const reservationContext = {
+    sessionId: "anonymous-appointment-session",
+    chatbotId: chatbotId.toString(),
+    companyId: settings.companyId.toString(),
+    installationId: installation._id.toString(),
+    reservationBusinessId: 42,
+    reservationBusinessSlug: "test-business",
+    configuration: {
+      templateKey: "general",
+      capabilities: { services: true },
+      bookingBehavior: { booking_behavior: "immediate" },
+    },
+  };
+  const requestContext = {
+    settings,
+    company,
+    installation,
+    reservationContext,
+    session: null,
+    sessionFound: false,
+  };
+
+  const result = await sendMessage(t, "I want to book Acceptance Test Service", null, reservationContext, requestContext);
+
+  assert.equal(result.reservation.flowStatus, "service_selection");
+  assert.deepEqual(calls, { settings: 0, company: 0, installation: 0, session: 0, saves: 1 });
+});
+
+test("full middleware and controller chain performs one request-scoped Mongo read each", async (t) => {
+  const previousFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+  });
+  const { calls } = installChatbotMocks(t);
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.includes("get_public_reservations_configuration")) {
+      return new Response(JSON.stringify([{
+        business_id: 42,
+        template_key: "general",
+        capabilities: { services: true },
+        terminology: {},
+        booking_behavior: "immediate",
+      }]), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (target.includes("/rest/v1/services")) {
+      return new Response(JSON.stringify([{
+        id: 101,
+        business_id: 42,
+        name: "Acceptance Test Service",
+        slug: "acceptance-test-service",
+        booking_type: "appointment",
+        duration_minutes: 60,
+        is_active: true,
+        is_published: true,
+        is_internal: false,
+      }]), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`Unexpected Reservations read: ${target}`);
+  };
+  const request = {
+    body: {
+      sessionId: "anonymous-appointment-session",
+      chatbotId: chatbotId.toString(),
+      message: "I want to book Acceptance Test Service",
+      chatHistory: [],
+      timeZone: "Asia/Singapore",
+      isPreview: true,
+    },
+    headers: { "x-api-key": "test-api-key" },
+  };
+  const middlewareResponse = { json: () => {} };
+  let middlewareNextCalled = false;
+  await requireReservationTenantForChat(request, middlewareResponse, () => {
+    middlewareNextCalled = true;
+  });
+  assert.equal(middlewareNextCalled, true);
+  assert.ok(request.chatRequestContext?.reservationContext);
+
+  const controllerResponse = { json: (body) => { controllerResponse.body = body; } };
+  await askGemini(request, controllerResponse, (error) => { throw error; });
+
+  assert.equal(controllerResponse.body.reservation.flowStatus, "service_selection");
+  assert.deepEqual(calls, { settings: 1, company: 1, installation: 1, session: 1, saves: 1 });
+});
+
+test("mismatched request-scoped company falls back to controller Mongo reads", async (t) => {
+  const previousFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+  });
+  const { settings, company, installation, calls } = installChatbotMocks(t);
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.includes("/rest/v1/services")) {
+      return new Response(JSON.stringify([{
+        id: 101,
+        business_id: 42,
+        name: "Acceptance Test Service",
+        slug: "acceptance-test-service",
+        booking_type: "appointment",
+        duration_minutes: 60,
+        is_active: true,
+        is_published: true,
+        is_internal: false,
+      }]), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`Unexpected Reservations read: ${target}`);
+  };
+  const reservationContext = {
+    sessionId: "anonymous-appointment-session",
+    chatbotId: chatbotId.toString(),
+    companyId: settings.companyId.toString(),
+    installationId: installation._id.toString(),
+    reservationBusinessId: 42,
+    reservationBusinessSlug: "test-business",
+    configuration: { templateKey: "general", capabilities: { services: true } },
+  };
+  const requestContext = {
+    settings,
+    company: { ...company, reservationBusinessId: 999 },
+    installation,
+    reservationContext,
+    session: null,
+    sessionFound: false,
+  };
+
+  const result = await sendMessage(t, "I want to book Acceptance Test Service", null, reservationContext, requestContext);
+
+  assert.equal(result.reservation.flowStatus, "service_selection");
+  assert.equal(calls.settings, 0);
+  assert.equal(calls.company, 1);
+  assert.equal(calls.installation, 1);
+  assert.equal(calls.session, 0);
 });
 
 test("first typed R2B turn reuses a correctly bound middleware context", async (t) => {

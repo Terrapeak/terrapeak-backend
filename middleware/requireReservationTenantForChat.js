@@ -80,9 +80,7 @@ export default async function requireReservationTenantForChat(req, res, next) {
       }, () => Session.findOne({
         sessionId,
         chatbotId,
-      }).select(
-        "bookingType reservationStep cancelReservationStep reservationRescheduleStep rescheduleReservationId cancelReservationId",
-      ));
+      }));
     }
 
     const intentStartedAt = performance.now();
@@ -95,13 +93,38 @@ export default async function requireReservationTenantForChat(req, res, next) {
       success: true,
     });
 
+    req.chatRequestContext = {
+      ...(req.chatRequestContext || {}),
+      session,
+      sessionFound: Boolean(session),
+    };
+
     if (!reservationRequested) return next();
 
     const context = await measureAiReservationStage({
       stage: "middleware_context_resolution",
       operation: "resolve_chat_reservation_context",
-    }, () => resolveChatReservationContext({ apiKey, chatbotId, sessionId }));
+    }, () => resolveChatReservationContext({
+      apiKey,
+      chatbotId,
+      sessionId,
+      onResolved: ({ settings, company, installation }) => {
+        req.chatRequestContext = {
+          settings,
+          company,
+          installation,
+          session,
+          sessionFound: Boolean(session),
+        };
+      },
+    }));
     req.chatReservationContext = context;
+    req.chatRequestContext = {
+      ...(req.chatRequestContext || {}),
+      reservationContext: context,
+      session,
+      sessionFound: Boolean(session),
+    };
     return next();
   } catch (error) {
     if (error instanceof ChatReservationContextError) {
