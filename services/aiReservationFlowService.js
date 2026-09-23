@@ -13,7 +13,31 @@ export const RESERVATION_FLOW_STATES = Object.freeze([
 ]);
 
 const confirmationWords = new Set(["confirm", "yes", "yes confirm", "book it", "confirm booking"]);
-const negativeWords = new Set(["no", "cancel", "change time", "go back"]);
+const negativeWords = new Set(["no", "cancel", "stop", "never mind", "nevermind", "forget it", "cancel this", "cancel booking", "i do not want to book anymore", "i dont want to book anymore", "change time", "go back"]);
+
+export const resetReservationFlowSelections = (flow = {}, status = "cancelled") => ({
+  ...flow,
+  status,
+  serviceId: null,
+  serviceSlug: null,
+  serviceName: null,
+  providerId: null,
+  providerSlug: null,
+  providerName: null,
+  localDate: null,
+  startsAt: null,
+  timezone: null,
+  selectionOptions: [],
+  customer: {},
+  customData: {},
+  customerFormSnapshot: [],
+  formFieldIndex: null,
+  currentCustomField: null,
+  customFieldIndex: null,
+  confirmation: {},
+  bookingAttemptId: null,
+  idempotencyKey: null,
+});
 
 export function initializeReservationFlow({ context, journeyType = "appointment", session }) {
   const flow = {
@@ -143,7 +167,7 @@ export async function confirmReservationFoundation({
     confirmationDecision: decision,
   });
   if (decision === "reject") {
-    session.reservationFlow.status = "cancelled";
+    session.reservationFlow = resetReservationFlowSelections(session.reservationFlow);
     return { flowStatus: "cancelled", confirmationRequired: false };
   }
   if (decision !== "confirm") {

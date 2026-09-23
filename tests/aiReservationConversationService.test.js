@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { handleAiReservationConversation } from "../services/aiReservationConversationService.js";
+import { handleAiReservationConversation, isGenericBookingIntent, isNaturalServiceBookingIntent } from "../services/aiReservationConversationService.js";
 
 const context = {
   companyId: "company-1", chatbotId: "chatbot-1", sessionId: "session-1",
@@ -13,6 +13,17 @@ const readAdapter = {
   async listBookableProviders() { return [{ id: 2, slug: "dr-a", displayName: "Dr A" }]; },
   async listAppointmentAvailability() { return [{ startsAt: "2099-01-15T09:00:00.000Z", endsAt: "2099-01-15T10:00:00.000Z", localTime: "09:00", timezone: "UTC" }]; },
   async getCustomerForm() { return []; },
+};
+
+const multiServiceReadAdapter = {
+  ...readAdapter,
+  async listBookableServices() {
+    return [
+      { id: 1, slug: "dental-cleaning", name: "Dental Cleaning" },
+      { id: 2, slug: "initial-consultation", name: "Initial Consultation" },
+      { id: 3, slug: "follow-up-consultation", name: "Follow-up Consultation" },
+    ];
+  },
 };
 
 const acceptanceForm = [
@@ -246,4 +257,106 @@ test("rejects invalid custom input without advancing the active field", async ()
   assert.match(invalid.reply, /Option A, Option B/);
   assert.equal(session.reservationFlow.status, "customer_form");
   assert.equal(session.reservationFlow.currentCustomField, "choice");
+});
+
+test("natural booking intent is deterministic and avoids informational false positives", () => {
+  for (const message of [
+    "I want to book", "I want to make a reservation", "I need an appointment",
+    "Can I book a time?", "I'd like to schedule an appointment", "Schedule me in", "Can I make a booking?",
+  ]) assert.equal(isGenericBookingIntent(message), true, message);
+  for (const message of [
+    "Can you recommend a book?", "Tell me about this book", "I booked this last year",
+    "What is a booking reference?", "How does appointment scheduling work?", "Do you support bookings?",
+  ]) assert.equal(isGenericBookingIntent(message), false, message);
+  assert.equal(isNaturalServiceBookingIntent("I need a dental cleaning"), true);
+});
+
+test("generic booking starts typed service selection without Gemini", async () => {
+  const session = {};
+  const result = await handleAiReservationConversation({ context, session, message: "I want to book", readAdapter: multiServiceReadAdapter });
+  assert.equal(result.handled, true);
+  assert.equal(session.reservationFlow.status, "service_selection");
+  assert.match(result.reply, /1\. Dental Cleaning/);
+  assert.match(result.reply, /2\. Initial Consultation/);
+});
+
+test("natural service matching is exact, unique, and conservative", async () => {
+  const exactSession = {};
+  await handleAiReservationConversation({ context, session: exactSession, message: "I want to book Dental Cleaning", readAdapter: multiServiceReadAdapter });
+  assert.equal(exactSession.reservationFlow.serviceId, 1);
+  assert.equal(exactSession.reservationFlow.status, "provider_selection");
+
+  const uniqueSession = {};
+  await handleAiReservationConversation({ context, session: uniqueSession, message: "I need a cleaning", readAdapter: multiServiceReadAdapter });
+  assert.equal(uniqueSession.reservationFlow.serviceId, 1);
+
+  const ambiguousSession = {};
+  const ambiguous = await handleAiReservationConversation({ context, session: ambiguousSession, message: "I need a consultation", readAdapter: multiServiceReadAdapter });
+  assert.equal(ambiguousSession.reservationFlow.status, "service_selection");
+  assert.equal(ambiguousSession.reservationFlow.serviceId, undefined);
+  assert.match(ambiguous.reply, /Initial Consultation/);
+  assert.match(ambiguous.reply, /Follow-up Consultation/);
+
+  const unknownSession = {};
+  const unknown = await handleAiReservationConversation({ context, session: unknownSession, message: "I want to book Massage", readAdapter: multiServiceReadAdapter });
+  assert.equal(unknownSession.reservationFlow.status, "service_selection");
+  assert.equal(unknownSession.reservationFlow.serviceId, undefined);
+  assert.match(unknown.reply, /Dental Cleaning/);
+});
+
+test("cancel clears active typed flow without executing booking", async () => {
+  const session = {
+    reservationFlow: {
+      status: "customer_form", serviceId: 1, providerId: 2, localDate: "2099-01-15",
+      startsAt: "2099-01-15T09:00:00Z", customer: { name: "Aisha" }, customData: { answer: "old" },
+      bookingAttemptId: "attempt-old", idempotencyKey: "key-old", confirmation: { required: true },
+    },
+  };
+  let writes = 0;
+  const result = await handleAiReservationConversation({
+    context, session, message: "never mind", readAdapter,
+    writeAdapter: { async createAppointment() { writes += 1; } },
+  });
+  assert.equal(result.handled, true);
+  assert.equal(session.reservationFlow.status, "cancelled");
+  assert.equal(session.reservationFlow.serviceId, null);
+  assert.equal(session.reservationFlow.startsAt, null);
+  assert.equal(session.reservationFlow.bookingAttemptId, null);
+  assert.equal(writes, 0);
+});
+
+test("terminal and active restart requests create fresh flow state", async () => {
+  for (const status of ["cancelled", "completed", "failed"]) {
+    const session = { reservationFlow: { status, serviceId: 99, startsAt: "old", bookingAttemptId: "old-attempt" } };
+    await handleAiReservationConversation({ context, session, message: "I want to book again", readAdapter: multiServiceReadAdapter });
+    assert.equal(session.reservationFlow.status, "service_selection", status);
+    assert.notEqual(session.reservationFlow.bookingAttemptId, "old-attempt", status);
+    assert.equal(session.reservationFlow.serviceId, undefined, status);
+  }
+  const active = { reservationFlow: { status: "slot_selection", serviceId: 1, startsAt: "old", bookingAttemptId: "old-attempt" } };
+  await handleAiReservationConversation({ context, session: active, message: "start over", readAdapter: multiServiceReadAdapter });
+  assert.equal(active.reservationFlow.status, "service_selection");
+  assert.equal(active.reservationFlow.startsAt, undefined);
+  assert.notEqual(active.reservationFlow.bookingAttemptId, "old-attempt");
+});
+
+test("upstream provider and date changes invalidate dependent state", async () => {
+  const providerSession = { reservationFlow: {
+    status: "provider_selection", serviceId: 1, serviceSlug: "dental-cleaning", serviceName: "Dental Cleaning",
+    selectionOptions: [{ id: 2, slug: "dr-a", displayName: "Dr A" }], localDate: "2099-01-15", startsAt: "old",
+    customer: { name: "old" }, customData: { old: true }, bookingAttemptId: "old", confirmation: { required: true },
+  } };
+  await handleAiReservationConversation({ context, session: providerSession, message: "1", readAdapter });
+  assert.equal(providerSession.reservationFlow.status, "date_selection");
+  assert.equal(providerSession.reservationFlow.localDate, undefined);
+  assert.equal(providerSession.reservationFlow.startsAt, undefined);
+  assert.equal(providerSession.reservationFlow.bookingAttemptId, undefined);
+
+  const dateSession = { reservationFlow: {
+    status: "date_selection", serviceId: 1, providerId: 2, localDate: "2099-01-14", startsAt: "old", confirmation: { required: true },
+  } };
+  await handleAiReservationConversation({ context, session: dateSession, message: "2099-01-15", readAdapter });
+  assert.equal(dateSession.reservationFlow.status, "slot_selection");
+  assert.equal(dateSession.reservationFlow.startsAt, undefined);
+  assert.equal(dateSession.reservationFlow.confirmation.required, undefined);
 });

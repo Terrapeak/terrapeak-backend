@@ -5,52 +5,10 @@ import {
   ChatReservationContextError,
   resolveChatReservationContext,
 } from "../services/chatReservationContextService.js";
+import { isGenericBookingIntent, isNaturalServiceBookingIntent } from "../services/aiReservationConversationService.js";
 import { logAiReservationEvent, measureAiReservationStage, setAiReservationTrace } from "../utils/aiReservationLogger.js";
 
-const RESERVATION_KEYWORDS = [
-  "reservation",
-  "reserve",
-  "book",
-  "booking",
-  "booking form",
-  "make a booking",
-  "make booking",
-  "appointment",
-  "sign up",
-  "signup",
-  "register",
-  "enrol",
-  "enroll",
-  "join class",
-  "book a table",
-  "table booking",
-  "reschedule table",
-  "cancel table",
-  "restaurant",
-  "dinner",
-  "lunch",
-  "haircut",
-  "hairdresser",
-  "salon",
-  "barber",
-  "physio",
-  "physical therapist",
-  "therapy",
-  "clinic",
-  "doctor",
-  "dentist",
-  "gp",
-  "general practitioner",
-  "service appointment",
-  "visit",
-  "in person",
-  "in-person",
-];
-
-const reservationIntent = (message = "") => {
-  const text = String(message).toLowerCase();
-  return RESERVATION_KEYWORDS.some((keyword) => text.includes(keyword));
-};
+const reservationIntent = (message = "") => isGenericBookingIntent(message) || isNaturalServiceBookingIntent(message);
 
 const reservationSessionActive = (session) =>
   Boolean(
@@ -60,7 +18,8 @@ const reservationSessionActive = (session) =>
         session.cancelReservationStep ||
         session.reservationRescheduleStep ||
         session.rescheduleReservationId ||
-        session.cancelReservationId)
+        session.cancelReservationId ||
+        (session.reservationFlow?.status && session.reservationFlow.status !== "idle"))
   );
 
 export default async function requireReservationTenantForChat(req, res, next) {

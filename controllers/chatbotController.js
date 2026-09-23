@@ -40,7 +40,7 @@ import { buildReservationResponse } from "../services/aiReservationFlowService.j
 import { getReusableReservationConversationContext, resolveChatReservationContext } from "../services/chatReservationContextService.js";
 import { reservationsReadAdapter } from "../services/reservationReadAdapter.js";
 import { reservationWriteAdapter } from "../services/reservationWriteAdapter.js";
-import { handleAiReservationConversation } from "../services/aiReservationConversationService.js";
+import { handleAiReservationConversation, isGenericBookingIntent, isNaturalServiceBookingIntent } from "../services/aiReservationConversationService.js";
 import { logAiReservationEvent, measureAiReservationStage, setAiReservationTrace } from "../utils/aiReservationLogger.js";
 
 // List of all fields allowed to be updated
@@ -2834,6 +2834,12 @@ function formatAppointmentShortForChat(appointment, slot) {
 }
 
 export function detectBookingIntent(lowerMsg) {
+  if (
+    (/^(?:what|how|why|do you|does your|tell me|explain)\b/i.test(lowerMsg) && !/\b(?:sign\s*up|signup|register|enrol|enroll)\b/i.test(lowerMsg)) ||
+    /\b(?:booked|reserved|scheduled)\b/i.test(lowerMsg) ||
+    /\b(?:booking reference|reservation system|appointment scheduling|support bookings?)\b/i.test(lowerMsg) ||
+    /\b(?:recommend|tell me about)\b.*\bbook\b/i.test(lowerMsg)
+  ) return null;
   const remoteMeetingKeywords = [
     "callback",
     "call back",
@@ -2923,10 +2929,17 @@ export function isSpecificAppointmentRequest(message) {
 
 export function shouldHandleTypedAppointment({ reservationEnabled, message, session } = {}) {
   const lowerMsg = String(message || "").toLowerCase().trim();
+  const flowStatus = session?.reservationFlow?.status;
+  if (!flowStatus && /^(?:what|how|why|do you|does your|tell me|explain)\b/i.test(lowerMsg)) return false;
+  const activeTypedFlow = flowStatus && !["idle", "completed", "cancelled", "failed", "unknown"].includes(flowStatus);
+  const terminalRestart = ["completed", "cancelled", "failed"].includes(flowStatus) && (isGenericBookingIntent(lowerMsg) || isNaturalServiceBookingIntent(lowerMsg));
+  if (reservationEnabled && (activeTypedFlow || terminalRestart) && !/\b(?:cancel\s+(?:my|the)|lookup|reschedul|change\s+(?:my|the)|move\s+(?:my|the))\b/i.test(lowerMsg)) return true;
   return Boolean(
     reservationEnabled &&
       !/\b(cancel|reschedul|change|move|lookup|callback|table|restaurant)\b/i.test(lowerMsg) &&
       (
+        isGenericBookingIntent(lowerMsg) ||
+        isNaturalServiceBookingIntent(lowerMsg) ||
         /\bappointment\b/i.test(lowerMsg) ||
         /\b(schedule|book)\s+(an?\s+)?appointment\b/i.test(lowerMsg) ||
         isSpecificAppointmentRequest(lowerMsg) ||

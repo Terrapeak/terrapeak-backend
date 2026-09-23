@@ -291,9 +291,9 @@ test("reservation booking requests do not require Gemini configuration", async (
   const result = await sendMessage(t, "i want to make a booking");
 
   assert.equal(result.success, true);
-  assert.match(result.reply, /Reservations form/i);
+  assert.match(result.reply, /choose a service/i);
   assert.doesNotMatch(result.reply, /Configuration required/i);
-  assert.equal(getSession().bookingType, "reservation");
+  assert.equal(getSession().reservationFlow.status, "service_selection");
 });
 
 test("service-specific appointment requests enter the typed Reservations flow", () => {
@@ -318,6 +318,36 @@ test("service-specific appointment requests enter the typed Reservations flow", 
     }),
     false,
   );
+});
+
+test("natural booking intent routes to typed R2B and informational book language stays generic", () => {
+  for (const message of [
+    "I want to book", "I want to make a reservation", "I need an appointment",
+    "Can I book a time?", "I'd like to schedule an appointment", "Schedule me in", "Can I make a booking?",
+  ]) assert.equal(shouldHandleTypedAppointment({ reservationEnabled: true, message, session: {} }), true, message);
+  for (const message of [
+    "Can you recommend a book?", "Tell me about this book", "I booked this last year",
+    "What is a booking reference?", "How does appointment scheduling work?", "Do you support bookings?",
+  ]) {
+    assert.equal(shouldHandleTypedAppointment({ reservationEnabled: true, message, session: {} }), false, message);
+    assert.equal(detectBookingIntent(message.toLowerCase()), null, message);
+  }
+});
+
+test("typed cancellation and restart remain isolated from stale legacy reservation state", async (t) => {
+  const { getSession } = installChatbotMocks(t);
+  const started = await sendMessage(t, "I want to book");
+  assert.equal(started.reservation?.flowStatus, "service_selection", JSON.stringify(started));
+  getSession().reservationStep = "askDate";
+  getSession().lastGeminiCall = 0;
+  const cancelled = await sendMessage(t, "cancel");
+  assert.equal(cancelled.reservation.flowStatus, "cancelled");
+  assert.equal(getSession().reservationFlow.status, "cancelled");
+  assert.equal(getSession().reservationStep, "askDate");
+  getSession().lastGeminiCall = 0;
+  const restarted = await sendMessage(t, "I want to book again");
+  assert.equal(restarted.reservation.flowStatus, "service_selection");
+  assert.equal(getSession().reservationFlow.status, "service_selection");
 });
 
 test("controller routes a service-specific request to canonical R2B service selection", async (t) => {
