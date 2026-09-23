@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import Session from "../models/sessionModel.js";
 import { resolveAiReservationOption } from "../utils/aiReservationOptionResolver.js";
 import { normalizeStructuredDateInput, parseCustomerFormInput } from "../utils/aiReservationCustomerForm.js";
-import { buildReservationConfirmationSummary, formatReservationConfirmationSummary } from "../services/aiReservationFlowService.js";
+import { buildReservationConfirmationSummary, formatReservationConfirmationSummary, formatReservationSuccessResponse } from "../services/aiReservationFlowService.js";
 import { sendAiReservationConfirmationEmail } from "../services/aiReservationConfirmationEmailService.js";
 import { executeAiReservationBooking } from "../services/aiReservationBookingService.js";
 import { handleAiReservationConversation } from "../services/aiReservationConversationService.js";
@@ -109,6 +109,8 @@ const withoutEmailConfiguration = () => {
     else process.env[name] = previous[name];
   });
 };
+
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 test("Patch 4A persists local time in the typed session schema", () => {
   assert.ok(Session.schema.path("reservationFlow.localTime"));
@@ -255,6 +257,36 @@ test("confirmation summary includes core contact fields without duplicating syst
   assert.match(text, /Email: aisha@example\.com/);
   assert.match(text, /Phone: \+60123456789/);
   assert.doesNotMatch(text, /Additional details:[\s\S]*Name:/);
+});
+
+test("booking summaries use paragraph-separated Markdown blocks without changing values", () => {
+  const summary = {
+    serviceName: "Acceptance Test Service",
+    providerName: "Acceptance Test Team Member",
+    localDate: "2026-09-24",
+    localTime: "09:00",
+    customer: { name: "Tim Harmsen", email: "tim@test.com", phone: "1234567" },
+    customFields: [{ label: "Acceptance Dropdown", value: "Option A" }],
+  };
+  const text = formatReservationConfirmationSummary(summary);
+  for (const [left, right] of [
+    ["Booking summary", "Service: Acceptance Test Service"],
+    ["Service: Acceptance Test Service", "Provider: Acceptance Test Team Member"],
+    ["Provider: Acceptance Test Team Member", "Date: 2026-09-24"],
+    ["Date: 2026-09-24", "Time: 09:00"],
+    ["Time: 09:00", "Customer: Tim Harmsen"],
+    ["Customer: Tim Harmsen", "Email: tim@test.com"],
+    ["Email: tim@test.com", "Phone: 1234567"],
+    ["Phone: 1234567", "Additional details:"],
+    ["Additional details:", "Acceptance Dropdown: Option A"],
+    ["Acceptance Dropdown: Option A", "Reply **yes** to confirm or **no** to cancel."],
+  ]) assert.match(text, new RegExp(`${escapeRegExp(left)}\\n\\n${escapeRegExp(right)}`));
+  assert.doesNotMatch(text, /Customer: Tim Harmsen[\s\S]*Name:/);
+
+  const success = formatReservationSuccessResponse(summary, { reference: "BK-ABC123" });
+  assert.match(success, /Your appointment is confirmed\.\n\nService: Acceptance Test Service/);
+  assert.match(success, /Service: Acceptance Test Service\n\nProvider: Acceptance Test Team Member/);
+  assert.match(success, /Reference: BK-ABC123/);
 });
 
 test("confirmation email claims only after completion and does not resend on replay", async () => {

@@ -106,9 +106,8 @@ export const buildReservationConfirmationSummary = ({ context, flow, service, pr
 const summaryValue = (value, fallback = "Not provided") => value === undefined || value === null || value === "" ? fallback : String(value);
 
 export function formatReservationConfirmationSummary(summary = {}) {
-  const lines = [
+  const blocks = [
     "Booking summary",
-    "",
     `Service: ${summaryValue(summary.serviceName)}`,
     `Provider: ${summaryValue(summary.providerName)}`,
     `Date: ${summaryValue(summary.localDate)}`,
@@ -118,18 +117,17 @@ export function formatReservationConfirmationSummary(summary = {}) {
     `Phone: ${summaryValue(summary.customer?.phone)}`,
   ];
   if (summary.customFields?.length) {
-    lines.push("", "Additional details:");
-    for (const field of summary.customFields) lines.push(`${field.label}: ${field.value}`);
+    blocks.push("Additional details:");
+    for (const field of summary.customFields) blocks.push(`${field.label}: ${field.value}`);
   }
-  lines.push("", "Reply **yes** to confirm or **no** to cancel.");
-  return lines.join("\n");
+  blocks.push("Reply **yes** to confirm or **no** to cancel.");
+  return blocks.join("\n\n");
 }
 
 export function formatReservationSuccessResponse(summary = {}, result = {}) {
   const reference = result.reference || result.bookingReference || "not available";
-  const lines = [
+  const blocks = [
     "Your appointment is confirmed.",
-    "",
     `Service: ${summaryValue(summary.serviceName)}`,
     `Provider: ${summaryValue(summary.providerName)}`,
     `Date: ${summaryValue(summary.localDate)}`,
@@ -137,9 +135,9 @@ export function formatReservationSuccessResponse(summary = {}, result = {}) {
     `Reference: ${reference}`,
   ];
   if (result.confirmationEmail?.status === "failed") {
-    lines.push("", "We couldn't send the confirmation email. Please keep this booking reference.");
+    blocks.push("We couldn't send the confirmation email. Please keep this booking reference.");
   }
-  return lines.join("\n");
+  return blocks.join("\n\n");
 }
 
 export async function prepareReservationConfirmation({ context, session, flow, service, provider, slot, customer, form, model }) {
