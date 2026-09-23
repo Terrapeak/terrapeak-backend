@@ -254,7 +254,8 @@ test("rejects invalid custom input without advancing the active field", async ()
   ]) await send(message);
 
   const invalid = await send("Option C");
-  assert.match(invalid.reply, /Option A, Option B/);
+  assert.match(invalid.reply, /1\. Option A/);
+  assert.match(invalid.reply, /2\. Option B/);
   assert.equal(session.reservationFlow.status, "customer_form");
   assert.equal(session.reservationFlow.currentCustomField, "choice");
 });
@@ -359,4 +360,92 @@ test("upstream provider and date changes invalidate dependent state", async () =
   assert.equal(dateSession.reservationFlow.status, "slot_selection");
   assert.equal(dateSession.reservationFlow.startsAt, undefined);
   assert.equal(dateSession.reservationFlow.confirmation.required, undefined);
+});
+
+test("maps canonical core fields once and presents typed custom prompts", async () => {
+  const session = {};
+  const model = makeAttemptModel();
+  const form = [
+    { id: "system-name", label: "Customer name", type: "text", systemKey: "customer_name", required: true, active: true },
+    { id: "system-email", label: "Email", type: "text", systemKey: "customer_email", required: true, active: true },
+    { id: "system-phone", label: "Phone", type: "text", systemKey: "customer_phone", required: true, active: true },
+    { id: "company-name", label: "Company Name", type: "text", required: true, active: true },
+    { id: "reason", label: "Reason for visit", type: "textarea", required: true, active: true },
+    { id: "participants", label: "Number of participants", type: "number", required: true, active: true },
+    { id: "contact", label: "Preferred contact method", type: "dropdown", options: ["Email", "Phone", "WhatsApp"], required: true, active: true },
+    { id: "birth-date", label: "Date of birth", type: "date", required: false, active: true },
+    { id: "consent", label: "I agree to the terms", type: "checkbox", required: true, active: true },
+    { id: "notes", label: "Additional notes", type: "textarea", required: false, active: true },
+  ];
+  const formReadAdapter = { ...readAdapter, async getCustomerForm() { return form; } };
+  const send = (message) => handleAiReservationConversation({ context, session, message, model, readAdapter: formReadAdapter });
+
+  await send("I want to book an appointment");
+  await send("1");
+  await send("1");
+  await send("2099-01-15");
+  let result = await send("1");
+  await send("Tim Harmsen");
+  await send("tim@example.com");
+  result = await send("+60123456789");
+  assert.match(result.reply, /Company name/i);
+  assert.doesNotMatch(result.reply, /email|phone|customer name/i);
+  assert.match((await send("TerraPeak" )).reply, /reason for visit/i);
+  assert.match((await send("Initial consultation")).reply, /number of participants/i);
+  assert.match((await send("2")).reply, /preferred contact method/i);
+  assert.match((await send("2")).reply, /Date of birth.*Optional/i);
+  assert.match((await send("skip")).reply, /agree to the terms.*Yes or No/i);
+  assert.match((await send("yes")).reply, /additional notes.*Optional/i);
+  result = await send("skip");
+
+  assert.equal(session.reservationFlow.status, "awaiting_confirmation");
+  assert.equal(session.reservationFlow.customData["system-name"], "Tim Harmsen");
+  assert.equal(session.reservationFlow.customData["system-email"], "tim@example.com");
+  assert.equal(session.reservationFlow.customData["system-phone"], "+60123456789");
+  assert.equal(session.reservationFlow.customData["company-name"], "TerraPeak");
+  assert.equal(session.reservationFlow.customData.contact, "Phone");
+  assert.equal(session.reservationFlow.customData["birth-date"], undefined);
+  assert.equal(session.reservationFlow.customData.notes, undefined);
+  assert.equal(result.reservation.confirmationRequired, true);
+});
+
+test("required skips and invalid typed answers stay on the same field", async () => {
+  const session = { reservationFlow: {
+    status: "customer_form",
+    customer: { name: "Aisha", email: "aisha@example.com", phone: "+31612345678" },
+    customData: {},
+    customerFormSnapshot: [
+      { id: "count", label: "Number of participants", type: "number", required: true, active: true },
+      { id: "consent", label: "I agree to the terms", type: "checkbox", required: true, active: true },
+    ],
+    formFieldIndex: 3,
+    customFieldIndex: 0,
+    currentCustomField: "count",
+  } };
+  const send = (message) => handleAiReservationConversation({ context, session, message, readAdapter });
+  let result = await send("skip");
+  assert.match(result.reply, /required/i);
+  assert.equal(session.reservationFlow.currentCustomField, "count");
+  result = await send("two people");
+  assert.match(result.reply, /number/i);
+  assert.equal(session.reservationFlow.currentCustomField, "count");
+  result = await send("2");
+  assert.match(result.reply, /Yes or No/i);
+  result = await send("maybe");
+  assert.match(result.reply, /Yes or No/i);
+  assert.equal(session.reservationFlow.currentCustomField, "consent");
+});
+
+test("cancel and restart commands win over customer form parsing", async () => {
+  for (const message of ["cancel", "start over"]) {
+    const session = { reservationFlow: {
+      status: "customer_form", customer: {}, customData: { notes: "old" },
+      customerFormSnapshot: [{ id: "notes", label: "Notes", type: "text", active: true }],
+      formFieldIndex: 3, customFieldIndex: 0, currentCustomField: "notes",
+    } };
+    const result = await handleAiReservationConversation({ context, session, message, readAdapter: multiServiceReadAdapter });
+    assert.equal(result.handled, true);
+    assert.notEqual(session.reservationFlow.customData?.notes, message);
+    assert.equal(message === "cancel" ? session.reservationFlow.status : session.reservationFlow.status, message === "cancel" ? "cancelled" : "service_selection");
+  }
 });

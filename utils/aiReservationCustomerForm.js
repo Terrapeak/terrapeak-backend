@@ -46,6 +46,70 @@ export function normalizeCustomerForm(fields = [], { activeOnly = true } = {}) {
 
 const invalid = (message) => ({ valid: false, message });
 
+const CORE_SYSTEM_KEYS = Object.freeze({
+  customer_name: "name",
+  customer_email: "email",
+  customer_phone: "phone",
+});
+
+const OPTIONAL_SKIP_VALUES = new Set(["skip", "none", "n/a", "not applicable"]);
+
+export function getCustomerCoreFieldKey(field = {}) {
+  const systemKey = String(field.systemKey || "").trim().toLowerCase();
+  return CORE_SYSTEM_KEYS[systemKey] || null;
+}
+
+export function isOptionalCustomerFormSkip(value) {
+  return OPTIONAL_SKIP_VALUES.has(String(value ?? "").trim().toLowerCase());
+}
+
+export function customerFormValidationField(field = {}) {
+  const coreKey = getCustomerCoreFieldKey(field);
+  return coreKey === "email" || coreKey === "phone"
+    ? { ...field, type: coreKey }
+    : field;
+}
+
+const promptLabel = (field) => field.label || "this field";
+
+export function buildCustomerFormPrompt(field = {}) {
+  const label = promptLabel(field);
+  const optionalSuffix = field.required ? "" : " (Optional — reply 'skip' to continue.)";
+  if (field.type === "dropdown") {
+    const options = field.options.map((option, index) => `${index + 1}. ${option}`).join("\n");
+    return `Please choose your ${label.toLowerCase()}:${options ? `\n\n${options}` : ""}${optionalSuffix}`;
+  }
+  if (field.type === "checkbox") {
+    return `Do you agree to ${label.toLowerCase()}? Please answer Yes or No.${optionalSuffix}`;
+  }
+  if (field.type === "number") {
+    return `Please enter the number for ${label.toLowerCase()}.${optionalSuffix}`;
+  }
+  if (field.type === "date") {
+    return `Please enter your ${label.toLowerCase()} in YYYY-MM-DD format.${optionalSuffix}`;
+  }
+  if (field.type === "textarea") {
+    return `Please tell us ${label.toLowerCase()}.${optionalSuffix}`;
+  }
+  if (field.type === "email") return `Please enter a valid email address.${optionalSuffix}`;
+  if (field.type === "phone") return `Please enter a phone number for ${label.toLowerCase()}.${optionalSuffix}`;
+  return `Please enter your ${label.toLowerCase()}.${optionalSuffix}`;
+}
+
+export function buildCustomerFormValidationMessage(field, result = {}) {
+  const label = promptLabel(field);
+  if (result.message?.includes("number")) return `Please enter a number for ${label}.`;
+  if (result.message?.includes("YYYY-MM-DD") || field.type === "date") return `Please enter the date in YYYY-MM-DD format.`;
+  if (field.type === "checkbox") return "Please answer Yes or No.";
+  if (field.type === "dropdown") {
+    const options = field.options.map((option, index) => `${index + 1}. ${option}`).join("\n");
+    return `Please choose one of the available options${options ? `:\n${options}` : "."}`;
+  }
+  if (field.type === "email") return "Please enter a valid email address.";
+  if (field.type === "phone") return "Please enter a valid phone number.";
+  return `Please enter ${label}.`;
+}
+
 export function parseCustomerFormInput(field, rawValue) {
   const value = String(rawValue ?? "").trim();
   if (!value) return { valid: true, value: "", message: null };
@@ -59,9 +123,12 @@ export function parseCustomerFormInput(field, rawValue) {
 
   if (field.type === "dropdown") {
     const option = field.options.find((candidate) => candidate.toLowerCase() === value.toLowerCase());
-    return option
-      ? { valid: true, value: option, message: null }
-      : invalid(`${field.label} must be one of: ${field.options.join(", ")}.`);
+    if (option) return { valid: true, value: option, message: null };
+    if (/^\d+$/.test(value)) {
+      const index = Number.parseInt(value, 10) - 1;
+      if (index >= 0 && index < field.options.length) return { valid: true, value: field.options[index], message: null };
+    }
+    return invalid(`${field.label} must be one of: ${field.options.join(", ")}.`);
   }
 
   if (field.type === "number") {
@@ -102,7 +169,7 @@ export function validateCustomerFormValue(field, value) {
 }
 
 export function validateCustomerForm(fields, values = {}) {
-  const errors = fields.map((field) => validateCustomerFormValue(field, values[field.id])).filter((result) => !result.valid);
+  const errors = fields.map((field) => validateCustomerFormValue(customerFormValidationField(field), values[field.id])).filter((result) => !result.valid);
   return errors.length ? errors[0].message : null;
 }
 

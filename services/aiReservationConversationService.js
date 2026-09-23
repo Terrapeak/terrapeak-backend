@@ -1,6 +1,14 @@
 import { resolveChatReservationJourney } from "./chatReservationJourneyService.js";
 import { initializeReservationFlow, prepareReservationConfirmation, confirmReservationFoundation, buildReservationResponse, resetReservationFlowSelections } from "./aiReservationFlowService.js";
-import { parseCustomerFormInput, validateCustomerFormValue } from "../utils/aiReservationCustomerForm.js";
+import {
+  buildCustomerFormPrompt,
+  buildCustomerFormValidationMessage,
+  customerFormValidationField,
+  getCustomerCoreFieldKey,
+  isOptionalCustomerFormSkip,
+  parseCustomerFormInput,
+  validateCustomerFormValue,
+} from "../utils/aiReservationCustomerForm.js";
 import { measureAiReservationStage } from "../utils/aiReservationLogger.js";
 
 const supportedTemplates = new Set(["general", "physiotherapy", "dental", "salon"]);
@@ -139,6 +147,38 @@ const reservationPayload = (session, flow, reply, errorCode = null) => buildRese
   errorCode,
 }).reservation;
 
+const customerFormFields = (flow) => (Array.isArray(flow.customerFormSnapshot) ? flow.customerFormSnapshot : [])
+  .filter((field) => field.active !== false);
+
+const findNextCustomerFormField = (flow) => {
+  const fields = customerFormFields(flow);
+  const values = flow.customData || {};
+  const startIndex = Number(flow.customFieldIndex || 0);
+  for (let index = startIndex; index < fields.length; index += 1) {
+    const field = fields[index];
+    const coreKey = getCustomerCoreFieldKey(field);
+    const existingValue = coreKey ? flow.customer?.[coreKey] : values[field.id];
+    if (existingValue !== undefined && existingValue !== null && existingValue !== "") {
+      const validation = validateCustomerFormValue(customerFormValidationField(field), existingValue);
+      if (validation.valid) {
+        flow.customData = { ...(flow.customData || {}), [field.id]: existingValue };
+        continue;
+      }
+    }
+    flow.customFieldIndex = index;
+    flow.currentCustomField = field.id;
+    return field;
+  }
+  flow.currentCustomField = null;
+  flow.customFieldIndex = fields.length;
+  return null;
+};
+
+const clearCustomerFormSelection = (flow) => {
+  flow.currentCustomField = null;
+  flow.customFieldIndex = null;
+};
+
 export async function handleAiReservationConversation({
   context,
   session,
@@ -268,32 +308,43 @@ export async function handleAiReservationConversation({
       flow.customer = { ...(flow.customer || {}), phone: String(message).trim() };
       const form = await measureAiReservationStage({ context, flow, stage: "customer_form_read", operation: "get_customer_form" }, () => readAdapter.getCustomerForm(context));
       flow.customerFormSnapshot = form;
-      const first = form.find((field) => field.required || field.active);
+      const first = findNextCustomerFormField(flow);
       if (first) {
         flow.formFieldIndex = 3;
-        flow.currentCustomField = first.id;
-        flow.customFieldIndex = 0;
-        return { handled: true, reply: first.label, reservation: reservationPayload(session, flow, "") };
+        return { handled: true, reply: buildCustomerFormPrompt(first), reservation: reservationPayload(session, flow, "") };
       }
     } else if (flow.currentCustomField) {
-      const fields = Array.isArray(flow.customerFormSnapshot) ? flow.customerFormSnapshot : [];
+      const fields = customerFormFields(flow);
       const field = fields.find((item) => String(item.id) === String(flow.currentCustomField));
-      const activeField = field || { id: flow.currentCustomField, label: flow.currentCustomField, type: "text", options: [] };
-      const parsed = parseCustomerFormInput(activeField, message);
-      const validation = parsed.valid
-        ? validateCustomerFormValue(activeField, parsed.value)
-        : parsed;
-      if (!validation.valid) {
-        return { handled: true, reply: `${validation.message} Please try again.`, reservation: reservationPayload(session, flow, "") };
+      const activeField = field || { id: flow.currentCustomField, label: "this field", type: "text", options: [], required: true };
+      const skipRequested = isOptionalCustomerFormSkip(message);
+      if (!activeField.required && skipRequested) {
+        delete flow.customData[activeField.id];
+        flow.customFieldIndex = Number(flow.customFieldIndex || 0) + 1;
+        const next = findNextCustomerFormField(flow);
+        if (next) return { handled: true, reply: buildCustomerFormPrompt(next), reservation: reservationPayload(session, flow, "") };
+        clearCustomerFormSelection(flow);
+      } else if (activeField.required && skipRequested) {
+        return { handled: true, reply: `This field is required. Please enter ${activeField.label}.`, reservation: reservationPayload(session, flow, "") };
+      } else {
+        const coreKey = getCustomerCoreFieldKey(activeField);
+        const validationField = customerFormValidationField(activeField);
+        const parsed = parseCustomerFormInput(validationField, message);
+        const validation = parsed.valid
+          ? validateCustomerFormValue(validationField, parsed.value)
+          : parsed;
+        if (!validation.valid) {
+          return { handled: true, reply: `${buildCustomerFormValidationMessage(validationField, validation)} Please try again.`, reservation: reservationPayload(session, flow, "") };
+        }
+        if (coreKey) flow.customer = { ...(flow.customer || {}), [coreKey]: parsed.value };
+        flow.customData = { ...(flow.customData || {}), [activeField.id]: parsed.value };
+        flow.customFieldIndex = Number(flow.customFieldIndex || 0) + 1;
+        const next = findNextCustomerFormField(flow);
+        if (next) {
+          return { handled: true, reply: buildCustomerFormPrompt(next), reservation: reservationPayload(session, flow, "") };
+        }
+        clearCustomerFormSelection(flow);
       }
-      flow.customData = { ...(flow.customData || {}), [flow.currentCustomField]: parsed.value };
-      const next = fields.slice(Number(flow.customFieldIndex || 0) + 1).find((field) => field.active);
-      if (next) {
-        flow.customFieldIndex = fields.indexOf(next);
-        flow.currentCustomField = next.id;
-        return { handled: true, reply: next.label, reservation: reservationPayload(session, flow, "") };
-      }
-      flow.currentCustomField = null;
     }
 
     if (context.configuration.bookingBehavior?.booking_behavior === "request") {

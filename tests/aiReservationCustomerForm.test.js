@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   CUSTOMER_FIELD_TYPES,
+  buildCustomerFormPrompt,
+  getCustomerCoreFieldKey,
+  isOptionalCustomerFormSkip,
   normalizeCustomerForm,
   parseCustomerFormInput,
   serializeCustomerFormAnswers,
@@ -65,4 +68,31 @@ test("required checkbox still rejects false after parsing", () => {
   const parsed = parseCustomerFormInput(field, "No");
   assert.equal(parsed.valid, true);
   assert.match(validateCustomerForm([field], { consent: parsed.value }), /Consent is required/);
+});
+
+test("uses canonical system identity and safe dropdown ordinals", () => {
+  const normalized = normalizeCustomerForm([
+    { id: "name", field_label: "Customer name", field_type: "text", system_key: "customer_name" },
+    { id: "company", field_label: "Company Name", field_type: "text" },
+    { id: "contact", field_label: "Preferred contact method", field_type: "dropdown", field_options: ["Email", "Phone", "WhatsApp"] },
+  ]);
+  const byId = Object.fromEntries(normalized.map((field) => [field.id, field]));
+  assert.equal(getCustomerCoreFieldKey(byId.name), "name");
+  assert.equal(getCustomerCoreFieldKey(byId.company), null);
+  assert.equal(parseCustomerFormInput(byId.contact, "2").value, "Phone");
+  assert.equal(parseCustomerFormInput(byId.contact, "2 people").valid, false);
+  assert.equal(parseCustomerFormInput(byId.contact, "whatsapp").value, "WhatsApp");
+  assert.equal(isOptionalCustomerFormSkip("N/A"), true);
+  assert.equal(isOptionalCustomerFormSkip("maybe"), false);
+  assert.match(buildCustomerFormPrompt({ label: "Additional notes", type: "textarea", required: false }), /Optional/);
+});
+
+test("mapped core email and phone use canonical validation", () => {
+  const normalized = normalizeCustomerForm([
+    { id: "email", field_label: "Email", field_type: "text", system_key: "customer_email", is_required: true },
+    { id: "phone", field_label: "Phone", field_type: "text", system_key: "customer_phone", is_required: true },
+  ]);
+  assert.match(validateCustomerForm(normalized, { email: "bad", phone: "123456" }), /valid email/);
+  assert.match(validateCustomerForm(normalized, { email: "a@example.com", phone: "" }), /Phone is required/);
+  assert.equal(validateCustomerForm(normalized, { email: "a@example.com", phone: "+60123456789" }), null);
 });
