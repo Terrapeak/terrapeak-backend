@@ -41,6 +41,28 @@ import { getReusableReservationConversationContext, resolveChatReservationContex
 import { reservationsReadAdapter } from "../services/reservationReadAdapter.js";
 import { reservationWriteAdapter } from "../services/reservationWriteAdapter.js";
 import { handleAiReservationConversation, isGenericBookingIntent, isNaturalServiceBookingIntent } from "../services/aiReservationConversationService.js";
+
+const normalizeReservationCapabilityQuestion = (message = "") => String(message)
+  .toLowerCase()
+  .replace(/[?!.,]+$/g, "")
+  .replace(/\s+/g, " ")
+  .trim();
+
+export const isReservationCapabilityQuestion = (message = "") => {
+  const normalized = normalizeReservationCapabilityQuestion(message);
+  return /^(?:how does (?:booking|reservation|reservations) work|how do (?:booking|bookings|reservation|reservations) work|can i (?:book|make (?:a )?reservation) here|do you take reservations|(?:what|which) services can i book|what can i book)$/.test(normalized);
+};
+
+export const isReservationServiceListQuestion = (message = "") => {
+  const normalized = normalizeReservationCapabilityQuestion(message);
+  return /^(?:(?:what|which) services can i book|what can i book)$/.test(normalized);
+};
+
+const buildReservationServiceListReply = (services = [], { requestOnly = false } = {}) => {
+  const names = services.map((service) => String(service?.name || "").trim()).filter(Boolean);
+  if (!names.length) return `No ${requestOnly ? "reservation-request" : "bookable"} services are currently available.`;
+  return `Available services:\n\n${names.map((name, index) => `${index + 1}. ${name}`).join("\n")}\n\nTell me which service you’d like to ${requestOnly ? "request" : "book"}.`;
+};
 import { logAiReservationEvent, measureAiReservationStage, setAiReservationTrace } from "../utils/aiReservationLogger.js";
 
 // List of all fields allowed to be updated
@@ -518,6 +540,45 @@ if (!session.rescheduleReservationData) {
   let botReply = null;
   let typedReservationResponse = null;
 
+  const hasActiveTypedReservationFlow = Boolean(
+    session.reservationFlow?.status &&
+    !["idle", "completed", "cancelled", "failed", "unknown"].includes(session.reservationFlow.status),
+  );
+  const reservationCapabilityQuestion = isReservationCapabilityQuestion(lowerMsg);
+  if (!hasActiveTypedReservationFlow && reservationCapabilityQuestion) {
+    if (!reservationEnabled) {
+      botReply = "Reservations are not available for this business right now. Please contact the team for booking help.";
+    } else {
+      try {
+        const capabilityContext = middlewareTenantContext || await resolveChatReservationContext({
+          apiKey,
+          chatbotId,
+          sessionId,
+        });
+        const bookingBehavior = capabilityContext.configuration?.bookingBehavior?.booking_behavior;
+        const requestOnly = bookingBehavior === "request";
+        if (requestOnly) {
+          botReply = isReservationServiceListQuestion(lowerMsg)
+            ? buildReservationServiceListReply(await reservationsReadAdapter.listBookableServices(capabilityContext), { requestOnly: true })
+            : "This business accepts reservation requests. Tell me which service you’d like to request, and the team will follow up.";
+        } else if (isReservationServiceListQuestion(lowerMsg)) {
+          botReply = buildReservationServiceListReply(await reservationsReadAdapter.listBookableServices(capabilityContext));
+        } else {
+          botReply = "You can book an available service directly here in chat. Say **book** to get started, or tell me which service you’d like to book.";
+        }
+      } catch (error) {
+        logAiReservationEvent("reservation_capability_response_failed", {
+          companyId: settings.companyId,
+          chatbotId,
+          businessId: reservationBusinessId,
+          errorCode: error.code || "RESERVATION_CONTEXT_UNAVAILABLE",
+        });
+        botReply = "I can’t confirm the current booking options right now. Please use the Reservations form or contact the team for help.";
+      }
+    }
+    handledBy = "reservation_info";
+  }
+
   const routingStartedAt = performance.now();
   const shouldHandleTypedAppointmentRequest = shouldHandleTypedAppointment({
     reservationEnabled,
@@ -535,7 +596,7 @@ if (!session.rescheduleReservationData) {
     success: true,
   });
   measuredStageMs += Math.round(performance.now() - routingStartedAt);
-  if (shouldHandleTypedAppointmentRequest) {
+  if (!botReply && shouldHandleTypedAppointmentRequest) {
     try {
       const typedFlowStatus = session.reservationFlow?.status;
       const startsFreshTypedFlow = !typedFlowStatus || ["idle", "completed", "cancelled", "failed", "unknown"].includes(typedFlowStatus);
