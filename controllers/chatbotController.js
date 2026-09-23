@@ -537,6 +537,11 @@ if (!session.rescheduleReservationData) {
   measuredStageMs += Math.round(performance.now() - routingStartedAt);
   if (shouldHandleTypedAppointmentRequest) {
     try {
+      const typedFlowStatus = session.reservationFlow?.status;
+      const startsFreshTypedFlow = !typedFlowStatus || ["idle", "completed", "cancelled", "failed", "unknown"].includes(typedFlowStatus);
+      if (startsFreshTypedFlow) {
+        resetBookingSession(session);
+      }
       const activeFlowStatus = session.reservationFlow?.status;
       const canReuseConversationContext = Boolean(
         activeFlowStatus &&
@@ -764,8 +769,8 @@ function reservationContactReply() {
 
 const reservationChoicesReply = () =>
   reservationBookingUrl
-    ? `I can help you choose the right option, check details, and answer questions. To confirm anything, please use the Reservations form:\n\n${reservationBookingUrl}\n\nIf you would rather speak with the team, reply **request callback** and I will collect the details for staff.`
-    : "I can help you choose the right option, check details, and answer questions. To confirm anything, please use the Reservations form in the customer dashboard. If you would rather speak with the team, reply **request callback** and I will collect the details for staff.";
+    ? `I can help you book a service here in chat, or help you choose the right option and check details. If this business uses request-based confirmation, you can also use the Reservations form:\n\n${reservationBookingUrl}\n\nIf you would rather speak with the team, reply **request callback** and I will collect the details for staff.`
+    : "I can help you book a service here in chat when typed Reservations is available. Tell me what you would like to book, or reply **request callback** to speak with the team.";
 
 const createReservationStaffRequest = async ({
   type,
@@ -2341,9 +2346,9 @@ botReply = buildAppointmentConfirmationReply({
 Reservations is installed for this customer.
 Use the live Reservations service catalogue above as the primary source for services, programmes, classes, dates, time slots, teachers, teacher background, languages, specialties, prices, duration, capacity, policies, prerequisites, and general enrolment advice.
 If the live catalogue has no exact day, time, capacity, or staff detail for a question, say that clearly and offer the Reservations form or a callback instead of guessing.
-Do not create or confirm a new Reservations booking in chat. New bookings must go through the Reservations form.
+Do not create or confirm a new Reservations booking from an informational Gemini response. Deterministic typed R2B handles eligible booking starts in chat; request-only businesses may still require the Reservations form after details are collected.
 You may help customers look up or cancel existing Reservations bookings when the existing booking verification flow is satisfied. Reschedule requests must be collected and sent to staff for confirmation; do not directly update a booking in chat.
-When the customer is ready to create a new booking, send them ${reservationBookingUrl ? `this Reservations form link:\n${reservationBookingUrl}` : "to the Reservations form in the customer dashboard"}.
+When typed R2B is unavailable or the business is request-only, explain the configured next step and offer ${reservationBookingUrl ? `this Reservations form link:\n${reservationBookingUrl}` : "the Reservations form"} without claiming that all chat bookings are unsupported.
 For unusual, sensitive, unclear, or advice-heavy questions, offer a callback and ask them to reply "request callback".
 `
       : "";
@@ -2930,6 +2935,7 @@ export function isSpecificAppointmentRequest(message) {
 export function shouldHandleTypedAppointment({ reservationEnabled, message, session } = {}) {
   const lowerMsg = String(message || "").toLowerCase().trim();
   const flowStatus = session?.reservationFlow?.status;
+  if (session?.reservationCallbackStep) return false;
   if (!flowStatus && /^(?:what|how|why|do you|does your|tell me|explain)\b/i.test(lowerMsg)) return false;
   const activeTypedFlow = flowStatus && !["idle", "completed", "cancelled", "failed", "unknown"].includes(flowStatus);
   const terminalRestart = ["completed", "cancelled", "failed"].includes(flowStatus) && (isGenericBookingIntent(lowerMsg) || isNaturalServiceBookingIntent(lowerMsg));

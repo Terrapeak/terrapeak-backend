@@ -13,6 +13,7 @@ import {
   normalizeCustomFieldOptions,
   validateCustomFieldAnswer,
 } from "../utils/reservationCustomFieldService.js";
+import { isGenericBookingIntent, isNaturalServiceBookingIntent } from "../services/aiReservationConversationService.js";
 
 const appendChatExchange = (session, message, reply) => {
   session.chatLogs.push(
@@ -283,6 +284,15 @@ export default async function handleReservationCustomFields(req, res, next) {
     // A typed R2B appointment owns the conversation, including terminal
     // states, until a new journey explicitly replaces or clears the flow.
     if (isTypedReservationFlow(session.reservationFlow)) {
+      return next();
+    }
+
+    // A fresh typed booking start owns the request, even if an old legacy
+    // reservation draft still has askDate/askTime state.
+    if (
+      req.chatReservationContext &&
+      (isGenericBookingIntent(message) || isNaturalServiceBookingIntent(message))
+    ) {
       return next();
     }
 

@@ -16,7 +16,7 @@ import { measureAiReservationStage } from "../utils/aiReservationLogger.js";
 const supportedTemplates = new Set(["general", "physiotherapy", "dental", "salon"]);
 const naturalServiceWords = new Set([
   "appointment", "consultation", "cleaning", "follow-up", "followup", "therapy", "physio",
-  "dental", "dentist", "doctor", "haircut", "massage", "treatment", "session", "class",
+  "dental", "dentist", "doctor", "haircut", "massage", "treatment", "session", "class", "service", "test",
 ]);
 
 const normalizeOptionText = (value) => String(value || "")
@@ -39,6 +39,7 @@ export const isGenericBookingIntent = (message = "") => {
   if (/^(?:what|how|why|do you|does your|tell me|explain)\b/.test(normalized)) return false;
   if (/\b(?:booked|reserved|scheduled)\b/.test(normalized)) return false;
   if (/\b(?:booking reference|reservation system|appointment scheduling|support bookings?)\b/.test(normalized)) return false;
+  if (["book", "booking", "reservation", "reserve"].includes(normalized)) return true;
   return Boolean(
     /\b(?:i want to|i would like to|id like to|can i|could i|please)\s+(?:make\s+)?(?:a\s+)?(?:booking|reservation|appointment|schedule|book)\b/.test(normalized) ||
     /\b(?:i need|id like)\s+(?:(?:an?|the)\s+)?(?:appointment|consultation|cleaning|follow[- ]?up|therapy|treatment|session)\b/.test(normalized) ||
@@ -51,8 +52,10 @@ export const isGenericBookingIntent = (message = "") => {
 export const isNaturalServiceBookingIntent = (message = "") => {
   if (isGenericBookingIntent(message)) return true;
   const normalized = normalizeOptionText(message);
-  if (!/^i\s+need\s+(?:a|an|the)\s+/.test(normalized)) return false;
-  return normalized.split(" ").some((word) => naturalServiceWords.has(word));
+  if (/^(?:what|how|why|do you|does your|tell me|explain|can i cancel|can i change)\b/.test(normalized)) return false;
+  const words = normalized.split(" ").filter(Boolean);
+  if (words.length < 2 || words.length > 6) return false;
+  return words.some((word) => naturalServiceWords.has(word));
 };
 
 export const isCancelMessage = (message = "") => {
@@ -192,11 +195,18 @@ export async function handleAiReservationConversation({
   const current = session.reservationFlow;
   const startRequested = isGenericBookingIntent(message) || isNaturalServiceBookingIntent(message) || isRestartMessage(message);
   const startFlow = async () => {
+    const naturalServiceStart = isNaturalServiceBookingIntent(message) && !isGenericBookingIntent(message);
     const journey = await measureAiReservationStage({ context, stage: "journey_resolution", operation: "resolve_reservation_journey" }, async () => resolveChatReservationJourney({ configuration: context.configuration }));
     if (journey.journeyType !== "appointment" || !supportedTemplates.has(journey.templateKey)) return { handled: false };
     const flow = initializeReservationFlow({ context, session, journeyType: "appointment" });
     const services = await measureAiReservationStage({ context, flow, stage: "services_read", operation: "list_bookable_services" }, () => readAdapter.listBookableServices(context));
-    if (!services.length) return { handled: true, reply: "No appointment services are available right now.", reservation: reservationPayload(session, flow, "") };
+    if (!services.length) {
+      if (naturalServiceStart) {
+        delete session.reservationFlow;
+        return { handled: false };
+      }
+      return { handled: true, reply: "No appointment services are available right now.", reservation: reservationPayload(session, flow, "") };
+    }
     flow.selectionOptions = services.map(({ id, slug, name }) => ({ id, slug, name }));
     const service = matchService(message, services);
     if (service) {
@@ -207,6 +217,16 @@ export async function handleAiReservationConversation({
       flow.selectionOptions = providers.map(({ id, slug, displayName }) => ({ id, slug, displayName }));
       session.reservationFlow = flow;
       return { handled: true, reply: optionReply("provider", providers), reservation: reservationPayload(session, flow, "") };
+    }
+    const query = stripBookingWrapper(message).split(" ").filter(Boolean);
+    const hasServiceCandidate = services.some((candidate) => {
+      const candidateWords = new Set(normalizeOptionText(candidate.name).split(" "));
+      return [candidate.name, candidate.slug].some((value) => normalizeOptionText(value) === normalizeOptionText(message))
+        || (query.length > 0 && query.every((word) => candidateWords.has(word)));
+    });
+    if (naturalServiceStart && !hasServiceCandidate) {
+      delete session.reservationFlow;
+      return { handled: false };
     }
     session.reservationFlow = flow;
     return { handled: true, reply: optionReply("service", services), reservation: reservationPayload(session, flow, "") };

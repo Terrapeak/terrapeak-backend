@@ -32,19 +32,37 @@ const installMocks = (t, session) => {
   t.after(() => mock.restoreAll());
 };
 
-const invoke = async (session, message) => {
+const invoke = async (session, message, chatReservationContext = null) => {
   const response = { body: null, json(body) { this.body = body; return body; } };
   let nextCalled = false;
   await handleReservationCustomFields(
     {
       body: { sessionId: "session-1", chatbotId: "chatbot-1", message },
       headers: { "x-api-key": "test-key" },
+      ...(chatReservationContext ? { chatReservationContext } : {}),
     },
     response,
     () => { nextCalled = true; },
   );
   return { response, nextCalled };
 };
+
+test("fresh typed booking start bypasses stale legacy askDate state", async (t) => {
+  const session = {
+    chatLogs: [],
+    bookingType: "reservation",
+    reservationStep: "askDate",
+    reservationFlow: null,
+    async save() { throw new Error("fresh typed start must not save through legacy middleware"); },
+  };
+  installMocks(t, session);
+
+  const { response, nextCalled } = await invoke(session, "I want to book", { reservationBusinessId: 42 });
+
+  assert.equal(nextCalled, true);
+  assert.equal(response.body, null);
+  assert.equal(session.reservationStep, "askDate");
+});
 
 test("active R2B flow bypasses stale legacy askDate state", async (t) => {
   const session = {

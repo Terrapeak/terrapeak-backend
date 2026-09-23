@@ -505,7 +505,7 @@ export async function getReservationConciergeContext({
 --- LIVE RESERVATIONS SERVICE CATALOGUE ---
 This is read-only Reservations data for the current business${
       businessSlug ? ` (${businessSlug})` : ""
-    }. Use it when customers ask about services, courses, classes, programmes, prices, dates, times, capacity, staff, teachers, or enrolment advice. Do not mention draft, unpublished, archived, or internal services because they are intentionally excluded here. Final availability and new booking creation still happen only through the Reservations form${
+    }. Use it when customers ask about services, courses, classes, programmes, prices, dates, times, capacity, staff, teachers, or enrolment advice. Do not mention draft, unpublished, archived, or internal services because they are intentionally excluded here. This context is read-only: do not invent availability or confirmations, and let the typed Reservations flow handle eligible new booking starts in chat. Businesses using request-based confirmation may still require the Reservations form${
       bookingUrl ? `: ${bookingUrl}` : ""
     }.
 ${serviceLines.join("\n")}

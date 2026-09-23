@@ -350,6 +350,21 @@ test("typed cancellation and restart remain isolated from stale legacy reservati
   assert.equal(getSession().reservationFlow.status, "service_selection");
 });
 
+test("fresh typed booking overrides stale legacy reservation start state", async (t) => {
+  const { getSession } = installChatbotMocks(t);
+  await sendMessage(t, "meeting");
+  getSession().lastGeminiCall = 0;
+  getSession().reservationFlow = undefined;
+  getSession().bookingType = "reservation";
+  getSession().reservationStep = "askDate";
+
+  const started = await sendMessage(t, "I want to book");
+
+  assert.equal(started.reservation?.flowStatus, "service_selection");
+  assert.equal(getSession().bookingType, null);
+  assert.equal(getSession().reservationStep, null);
+});
+
 test("controller routes a service-specific request to canonical R2B service selection", async (t) => {
   const previousFetch = globalThis.fetch;
   t.after(() => {
