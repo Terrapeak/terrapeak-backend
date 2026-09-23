@@ -96,3 +96,23 @@ test("mapped core email and phone use canonical validation", () => {
   assert.match(validateCustomerForm(normalized, { email: "a@example.com", phone: "" }), /Phone is required/);
   assert.equal(validateCustomerForm(normalized, { email: "a@example.com", phone: "+60123456789" }), null);
 });
+
+test("supports both short and long canonical customer system aliases", () => {
+  const normalized = normalizeCustomerForm([
+    { id: "short-name", field_label: "Full name", field_type: "text", system_key: "name" },
+    { id: "long-email", field_label: "Email", field_type: "email", system_key: "customer_email" },
+    { id: "short-phone", field_label: "Phone", field_type: "phone", system_key: "phone" },
+    { id: "collision", field_label: "Emergency Phone", field_type: "phone", system_key: "emergency_phone" },
+  ]);
+  const byId = Object.fromEntries(normalized.map((field) => [field.id, field]));
+  assert.equal(getCustomerCoreFieldKey(byId["short-name"]), "name");
+  assert.equal(getCustomerCoreFieldKey(byId["long-email"]), "email");
+  assert.equal(getCustomerCoreFieldKey(byId["short-phone"]), "phone");
+  assert.equal(getCustomerCoreFieldKey(byId.collision), null);
+  assert.equal(validateCustomerForm(normalized, {
+    "short-name": "Aisha",
+    "long-email": "aisha@example.com",
+    "short-phone": "+31612345678",
+    collision: "not-mapped",
+  }), null);
+});

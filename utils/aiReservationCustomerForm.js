@@ -47,8 +47,11 @@ export function normalizeCustomerForm(fields = [], { activeOnly = true } = {}) {
 const invalid = (message) => ({ valid: false, message });
 
 const CORE_SYSTEM_KEYS = Object.freeze({
+  name: "name",
   customer_name: "name",
+  email: "email",
   customer_email: "email",
+  phone: "phone",
   customer_phone: "phone",
 });
 

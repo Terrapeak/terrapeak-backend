@@ -449,3 +449,35 @@ test("cancel and restart commands win over customer form parsing", async () => {
     assert.equal(message === "cancel" ? session.reservationFlow.status : session.reservationFlow.status, message === "cancel" ? "cancelled" : "service_selection");
   }
 });
+
+test("production short aliases skip duplicate identity prompts in mixed forms", async () => {
+  const session = {};
+  const formReadAdapter = {
+    ...readAdapter,
+    async getCustomerForm() {
+      return [
+        { id: "name", label: "Full name", type: "text", systemKey: "name", required: true, active: true },
+        { id: "email", label: "Email", type: "email", systemKey: "customer_email", required: false, active: true },
+        { id: "phone", label: "Phone", type: "phone", systemKey: "phone", required: true, active: true },
+        { id: "reason", label: "Reason for visit", type: "textarea", required: false, active: true },
+      ];
+    },
+  };
+  const model = makeAttemptModel();
+  const send = (message) => handleAiReservationConversation({ context, session, message, model, readAdapter: formReadAdapter });
+
+  await send("I want to book an appointment");
+  await send("1");
+  await send("1");
+  await send("2099-01-15");
+  await send("1");
+  await send("Aisha");
+  await send("aisha@example.com");
+  const result = await send("+31612345678");
+
+  assert.match(result.reply, /reason for visit/i);
+  assert.doesNotMatch(result.reply, /full name|email|phone/i);
+  assert.equal(session.reservationFlow.customData.name, "Aisha");
+  assert.equal(session.reservationFlow.customData.email, "aisha@example.com");
+  assert.equal(session.reservationFlow.customData.phone, "+31612345678");
+});
