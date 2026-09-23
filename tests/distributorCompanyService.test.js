@@ -281,8 +281,14 @@ test("Distributor creation leaves a general Reservations Company ready", async (
     profile: { id: "profile-1" },
     reservationSettings: {
       template_key: "general",
-      capabilities: { services: true },
-      terminology: { bookingSingular: "Booking" },
+      capabilities: { services: true, teamResources: true, scheduledSessions: false, packages: false, guestCount: false },
+      terminology: {
+        customerSingular: "Customer", customerPlural: "Customers",
+        teamMemberSingular: "Team member", teamMemberPlural: "Team members",
+        serviceSingular: "Service", servicePlural: "Services",
+        bookingSingular: "Booking", bookingPlural: "Bookings",
+        guestSingular: "Guest", guestPlural: "Guests",
+      },
     },
     service: { id: "service-1" },
     branding: { id: "branding-1" },

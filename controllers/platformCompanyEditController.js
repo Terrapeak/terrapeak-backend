@@ -5,6 +5,7 @@ import CompanyMembership from "../models/companyMembership.js";
 import User from "../models/user.js";
 import { isReservationsTemplate } from "../config/reservationsTemplates.js";
 import { applyReservationsTemplate } from "../utils/reservationTemplateService.js";
+import { createOrUpdateReservationBusinessSettings } from "../utils/reservationService.js";
 
 const COMPANY_FIELDS = [
   "name",
@@ -178,6 +179,11 @@ export const updatePlatformCompany = asyncHandler(async (req, res) => {
         businessId: company.reservationBusinessId,
         templateKey: updates.reservationTemplate,
         preserveExistingCustomizations: true,
+      });
+      await createOrUpdateReservationBusinessSettings({
+        businessId: company.reservationBusinessId,
+        templateKey: updates.reservationTemplate,
+        platformAuthoritative: true,
       });
     }
   }

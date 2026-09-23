@@ -4,6 +4,7 @@ import { DateTime } from "luxon";
 import { randomUUID } from "node:crypto";
 import { logReservationsOperation } from "./reservationsOperationalLog.js";
 import {
+  getReservationTemplateConfigurationDrift,
   normalizeReservationsTemplateKey,
   resolveReservationsConfiguration,
 } from "./reservationConfiguration.js";
@@ -165,14 +166,27 @@ export async function getCanonicalReservationsReadiness(
     reservationTemplate === undefined
       ? "restaurant"
       : normalizeReservationsTemplateKey(reservationTemplate);
+  const legacyRestaurant = reservationTemplate === undefined;
+  const canonicalTemplateReady = Boolean(
+    records.reservationSettings?.template_key === templateKey &&
+      Object.keys(records.reservationSettings?.capabilities || {}).length &&
+      Object.keys(records.reservationSettings?.terminology || {}).length,
+  );
   const templateReady =
-    templateKey === "restaurant"
-      ? Boolean(records.settings?.timezone)
-      : Boolean(
-          records.reservationSettings?.template_key === templateKey &&
-            Object.keys(records.reservationSettings?.capabilities || {}).length &&
-            Object.keys(records.reservationSettings?.terminology || {}).length,
-        );
+    (templateKey === "restaurant" && !records.settings?.timezone
+      ? false
+      : true) &&
+    (legacyRestaurant ? true : canonicalTemplateReady);
+
+  if (!legacyRestaurant) {
+    const actual = records.reservationSettings;
+    if (
+      actual &&
+      getReservationTemplateConfigurationDrift({ templateKey, settings: actual }).drift
+    ) {
+      return { ready: false, reason: "template-configuration-drift" };
+    }
+  }
 
   if (!records.profile || !templateReady || !records.branding) {
     return { ready: false, reason: "provisioning-incomplete" };
@@ -887,6 +901,7 @@ export async function createOrUpdateReservationBusinessSettings({
   templateKey,
   capabilities,
   terminology,
+  platformAuthoritative = false,
 }) {
   const existingSettings = await findByBusinessId(
     "reservation_business_settings",
@@ -897,6 +912,7 @@ export async function createOrUpdateReservationBusinessSettings({
     capabilities,
     terminology,
     bookingBehavior: existingSettings || {},
+    platformAuthoritative,
   });
   const settingsData = {
     business_id: businessId,
@@ -906,14 +922,11 @@ export async function createOrUpdateReservationBusinessSettings({
   };
 
   if (existingSettings) {
-    const patch = getMissingReservationFieldValues(existingSettings, settingsData);
-    if (!existingSettings.template_key) patch.template_key = settingsData.template_key;
-    if (!existingSettings.capabilities || Object.keys(existingSettings.capabilities).length === 0) {
-      patch.capabilities = settingsData.capabilities;
-    }
-    if (!existingSettings.terminology || Object.keys(existingSettings.terminology).length === 0) {
-      patch.terminology = settingsData.terminology;
-    }
+    const patch = buildReservationBusinessSettingsPatch({
+      existingSettings,
+      settingsData,
+      platformAuthoritative,
+    });
     if (!Object.keys(patch).length) return existingSettings;
     const { data, error } = await supabase
       .from("reservation_business_settings")
@@ -933,6 +946,30 @@ export async function createOrUpdateReservationBusinessSettings({
   if (error) throw new Error("Could not create Reservations configuration");
   return data;
 }
+
+export const buildReservationBusinessSettingsPatch = ({
+  existingSettings,
+  settingsData,
+  platformAuthoritative = false,
+} = {}) => {
+  if (!existingSettings) return settingsData;
+  if (platformAuthoritative) {
+    return {
+      template_key: settingsData.template_key,
+      capabilities: settingsData.capabilities,
+      terminology: settingsData.terminology,
+    };
+  }
+  const patch = getMissingReservationFieldValues(existingSettings, settingsData);
+  if (!existingSettings.template_key) patch.template_key = settingsData.template_key;
+  if (!existingSettings.capabilities || Object.keys(existingSettings.capabilities).length === 0) {
+    patch.capabilities = settingsData.capabilities;
+  }
+  if (!existingSettings.terminology || Object.keys(existingSettings.terminology).length === 0) {
+    patch.terminology = settingsData.terminology;
+  }
+  return patch;
+};
 
 export async function createOrUpdateCanonicalRestaurantService({ businessId, templateKey = "restaurant" }) {
   const serviceDefaults = {

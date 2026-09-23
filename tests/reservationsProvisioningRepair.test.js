@@ -13,7 +13,10 @@ import {
   appProvisioningHealthChecks,
   provisionCompany,
 } from "../services/companyProvisioningService.js";
-import { getMissingReservationFieldValues } from "../utils/reservationService.js";
+import {
+  buildReservationBusinessSettingsPatch,
+  getMissingReservationFieldValues,
+} from "../utils/reservationService.js";
 
 const COMPANY_ID = "507f1f77bcf86cd799439011";
 const OWNER_ID = "507f191e810c19729de860ea";
@@ -59,6 +62,7 @@ const createMemoryStore = (initial = {}) => {
         settings: state.settings,
         branding: state.branding,
         service: state.service,
+        reservationSettings: state.reservationSettings,
       };
     },
     async createOrGetReservationBusiness({ businessName, businessSlug }) {
@@ -280,6 +284,54 @@ test("missing-field defaults do not overwrite customized values", () => {
   );
 
   assert.deepEqual(patch, { closing_time: "22:00:00" });
+});
+
+test("platform template synchronization replaces only governed canonical fields", () => {
+  const patch = buildReservationBusinessSettingsPatch({
+    existingSettings: {
+      template_key: "general",
+      capabilities: { teamResources: false },
+      terminology: { customerSingular: "Client" },
+      booking_behavior: "request",
+      confirmation_message: "Custom confirmation",
+    },
+    settingsData: {
+      template_key: "physiotherapy",
+      capabilities: { services: true, teamResources: true, packages: true },
+      terminology: { customerSingular: "Patient" },
+    },
+    platformAuthoritative: true,
+  });
+
+  assert.deepEqual(patch, {
+    template_key: "physiotherapy",
+    capabilities: { services: true, teamResources: true, packages: true },
+    terminology: { customerSingular: "Patient" },
+  });
+  assert.equal(patch.booking_behavior, undefined);
+  assert.equal(patch.confirmation_message, undefined);
+});
+
+test("provisioning health reports explicit Platform/canonical template drift", async (t) => {
+  const company = createCompany({ reservationTemplate: "physiotherapy" });
+  t.mock.method(ChatbotSettings, "findOne", async () => ({ reservationBusinessSlug: "terrapeak" }));
+  const store = createMemoryStore({
+    business: { id: 10, business_slug: "terrapeak", booking_model_version: 2 },
+    profile: { id: "profile-1" },
+    settings: null,
+    branding: { id: "branding-1" },
+    service: { id: "service-1" },
+    reservationSettings: {
+      template_key: "general",
+      capabilities: { services: true },
+      terminology: { customerSingular: "Customer" },
+    },
+  });
+
+  const health = await getReservationsProvisioningHealth({ company, store });
+
+  assert.equal(health.healthy, false);
+  assert.deepEqual(health.mismatches, ["reservation_business_settings.template_configuration"]);
 });
 
 test("stale ChatbotSettings slug is repaired to the canonical company slug", async (t) => {

@@ -13,6 +13,7 @@ import { logReservationsOperation } from "../utils/reservationsOperationalLog.js
 import { applyReservationsTemplate } from "../utils/reservationTemplateService.js";
 import { getReservationProvisioningPlan } from "../utils/reservationProvisioningPlan.js";
 import ChatbotSettings from "../models/chatbotSettings.js";
+import { getReservationTemplateConfigurationDrift } from "../utils/reservationConfiguration.js";
 
 export const reservationProvisioningStore = {
   createOrGetReservationBusiness,
@@ -53,6 +54,7 @@ export async function getReservationsProvisioningHealth({
   let settings = null;
   let branding = null;
   let service = null;
+  let reservationSettings = null;
 
   if (!companyBusinessId) {
     missing.push("company.reservationBusinessId");
@@ -74,10 +76,17 @@ export async function getReservationsProvisioningHealth({
         mismatches.push("company.reservationBusinessId");
       }
 
-      ({ profile, settings, branding, service } =
+      ({ profile, settings, branding, service, reservationSettings } =
         await store.getReservationProvisioningRecords(business.id, {
           templateKey: company.reservationTemplate,
         }));
+      if (company.reservationTemplate !== undefined && reservationSettings) {
+        const drift = getReservationTemplateConfigurationDrift({
+          templateKey: company.reservationTemplate,
+          settings: reservationSettings,
+        });
+        if (drift.drift) mismatches.push("reservation_business_settings.template_configuration");
+      }
       if (!profile) missing.push("business_profile");
       const legacyRestaurant = company.reservationTemplate === undefined;
       const isRestaurant =
@@ -197,6 +206,7 @@ export default async function provisionReservations({
         templateKey: plan.templateKey,
         capabilities: plan.capabilities,
         terminology: plan.terminology,
+        platformAuthoritative: !plan.legacyRestaurant,
       })
     : null;
 

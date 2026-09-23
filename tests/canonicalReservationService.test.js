@@ -135,8 +135,25 @@ const createReadinessStore = ({
   branding = { id: "branding-1" },
   reservationSettings = {
     template_key: "general",
-    capabilities: { services: true },
-    terminology: { bookingSingular: "Booking" },
+    capabilities: {
+      services: true,
+      teamResources: true,
+      scheduledSessions: false,
+      packages: false,
+      guestCount: false,
+    },
+    terminology: {
+      customerSingular: "Customer",
+      customerPlural: "Customers",
+      teamMemberSingular: "Team member",
+      teamMemberPlural: "Team members",
+      serviceSingular: "Service",
+      servicePlural: "Services",
+      bookingSingular: "Booking",
+      bookingPlural: "Bookings",
+      guestSingular: "Guest",
+      guestPlural: "Guests",
+    },
   },
 } = {}) => ({
   async findReservationBusinessById() {
@@ -178,7 +195,7 @@ test("general Reservations readiness requires matching configuration", async () 
   });
   assert.deepEqual(wrongTemplate, {
     ready: false,
-    reason: "provisioning-incomplete",
+    reason: "template-configuration-drift",
   });
 });
 
@@ -199,17 +216,28 @@ test("general Reservations readiness still requires universal records", async ()
 });
 
 test("restaurant Reservations readiness still requires restaurant settings", async () => {
+  const restaurantConfiguration = {
+    template_key: "restaurant",
+    capabilities: { services: false, teamResources: false, scheduledSessions: false, packages: false, guestCount: true },
+    terminology: {
+      customerSingular: "Guest", customerPlural: "Guests",
+      teamMemberSingular: "Team member", teamMemberPlural: "Team members",
+      serviceSingular: "Reservation", servicePlural: "Reservations",
+      bookingSingular: "Reservation", bookingPlural: "Reservations",
+      guestSingular: "Guest", guestPlural: "Guests",
+    },
+  };
   const complete = await getCanonicalReservationsReadiness(10, {
     reservationTemplate: "restaurant",
-    store: createReadinessStore({ settings: { timezone: "UTC" } }),
+    store: createReadinessStore({ settings: { timezone: "UTC" }, reservationSettings: restaurantConfiguration }),
   });
   const missingTimezone = await getCanonicalReservationsReadiness(10, {
     reservationTemplate: "restaurant",
-    store: createReadinessStore({ settings: {} }),
+    store: createReadinessStore({ settings: {}, reservationSettings: restaurantConfiguration }),
   });
   const generalOnly = await getCanonicalReservationsReadiness(10, {
     reservationTemplate: "restaurant",
-    store: createReadinessStore({ settings: null }),
+    store: createReadinessStore({ settings: null, reservationSettings: restaurantConfiguration }),
   });
 
   assert.deepEqual(complete, { ready: true, reason: null });

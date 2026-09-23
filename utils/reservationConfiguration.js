@@ -39,6 +39,7 @@ export const resolveReservationsConfiguration = ({
   capabilities = {},
   terminology = {},
   bookingBehavior = {},
+  platformAuthoritative = false,
 } = {}) => {
   const resolvedTemplateKey = normalizeReservationsTemplateKey(templateKey);
   const template = getReservationsTemplate(resolvedTemplateKey);
@@ -48,17 +49,42 @@ export const resolveReservationsConfiguration = ({
     capabilities: {
       ...NEUTRAL_RESERVATION_CAPABILITIES,
       ...(template.capabilities || {}),
-      ...pickKnown(capabilities, Object.keys(NEUTRAL_RESERVATION_CAPABILITIES)),
+      ...(platformAuthoritative
+        ? {}
+        : pickKnown(capabilities, Object.keys(NEUTRAL_RESERVATION_CAPABILITIES))),
     },
     terminology: {
       ...NEUTRAL_RESERVATION_TERMINOLOGY,
       ...(template.terminology || {}),
-      ...pickKnown(terminology, RESERVATION_TERMINOLOGY_KEYS),
+      ...(platformAuthoritative
+        ? {}
+        : pickKnown(terminology, RESERVATION_TERMINOLOGY_KEYS)),
     },
     bookingBehavior: {
       booking_behavior: "immediate",
       confirmation_message: "Your booking request has been received.",
       ...bookingBehavior,
     },
+  };
+};
+
+export const getReservationTemplateConfigurationDrift = ({ templateKey, settings } = {}) => {
+  const expected = resolveReservationsConfiguration({
+    templateKey,
+    platformAuthoritative: true,
+  });
+  const actual = settings || {};
+  const capabilitiesMatch = Object.entries(expected.capabilities).every(
+    ([key, value]) => actual.capabilities?.[key] === value,
+  );
+  const terminologyMatch = Object.entries(expected.terminology).every(
+    ([key, value]) => actual.terminology?.[key] === value,
+  );
+  return {
+    templateKeyMatches: actual.template_key === expected.templateKey,
+    capabilitiesMatch,
+    terminologyMatch,
+    drift: actual.template_key !== expected.templateKey || !capabilitiesMatch || !terminologyMatch,
+    expected,
   };
 };

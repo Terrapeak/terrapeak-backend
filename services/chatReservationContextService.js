@@ -4,6 +4,7 @@ import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import { isCompanyOperational } from "../utils/companyLifecycle.js";
 import { resolveReservationsConfiguration } from "../utils/reservationConfiguration.js";
 import { reservationsReadAdapter } from "./reservationReadAdapter.js";
+import { isReservationsTemplate } from "../config/reservationsTemplates.js";
 import { logAiReservationEvent, measureAiReservationStage } from "../utils/aiReservationLogger.js";
 
 export class ChatReservationContextError extends Error {
@@ -97,8 +98,8 @@ const defaultStore = {
 
 const defaultConfigurationCache = createReservationConfigurationCache();
 
-const configurationCacheKey = ({ companyId, reservationBusinessId, reservationBusinessSlug }) =>
-  [companyId, reservationBusinessId, reservationBusinessSlug].map(String).join(":");
+const configurationCacheKey = ({ companyId, reservationBusinessId, reservationBusinessSlug, reservationTemplate }) =>
+  [companyId, reservationBusinessId, reservationBusinessSlug, reservationTemplate || "legacy"].map(String).join(":");
 
 const logConfigurationCacheState = (configurationCache, configurationSource, logger = console) => {
   logAiReservationEvent("reservation_configuration_cache", {
@@ -108,14 +109,18 @@ const logConfigurationCacheState = (configurationCache, configurationSource, log
 };
 
 export const normalizeReservationContextConfiguration = (configuration = {}, company = {}) => {
+  const platformTemplate = isReservationsTemplate(company.reservationTemplate)
+    ? company.reservationTemplate
+    : null;
   const resolved = resolveReservationsConfiguration({
-    templateKey: configuration.template_key || company.reservationTemplate,
+    templateKey: platformTemplate || configuration.template_key || company.reservationTemplate,
     capabilities: configuration.capabilities,
     terminology: configuration.terminology,
     bookingBehavior: {
       booking_behavior: configuration.booking_behavior,
       confirmation_message: configuration.confirmation_message,
     },
+    platformAuthoritative: Boolean(platformTemplate),
   });
 
   return {
@@ -204,6 +209,9 @@ export async function resolveChatReservationContext({
     companyId: company._id || companyId,
     reservationBusinessId: businessId,
     reservationBusinessSlug: businessSlug,
+    reservationTemplate: isReservationsTemplate(company.reservationTemplate)
+      ? company.reservationTemplate
+      : null,
   });
   let configurationSource = "provided";
   let configurationCacheState = "bypass";

@@ -52,7 +52,49 @@ test("resolves chatbot to its active Company, installation, and canonical busine
   assert.equal(context.reservationBusinessSlug, "tenant-a");
   assert.equal(context.configuration.templateKey, "general");
   assert.equal(context.configuration.bookingBehavior.booking_behavior, "request");
-  assert.equal(context.configuration.terminology.bookingSingular, "Appointment");
+  assert.equal(context.configuration.terminology.bookingSingular, "Booking");
+});
+
+test("Platform template authority wins over conflicting canonical template and capabilities", async () => {
+  const context = await resolveChatReservationContext({
+    apiKey: "key-a",
+    chatbotId: "chatbot-1",
+    sessionId: "session-a",
+    store: store({
+      getConfiguration: async () => ({
+        ...configuration,
+        template_key: "restaurant",
+        capabilities: { services: false, guestCount: true, teamResources: false },
+        terminology: { customerSingular: "Guest" },
+      }),
+    }),
+  });
+
+  assert.equal(context.configuration.templateKey, "general");
+  assert.deepEqual(context.configuration.capabilities, {
+    services: true,
+    teamResources: true,
+    scheduledSessions: false,
+    packages: false,
+    guestCount: false,
+  });
+  assert.equal(context.configuration.terminology.customerSingular, "Customer");
+  assert.equal(context.configuration.bookingBehavior.booking_behavior, "request");
+});
+
+test("legacy companies without an explicit template retain canonical template compatibility", async () => {
+  const context = await resolveChatReservationContext({
+    apiKey: "key-a",
+    chatbotId: "chatbot-1",
+    sessionId: "session-a",
+    store: store({
+      findCompany: async () => ({ ...company, reservationTemplate: undefined }),
+      getConfiguration: async () => ({ ...configuration, template_key: "restaurant" }),
+    }),
+  });
+
+  assert.equal(context.configuration.templateKey, "restaurant");
+  assert.equal(context.configuration.capabilities.guestCount, true);
 });
 
 test("does not accept a client-selected business or use a global fallback", async () => {
@@ -217,7 +259,32 @@ test("configuration cache isolates business identity and slug", async () => {
   const first = await resolveChatReservationContext({ apiKey: "key-a", chatbotId: "chatbot-1", sessionId: "session-a", store: businessA, configurationCache: cache });
   const second = await resolveChatReservationContext({ apiKey: "key-a", chatbotId: "chatbot-1", sessionId: "session-b", store: businessB, configurationCache: cache });
   assert.equal(first.configuration.templateKey, "general");
-  assert.equal(second.configuration.templateKey, "dental");
+  assert.equal(second.configuration.templateKey, "general");
+  assert.equal(configurationReads, 2);
+});
+
+test("configuration cache isolates an explicit Platform template change", async () => {
+  let configurationReads = 0;
+  let currentTemplate = "general";
+  const cache = createReservationConfigurationCache();
+  const cachedStore = store({
+    findCompany: async () => ({ ...company, reservationTemplate: currentTemplate }),
+    getConfiguration: async () => {
+      configurationReads += 1;
+      return { ...configuration, template_key: "restaurant" };
+    },
+  });
+
+  const first = await resolveChatReservationContext({
+    apiKey: "key-a", chatbotId: "chatbot-1", sessionId: "session-a", store: cachedStore, configurationCache: cache,
+  });
+  currentTemplate = "physiotherapy";
+  const second = await resolveChatReservationContext({
+    apiKey: "key-a", chatbotId: "chatbot-1", sessionId: "session-b", store: cachedStore, configurationCache: cache,
+  });
+
+  assert.equal(first.configuration.templateKey, "general");
+  assert.equal(second.configuration.templateKey, "physiotherapy");
   assert.equal(configurationReads, 2);
 });
 

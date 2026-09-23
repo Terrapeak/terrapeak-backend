@@ -40,6 +40,35 @@ test("tenant terminology and capabilities override template defaults", () => {
   assert.equal(resolved.terminology.bookingSingular, "Appointment");
 });
 
+test("platform-authoritative templates ignore persisted capability and terminology overrides", () => {
+  const resolved = resolveReservationsConfiguration({
+    templateKey: "general",
+    capabilities: { teamResources: false, guestCount: true },
+    terminology: { customerSingular: "Client" },
+    platformAuthoritative: true,
+  });
+
+  assert.deepEqual(resolved.capabilities, {
+    services: true,
+    teamResources: true,
+    scheduledSessions: false,
+    packages: false,
+    guestCount: false,
+  });
+  assert.equal(resolved.terminology.customerSingular, "Customer");
+});
+
+test("platform-authoritative template envelopes match each supported template", () => {
+  assert.deepEqual(
+    resolveReservationsConfiguration({ templateKey: "physiotherapy", capabilities: { packages: false, guestCount: true }, platformAuthoritative: true }).capabilities,
+    { services: true, teamResources: true, scheduledSessions: false, packages: true, guestCount: false },
+  );
+  assert.deepEqual(
+    resolveReservationsConfiguration({ templateKey: "restaurant", capabilities: { services: true, guestCount: false }, platformAuthoritative: true }).capabilities,
+    { services: false, teamResources: false, scheduledSessions: false, packages: false, guestCount: true },
+  );
+});
+
 test("template defaults override neutral terminology", () => {
   const resolved = resolveReservationsConfiguration({ templateKey: "physiotherapy" });
   assert.equal(resolved.terminology.customerSingular, "Patient");
