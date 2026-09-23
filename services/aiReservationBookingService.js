@@ -105,6 +105,7 @@ export async function executeAiReservationBooking({
       apiKey,
       chatbotId: context.chatbotId,
       sessionId: context.sessionId,
+      bypassConfigurationCache: true,
     }));
   assertReservationSessionBinding(flow, freshContext);
   stage = "context_revalidated";

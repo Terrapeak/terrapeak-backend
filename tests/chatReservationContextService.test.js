@@ -6,6 +6,7 @@ import {
   buildReservationConversationContextSnapshot,
   getReusableReservationConversationContext,
   isTransactionalAiReservationsEnabled,
+  createReservationConfigurationCache,
   resolveChatReservationContext,
 } from "../services/chatReservationContextService.js";
 
@@ -148,4 +149,135 @@ test("conversation context snapshots require every authoritative tenant binding"
 test("typed context code contains no global Reservations business fallback", () => {
   const source = readFileSync(new URL("../services/chatReservationContextService.js", import.meta.url), "utf8");
   assert.doesNotMatch(source, /RESERVATION_BUSINESS_SLUG|dim-sum-dragon/);
+});
+
+test("configuration cache uses a bounded 30-second tenant-safe TTL", async () => {
+  let now = 0;
+  let configurationReads = 0;
+  const cache = createReservationConfigurationCache({ now: () => now, maxEntries: 2 });
+  const cachedStore = store({
+    getConfiguration: async () => {
+      configurationReads += 1;
+      return configuration;
+    },
+  });
+
+  await resolveChatReservationContext({ apiKey: "key-a", chatbotId: "chatbot-1", sessionId: "session-a", store: cachedStore, configurationCache: cache });
+  await resolveChatReservationContext({ apiKey: "key-a", chatbotId: "chatbot-1", sessionId: "session-b", store: cachedStore, configurationCache: cache });
+  assert.equal(configurationReads, 1);
+
+  now = 30_000;
+  await resolveChatReservationContext({ apiKey: "key-a", chatbotId: "chatbot-1", sessionId: "session-c", store: cachedStore, configurationCache: cache });
+  assert.equal(configurationReads, 2);
+  assert.equal(cache.size, 1);
+});
+
+test("parallel tenant reads preserve company-first error ordering", async () => {
+  const companyError = new Error("company read failed");
+  const installationError = new Error("installation read failed");
+  await assert.rejects(
+    resolveChatReservationContext({
+      apiKey: "key-a", chatbotId: "chatbot-1", sessionId: "session-a",
+      store: store({
+        findCompany: async () => { await new Promise((resolve) => setTimeout(resolve, 5)); throw companyError; },
+        findInstallation: async () => { throw installationError; },
+      }),
+    }),
+    (error) => error === companyError,
+  );
+  await assert.rejects(
+    resolveChatReservationContext({
+      apiKey: "key-a", chatbotId: "chatbot-1", sessionId: "session-a",
+      store: store({
+        findCompany: async () => null,
+        findInstallation: async () => { throw installationError; },
+      }),
+    }),
+    (error) => error.code === "COMPANY_NOT_FOUND",
+  );
+});
+
+test("configuration cache isolates business identity and slug", async () => {
+  let configurationReads = 0;
+  const cache = createReservationConfigurationCache();
+  const businessA = store({
+    getConfiguration: async () => {
+      configurationReads += 1;
+      return { ...configuration, template_key: "general" };
+    },
+  });
+  const businessB = store({
+    findCompany: async () => ({ ...company, _id: "company-2", reservationBusinessId: 99, reservationBusinessSlug: "tenant-b" }),
+    getConfiguration: async (slug) => {
+      configurationReads += 1;
+      return { ...configuration, business_id: 99, template_key: slug === "tenant-b" ? "dental" : "general" };
+    },
+  });
+
+  const first = await resolveChatReservationContext({ apiKey: "key-a", chatbotId: "chatbot-1", sessionId: "session-a", store: businessA, configurationCache: cache });
+  const second = await resolveChatReservationContext({ apiKey: "key-a", chatbotId: "chatbot-1", sessionId: "session-b", store: businessB, configurationCache: cache });
+  assert.equal(first.configuration.templateKey, "general");
+  assert.equal(second.configuration.templateKey, "dental");
+  assert.equal(configurationReads, 2);
+});
+
+test("configuration telemetry distinguishes Supabase misses from cache hits", async () => {
+  const cache = createReservationConfigurationCache();
+  const events = [];
+  const logger = { info: (value) => events.push(JSON.parse(value)) };
+  const cachedStore = store();
+  await resolveChatReservationContext({ apiKey: "key-a", chatbotId: "chatbot-1", sessionId: "session-a", store: cachedStore, configurationCache: cache, logger });
+  await resolveChatReservationContext({ apiKey: "key-a", chatbotId: "chatbot-1", sessionId: "session-b", store: cachedStore, configurationCache: cache, logger });
+  const states = events.filter(({ event }) => event === "reservation_configuration_cache");
+  assert.deepEqual(states.map(({ configurationSource, configurationCache }) => [configurationSource, configurationCache]), [
+    ["supabase", "miss"],
+    ["cache", "hit"],
+  ]);
+});
+
+test("cache failures fall back to the canonical configuration read", async () => {
+  let configurationReads = 0;
+  const cache = { get: () => { throw new Error("cache unavailable"); }, set: () => { throw new Error("cache unavailable"); } };
+  const context = await resolveChatReservationContext({
+    apiKey: "key-a", chatbotId: "chatbot-1", sessionId: "session-a", store: store({
+      getConfiguration: async () => {
+        configurationReads += 1;
+        return configuration;
+      },
+    }), configurationCache: cache,
+  });
+  assert.equal(context.reservationBusinessId, 42);
+  assert.equal(configurationReads, 1);
+});
+
+test("malformed cache entries fall back to the canonical configuration read", async () => {
+  let configurationReads = 0;
+  const cache = {
+    get: () => ({ status: "hit", value: { unexpected: true } }),
+    set: () => {},
+  };
+  await resolveChatReservationContext({
+    apiKey: "key-a", chatbotId: "chatbot-1", sessionId: "session-a", configurationCache: cache,
+    store: store({
+      getConfiguration: async () => {
+        configurationReads += 1;
+        return configuration;
+      },
+    }),
+  });
+  assert.equal(configurationReads, 1);
+});
+
+test("final confirmation resolver can explicitly bypass the conversational cache", async () => {
+  let configurationReads = 0;
+  const cache = createReservationConfigurationCache();
+  const cachedStore = store({
+    getConfiguration: async () => {
+      configurationReads += 1;
+      return configuration;
+    },
+  });
+  await resolveChatReservationContext({ apiKey: "key-a", chatbotId: "chatbot-1", sessionId: "session-a", store: cachedStore, configurationCache: cache });
+  await resolveChatReservationContext({ apiKey: "key-a", chatbotId: "chatbot-1", sessionId: "session-a", store: cachedStore, configurationCache: cache, bypassConfigurationCache: true });
+  assert.equal(configurationReads, 2);
 });

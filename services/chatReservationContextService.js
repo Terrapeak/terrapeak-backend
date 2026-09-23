@@ -4,7 +4,7 @@ import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import { isCompanyOperational } from "../utils/companyLifecycle.js";
 import { resolveReservationsConfiguration } from "../utils/reservationConfiguration.js";
 import { reservationsReadAdapter } from "./reservationReadAdapter.js";
-import { measureAiReservationStage } from "../utils/aiReservationLogger.js";
+import { logAiReservationEvent, measureAiReservationStage } from "../utils/aiReservationLogger.js";
 
 export class ChatReservationContextError extends Error {
   constructor(code, message, statusCode = 409) {
@@ -34,6 +34,53 @@ const normalizeSlug = (value) => {
   return slug || null;
 };
 
+export const RESERVATION_CONFIGURATION_CACHE_TTL_MS = 30_000;
+export const RESERVATION_CONFIGURATION_CACHE_MAX_ENTRIES = 100;
+
+export const createReservationConfigurationCache = ({
+  ttlMs = RESERVATION_CONFIGURATION_CACHE_TTL_MS,
+  maxEntries = RESERVATION_CONFIGURATION_CACHE_MAX_ENTRIES,
+  now = () => Date.now(),
+} = {}) => {
+  const entries = new Map();
+
+  const pruneExpired = (currentTime) => {
+    for (const [key, entry] of entries) {
+      if (!entry || entry.expiresAt <= currentTime) entries.delete(key);
+    }
+  };
+
+  return {
+    get(key) {
+      const currentTime = now();
+      const entry = entries.get(key);
+      if (!entry) return { status: "miss", value: null };
+      if (entry.expiresAt <= currentTime) {
+        entries.delete(key);
+        pruneExpired(currentTime);
+        return { status: "expired", value: null };
+      }
+      pruneExpired(currentTime);
+      entries.delete(key);
+      entries.set(key, entry);
+      return { status: "hit", value: entry.value };
+    },
+    set(key, value) {
+      const currentTime = now();
+      pruneExpired(currentTime);
+      if (entries.has(key)) entries.delete(key);
+      while (entries.size >= maxEntries) entries.delete(entries.keys().next().value);
+      entries.set(key, { value, expiresAt: currentTime + ttlMs });
+    },
+    clear() {
+      entries.clear();
+    },
+    get size() {
+      return entries.size;
+    },
+  };
+};
+
 const defaultStore = {
   findChatbot: (apiKey) => ChatbotSettings.findOne({ apiKey }),
   findCompany: (companyId) => Company.findById(companyId),
@@ -46,6 +93,18 @@ const defaultStore = {
     }),
   getConfiguration: (businessSlug) =>
     reservationsReadAdapter.getConfiguration({ reservationBusinessSlug: businessSlug }),
+};
+
+const defaultConfigurationCache = createReservationConfigurationCache();
+
+const configurationCacheKey = ({ companyId, reservationBusinessId, reservationBusinessSlug }) =>
+  [companyId, reservationBusinessId, reservationBusinessSlug].map(String).join(":");
+
+const logConfigurationCacheState = (configurationCache, configurationSource, logger = console) => {
+  logAiReservationEvent("reservation_configuration_cache", {
+    configurationSource,
+    configurationCache,
+  }, logger);
 };
 
 export const normalizeReservationContextConfiguration = (configuration = {}, company = {}) => {
@@ -75,6 +134,9 @@ export async function resolveChatReservationContext({
   configuration,
   store = defaultStore,
   onResolved,
+  configurationCache,
+  bypassConfigurationCache = false,
+  logger = console,
 } = {}) {
   if (!apiKey || !chatbotId || !sessionId) {
     fail("RESERVATION_CONTEXT_INVALID", "Reservation context is incomplete.", 400);
@@ -97,10 +159,23 @@ export async function resolveChatReservationContext({
     fail("RESERVATIONS_NOT_CONFIGURED", "Reservations are not configured for this business.");
   }
 
-  const company = asPlainObject(await measureAiReservationStage({
-    stage: "context_company_read",
-    operation: "mongo_context_company_read",
-  }, () => store.findCompany(companyId)));
+  const readWithError = (promise) => promise.then(
+    (value) => ({ value }),
+    (error) => ({ error }),
+  );
+  const [companyRead, installationRead] = await Promise.all([
+    readWithError(measureAiReservationStage({
+      stage: "context_company_read",
+      operation: "mongo_context_company_read",
+    }, () => store.findCompany(companyId))),
+    readWithError(measureAiReservationStage({
+      stage: "context_installation_read",
+      operation: "mongo_context_installation_read",
+    }, () => store.findInstallation(companyId))),
+  ]);
+  if (companyRead.error) throw companyRead.error;
+  const companyResult = companyRead.value;
+  const company = asPlainObject(companyResult);
   if (!company) fail("COMPANY_NOT_FOUND", "The Company could not be found.", 404);
   if (company.lifecycleStatus === "archived") {
     fail("COMPANY_ARCHIVED", "This Company is archived.");
@@ -109,10 +184,9 @@ export async function resolveChatReservationContext({
     fail("COMPANY_INACTIVE", "This Company is inactive.");
   }
 
-  const installation = asPlainObject(await measureAiReservationStage({
-    stage: "context_installation_read",
-    operation: "mongo_context_installation_read",
-  }, () => store.findInstallation(company._id || companyId)));
+  if (installationRead.error) throw installationRead.error;
+  const installationResult = installationRead.value;
+  const installation = asPlainObject(installationResult);
   if (!installation) {
     fail("RESERVATIONS_APP_DISABLED", "Reservations are not enabled for this Company.");
   }
@@ -123,7 +197,55 @@ export async function resolveChatReservationContext({
     fail("RESERVATIONS_NOT_CONFIGURED", "Reservations are not configured for this business.");
   }
 
-  const canonicalConfiguration = configuration || (await store.getConfiguration?.(businessSlug));
+  const cache = configurationCache === undefined
+    ? (store === defaultStore ? defaultConfigurationCache : null)
+    : configurationCache;
+  const cacheKey = configurationCacheKey({
+    companyId: company._id || companyId,
+    reservationBusinessId: businessId,
+    reservationBusinessSlug: businessSlug,
+  });
+  let configurationSource = "provided";
+  let configurationCacheState = "bypass";
+  let canonicalConfiguration = configuration;
+  if (!canonicalConfiguration && !bypassConfigurationCache && cache) {
+    let cached;
+    configurationCacheState = "miss";
+    await measureAiReservationStage({
+      stage: "configuration_cache_lookup",
+      operation: "reservation_configuration_cache",
+      logger,
+    }, async () => {
+      try {
+        cached = cache.get(cacheKey);
+        configurationCacheState = ["hit", "expired"].includes(cached?.status) ? cached.status : "miss";
+      } catch {
+        configurationCacheState = "miss";
+      }
+    });
+    const cachedConfiguration = cached?.value;
+    const validCachedConfiguration = cached?.status === "hit"
+      && cachedConfiguration
+      && typeof cachedConfiguration === "object"
+      && typeof cachedConfiguration.templateKey === "string"
+      && cachedConfiguration.capabilities
+      && cachedConfiguration.terminology
+      && cachedConfiguration.bookingBehavior;
+    if (validCachedConfiguration) {
+      canonicalConfiguration = cachedConfiguration;
+      configurationSource = "cache";
+      logConfigurationCacheState(configurationCacheState, configurationSource, logger);
+    } else if (cached?.status === "hit") {
+      configurationCacheState = "miss";
+    }
+  }
+  if (!canonicalConfiguration) {
+    canonicalConfiguration = await store.getConfiguration?.(businessSlug);
+    configurationSource = "supabase";
+    if (configurationCacheState === "miss" || configurationCacheState === "bypass") {
+      logConfigurationCacheState(configurationCacheState, configurationSource, logger);
+    }
+  }
   if (!canonicalConfiguration) {
     fail("RESERVATIONS_NOT_CONFIGURED", "Reservations configuration is not ready.");
   }
@@ -132,6 +254,14 @@ export async function resolveChatReservationContext({
     normalizeBusinessId(canonicalConfiguration.business_id) !== businessId
   ) {
     fail("RESERVATION_TENANT_MISMATCH", "The Reservations business does not match the Company.");
+  }
+
+  if (configurationSource === "supabase" && cache && !bypassConfigurationCache) {
+    try {
+      cache.set(cacheKey, normalizeReservationContextConfiguration(canonicalConfiguration, company));
+    } catch {
+      // Cache mechanics are best-effort; the canonical configuration remains authoritative.
+    }
   }
 
   const context = Object.freeze({
@@ -143,7 +273,9 @@ export async function resolveChatReservationContext({
     reservationBusinessSlug: businessSlug,
     companyLifecycleStatus: company.lifecycleStatus || "active",
     reservationTemplate: company.reservationTemplate || "general",
-    configuration: normalizeReservationContextConfiguration(canonicalConfiguration, company),
+    configuration: configurationSource === "cache"
+      ? canonicalConfiguration
+      : normalizeReservationContextConfiguration(canonicalConfiguration, company),
   });
   onResolved?.({ settings, company, installation });
   return context;

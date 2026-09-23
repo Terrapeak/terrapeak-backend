@@ -14,6 +14,7 @@ const SAFE_KEYS = new Set([
   "operation", "success",
   "traceId", "modelCalled", "modelDurationMs", "unattributedMs",
   "contextSource", "settingsSource", "sessionSource", "tenantContextSource",
+  "configurationSource", "configurationCache",
 ]);
 
 export const hashOperationalIdentifier = (value) => createHash("sha256")

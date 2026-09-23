@@ -80,7 +80,10 @@ test("supported appointment booking is revalidated and written once", async () =
       session: { reservationFlow: flow },
       apiKey: "key",
       model,
-      contextResolver: async () => freshContext,
+      contextResolver: async (options) => {
+        assert.equal(options.bypassConfigurationCache, true);
+        return freshContext;
+      },
       readAdapter: makeReadAdapter(),
       writeAdapter: {
         async createAppointment(request) {
