@@ -86,6 +86,37 @@ test("appointment conversation collects an explicit summary before confirmation"
   assert.equal(confirmation.handled, true);
   assert.equal(session.reservationFlow.status, "awaiting_confirmation");
   assert.equal(confirmation.reservation.confirmationRequired, true);
+  assert.match(confirmation.reply, /Booking summary/);
+  assert.match(confirmation.reply, /Service: Acceptance Test Service/);
+  assert.match(confirmation.reply, /Provider: Dr A/);
+  assert.match(confirmation.reply, /Date: 2099-01-15/);
+  assert.match(confirmation.reply, /Time: 09:00/);
+  assert.match(confirmation.reply, /Customer: Aisha/);
+  assert.match(confirmation.reply, /Reply \*\*yes\*\* to confirm/);
+});
+
+test("final confirmation summary never invokes the booking write adapter", async () => {
+  const session = {};
+  const model = makeAttemptModel();
+  let writes = 0;
+  const send = (message) => handleAiReservationConversation({
+    context,
+    session,
+    message,
+    model,
+    readAdapter,
+    writeAdapter: { async createAppointment() { writes += 1; } },
+  });
+  let result;
+  for (const message of ["I want to book an appointment", "1", "1", "2099-01-15", "1", "Aisha", "aisha@example.com", "+31612345678"]) result = await send(message);
+  assert.equal(result.handled, true);
+  assert.equal(session.reservationFlow.status, "awaiting_confirmation");
+  assert.match(result.reply, /Service: Acceptance Test Service/);
+  assert.match(result.reply, /Provider: Dr A/);
+  assert.match(result.reply, /Date: 2099-01-15/);
+  assert.match(result.reply, /Time: 09:00/);
+  assert.match(result.reply, /Customer: Aisha/);
+  assert.equal(writes, 0);
 });
 
 test("time labels match exactly before numeric ordinal fallback", async () => {
@@ -100,16 +131,34 @@ test("time labels match exactly before numeric ordinal fallback", async () => {
   assert.equal(exactSession.reservationFlow.startsAt, "2026-09-23T01:00:00.000Z");
   assert.equal(exactSession.reservationFlow.status, "customer_form");
 
+  const normalizedSession = { reservationFlow: { status: "slot_selection", selectionOptions: slots } };
+  await handleAiReservationConversation({ context, session: normalizedSession, message: "09:00", readAdapter });
+  assert.equal(normalizedSession.reservationFlow.startsAt, "2026-09-23T01:00:00.000Z");
+  assert.equal(normalizedSession.reservationFlow.status, "customer_form");
+
   const ordinalSession = { reservationFlow: { status: "slot_selection", selectionOptions: slots } };
   await handleAiReservationConversation({ context, session: ordinalSession, message: "9", readAdapter });
   assert.equal(ordinalSession.reservationFlow.startsAt, "2026-09-23T05:00:00.000Z");
 
-  for (const message of ["09:00", "9:00", "9abc", "9 PM"]) {
+  for (const message of ["9:00", "9abc", "9 PM"]) {
     const invalidSession = { reservationFlow: { status: "slot_selection", selectionOptions: slots } };
     await handleAiReservationConversation({ context, session: invalidSession, message, readAdapter });
     assert.equal(invalidSession.reservationFlow.status, "slot_selection", message);
     assert.equal(invalidSession.reservationFlow.startsAt, undefined, message);
   }
+});
+
+test("time choices display without seconds while preserving canonical values", async () => {
+  const session = { reservationFlow: { status: "date_selection", serviceId: 1, serviceSlug: "s", providerId: 2, providerSlug: "p" } };
+  const result = await handleAiReservationConversation({
+    context,
+    session,
+    message: "2099-01-15",
+    readAdapter: { ...readAdapter, async listAppointmentAvailability() { return [makeSlot("09:00:00", "2099-01-15T09:00:00.000Z")]; } },
+  });
+  assert.match(result.reply, /1\. 09:00/);
+  assert.doesNotMatch(result.reply, /09:00:00/);
+  assert.equal(session.reservationFlow.selectionOptions[0].localTime, "09:00:00");
 });
 
 test("service and provider labels remain exact case-insensitive matches", async () => {
@@ -213,6 +262,10 @@ test("completes the exact acceptance customer form with typed custom data", asyn
   assert.equal(result.reservation.errorCode, null);
   assert.equal(result.reservation.flowStatus, "completed", JSON.stringify(result));
   assert.match(result.reply, /Reference: BK-1/);
+  assert.match(result.reply, /Service: Acceptance Test Service/);
+  assert.match(result.reply, /Provider: Dr A/);
+  assert.match(result.reply, /Date: 2099-01-15/);
+  assert.match(result.reply, /Time: 09:00/);
   assert.equal(writes, 1);
   assert.equal(request.customData["acceptance-checkbox"], false);
   assert.equal(request.customData["acceptance-number"], 10);
@@ -407,6 +460,9 @@ test("maps canonical core fields once and presents typed custom prompts", async 
   assert.equal(session.reservationFlow.customData["birth-date"], undefined);
   assert.equal(session.reservationFlow.customData.notes, undefined);
   assert.equal(result.reservation.confirmationRequired, true);
+  assert.match(result.reply, /Booking summary/);
+  assert.match(result.reply, /Company Name: TerraPeak/);
+  assert.doesNotMatch(result.reply, /Customer name:|Email: tim@example|Phone: \+601/);
 });
 
 test("required skips and invalid typed answers stay on the same field", async () => {
@@ -448,6 +504,73 @@ test("cancel and restart commands win over customer form parsing", async () => {
     assert.notEqual(session.reservationFlow.customData?.notes, message);
     assert.equal(message === "cancel" ? session.reservationFlow.status : session.reservationFlow.status, message === "cancel" ? "cancelled" : "service_selection");
   }
+});
+
+test("raced-away slots recover with fresh alternatives without writing", async (t) => {
+  const previousGate = process.env.AI_RESERVATIONS_TRANSACTIONAL_BOOKING_ENABLED;
+  process.env.AI_RESERVATIONS_TRANSACTIONAL_BOOKING_ENABLED = "true";
+  t.after(() => {
+    if (previousGate === undefined) delete process.env.AI_RESERVATIONS_TRANSACTIONAL_BOOKING_ENABLED;
+    else process.env.AI_RESERVATIONS_TRANSACTIONAL_BOOKING_ENABLED = previousGate;
+  });
+
+  const session = {};
+  const model = makeAttemptModel();
+  let availabilityCalls = 0;
+  let writes = 0;
+  const recoveryReadAdapter = {
+    ...readAdapter,
+    async getCustomerForm() {
+      return [{ id: "reason", label: "Reason for visit", type: "textarea", required: true, active: true }];
+    },
+    async listAppointmentAvailability() {
+      availabilityCalls += 1;
+      if (availabilityCalls === 1) return [makeSlot("09:00:00", "2099-01-15T09:00:00.000Z")];
+      if (availabilityCalls === 2) return [];
+      return [makeSlot("09:30:00", "2099-01-15T09:30:00.000Z"), makeSlot("10:00:00", "2099-01-15T10:00:00.000Z")];
+    },
+  };
+  const send = (message) => handleAiReservationConversation({
+    context,
+    session,
+    message,
+    model,
+    readAdapter: recoveryReadAdapter,
+    contextResolver: async () => context,
+    writeAdapter: { async createAppointment() { writes += 1; return { reference: "must-not-exist" }; } },
+  });
+
+  for (const message of ["I want to book an appointment", "1", "1", "2099-01-15", "1", "Aisha", "aisha@example.com", "+31612345678", "Consultation"]) await send(message);
+  const originalStartsAt = session.reservationFlow.startsAt;
+  const originalAttemptId = session.reservationFlow.bookingAttemptId;
+  const originalIdempotencyKey = session.reservationFlow.idempotencyKey;
+  const result = await send("yes");
+
+  assert.equal(result.reservation.errorCode, "RESERVATION_SLOT_CHANGED");
+  assert.equal(session.reservationFlow.status, "slot_selection");
+  assert.equal(originalStartsAt, "2099-01-15T09:00:00.000Z");
+  assert.ok(originalAttemptId);
+  assert.ok(originalIdempotencyKey);
+  assert.equal(session.reservationFlow.startsAt, null);
+  assert.equal(session.reservationFlow.bookingAttemptId, null);
+  assert.equal(session.reservationFlow.idempotencyKey, null);
+  assert.deepEqual(session.reservationFlow.confirmation, {});
+  assert.match(result.reply, /09:00 is no longer available/i);
+  assert.match(result.reply, /1\. 09:30/);
+  assert.equal(writes, 0);
+
+  const replacement = await send("1");
+  assert.equal(session.reservationFlow.status, "awaiting_confirmation");
+  assert.equal(session.reservationFlow.startsAt, "2099-01-15T09:30:00.000Z");
+  assert.notEqual(session.reservationFlow.startsAt, originalStartsAt);
+  assert.notEqual(session.reservationFlow.bookingAttemptId, originalAttemptId);
+  assert.notEqual(session.reservationFlow.idempotencyKey, originalIdempotencyKey);
+  assert.equal(session.reservationFlow.confirmation.summary.localTime, "09:30");
+  assert.match(replacement.reply, /Time: 09:30/);
+  assert.equal(writes, 0);
+
+  await send("yes");
+  assert.equal(writes, 1);
 });
 
 test("production short aliases skip duplicate identity prompts in mixed forms", async () => {

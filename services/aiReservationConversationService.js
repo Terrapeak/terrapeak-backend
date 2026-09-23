@@ -1,5 +1,5 @@
 import { resolveChatReservationJourney } from "./chatReservationJourneyService.js";
-import { initializeReservationFlow, prepareReservationConfirmation, confirmReservationFoundation, buildReservationResponse, resetReservationFlowSelections } from "./aiReservationFlowService.js";
+import { initializeReservationFlow, prepareReservationConfirmation, confirmReservationFoundation, buildReservationResponse, formatReservationConfirmationSummary, formatReservationSuccessResponse, resetReservationFlowSelections } from "./aiReservationFlowService.js";
 import {
   buildCustomerFormPrompt,
   buildCustomerFormValidationMessage,
@@ -63,9 +63,14 @@ export const isCancelMessage = (message = "") => {
 
 const isRestartMessage = (message = "") => /^(?:start over|restart|start again|restart booking)$/i.test(normalizeOptionText(message));
 
+export const formatTimeForDisplay = (value) => String(value || "").replace(/^(\d{1,2}:\d{2}):\d{2}$/, "$1");
+
+const normalizeTimeOption = (value) => normalizeOptionText(formatTimeForDisplay(value));
+
 const selectOption = (message, options, labelKey = "name") => {
   const value = String(message || "").trim();
   const normalizedValue = normalizeOptionText(value);
+  const normalizedTimeValue = normalizeTimeOption(value);
   const exact = options.find((option) => [
     option.slug,
     option[labelKey],
@@ -73,7 +78,10 @@ const selectOption = (message, options, labelKey = "name") => {
     option.displayName,
     option.localTime,
     option.id,
-  ].some((candidate) => normalizeOptionText(candidate) === normalizedValue));
+  ].some((candidate) => {
+    const candidateValue = labelKey === "localTime" ? normalizeTimeOption(candidate) : normalizeOptionText(candidate);
+    return candidateValue === (labelKey === "localTime" ? normalizedTimeValue : normalizedValue);
+  }));
   if (exact) return exact;
   if (/^\d+$/.test(value)) {
     const numeric = Number.parseInt(value, 10);
@@ -97,7 +105,10 @@ const matchService = (message, services) => {
   return natural.length === 1 ? natural[0] : null;
 };
 
-const optionReply = (label, options) => `Please choose a ${label}:\n\n${options.map((option, index) => `${index + 1}. ${option.name || option.displayName || option.localTime || `Option ${index + 1}`}`).join("\n")}`;
+const optionReply = (label, options) => `Please choose a ${label}:\n\n${options.map((option, index) => {
+  const value = option.name || option.displayName || option.localTime || `Option ${index + 1}`;
+  return `${index + 1}. ${label === "time" ? formatTimeForDisplay(value) : value}`;
+}).join("\n")}`;
 
 const clearServiceDependents = (flow) => {
   for (const key of ["providerId", "providerSlug", "providerName", "localDate", "startsAt", "timezone", "formFieldIndex", "currentCustomField", "customFieldIndex", "customerFormSnapshot", "customer", "customData", "confirmation", "bookingAttemptId", "idempotencyKey"]) delete flow[key];
@@ -117,7 +128,7 @@ const clearProviderDependents = (flow) => {
 };
 
 const clearDateDependents = (flow) => {
-  for (const key of ["startsAt", "timezone", "confirmation", "bookingAttemptId", "idempotencyKey"]) delete flow[key];
+  for (const key of ["startsAt", "localTime", "timezone", "confirmation", "bookingAttemptId", "idempotencyKey"]) delete flow[key];
   flow.confirmation = {};
 };
 
@@ -221,6 +232,50 @@ export async function handleAiReservationConversation({
   }
 
   const flow = current;
+  const prepareConfirmation = async () => {
+    if (context.configuration.bookingBehavior?.booking_behavior === "request") {
+      flow.status = "completed";
+      flow.requestedBooking = true;
+      return { handled: true, reply: "I’ve collected the appointment details. Please submit them through the Reservations form so the team can review the request.", reservation: reservationPayload(session, flow, "") };
+    }
+    const prepared = await measureAiReservationStage({ context, flow, stage: "confirmation_preparation", operation: "prepare_reservation_confirmation" }, () => prepareReservationConfirmation({
+      context,
+      session,
+      flow,
+      service: { id: flow.serviceId, slug: flow.serviceSlug, name: flow.serviceName },
+      provider: { id: flow.providerId, slug: flow.providerSlug, displayName: flow.providerName },
+      slot: { startsAt: flow.startsAt, localTime: flow.localTime, timezone: flow.timezone },
+      customer: flow.customer,
+      form: flow.customerFormSnapshot,
+      model,
+    }));
+    return { handled: true, reply: formatReservationConfirmationSummary(prepared.summary), reservation: reservationPayload(session, session.reservationFlow, "") };
+  };
+
+  const recoverChangedSlot = async () => {
+    const slots = await measureAiReservationStage({ context, flow, stage: "availability_read", operation: "list_appointment_availability" }, () => readAdapter.listAppointmentAvailability(context, {
+      serviceId: flow.serviceId,
+      serviceSlug: flow.serviceSlug,
+      providerId: flow.providerId,
+      providerSlug: flow.providerSlug,
+      localDate: flow.localDate,
+      timezone: flow.timezone,
+    }));
+    const previousTime = formatTimeForDisplay(flow.localTime || flow.confirmation?.summary?.localTime || "That time");
+    flow.startsAt = null;
+    flow.localTime = null;
+    flow.confirmation = {};
+    flow.bookingAttemptId = null;
+    flow.idempotencyKey = null;
+    flow.selectionOptions = slots;
+    flow.status = "slot_selection";
+    session.reservationFlow = flow;
+    const reply = slots.length
+      ? `Sorry, ${previousTime} is no longer available.\n\n${optionReply("time", slots)}`
+      : `Sorry, ${previousTime} is no longer available. There are no other times available on ${flow.localDate}. Please choose another date.`;
+    return { handled: true, reply, reservation: reservationPayload(session, flow, "", "RESERVATION_SLOT_CHANGED") };
+  };
+
   if (isRestartMessage(message)) return startFlow();
   if (isCancelMessage(message)) {
     session.reservationFlow = resetReservationFlowSelections(flow);
@@ -238,12 +293,13 @@ export async function handleAiReservationConversation({
       writeAdapter,
       contextResolver,
     }));
+    if (result.errorCode === "RESERVATION_SLOT_CHANGED") return recoverChangedSlot();
     const reply = result.errorCode === "BOOKING_RESULT_UNKNOWN"
       ? "We’re checking whether your appointment was created. Please don’t submit it again yet."
       : result.errorCode === "BOOKING_IN_PROGRESS"
         ? "We’re still checking whether your appointment was created. Please don’t submit it again yet."
-        : result.bookingCreated
-      ? `Your appointment is confirmed. Reference: ${result.result.reference}.`
+      : result.bookingCreated
+      ? formatReservationSuccessResponse(result.summary || flow.confirmation?.summary || {}, result.result || {})
       : result.fallbackRequired
         ? "I could not safely complete that appointment in chat. Please use the Reservations form or request a callback."
         : "Please reply **yes** to confirm or **no** to cancel.";
@@ -284,10 +340,18 @@ export async function handleAiReservationConversation({
     const slot = selectOption(message, flow.selectionOptions || [], "localTime");
     if (!slot) return { handled: true, reply: optionReply("time", flow.selectionOptions || []), reservation: reservationPayload(session, flow, "") };
     flow.startsAt = slot.startsAt;
+    flow.localTime = slot.localTime || null;
     flow.timezone = slot.timezone;
+    if (flow.customerFormSnapshot?.length) {
+      const next = findNextCustomerFormField(flow);
+      if (!next) return prepareConfirmation();
+      flow.status = "customer_form";
+      flow.formFieldIndex = 3;
+      return { handled: true, reply: buildCustomerFormPrompt(next), reservation: reservationPayload(session, flow, "") };
+    }
     flow.status = "customer_form";
     flow.formFieldIndex = 0;
-    return { handled: true, reply: "What is the customer’s full name?", reservation: reservationPayload(session, flow, "") };
+    return { handled: true, reply: "What is your full name?", reservation: reservationPayload(session, flow, "") };
   }
 
   if (flow.status === "customer_form") {
@@ -357,18 +421,7 @@ export async function handleAiReservationConversation({
       };
     }
 
-    const summary = await measureAiReservationStage({ context, flow, stage: "confirmation_preparation", operation: "prepare_reservation_confirmation" }, () => prepareReservationConfirmation({
-      context,
-      session,
-      flow,
-      service: { id: flow.serviceId, slug: flow.serviceSlug, name: flow.serviceName },
-      provider: { id: flow.providerId, slug: flow.providerSlug, displayName: flow.providerName },
-      slot: { startsAt: flow.startsAt, timezone: flow.timezone },
-      customer: flow.customer,
-      form: flow.customerFormSnapshot,
-      model,
-    }));
-    return { handled: true, reply: `${summary.summary.serviceName || "Your appointment"} is ready. Reply **yes** to confirm or **no** to cancel.`, reservation: reservationPayload(session, session.reservationFlow, "") };
+    return prepareConfirmation();
   }
 
   return { handled: false };

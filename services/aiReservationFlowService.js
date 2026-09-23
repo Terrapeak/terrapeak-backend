@@ -4,7 +4,7 @@ import { logAiReservationEvent } from "../utils/aiReservationLogger.js";
 import { randomUUID } from "node:crypto";
 import { executeAiReservationBooking } from "./aiReservationBookingService.js";
 import { fingerprintReservationBookingRequest } from "../utils/reservationRequestFingerprint.js";
-import { serializeCustomerFormAnswers } from "../utils/aiReservationCustomerForm.js";
+import { getCustomerCoreFieldKey, serializeCustomerFormAnswers } from "../utils/aiReservationCustomerForm.js";
 
 export const RESERVATION_FLOW_STATES = Object.freeze([
   "idle", "service_selection", "provider_selection", "date_selection",
@@ -14,6 +14,8 @@ export const RESERVATION_FLOW_STATES = Object.freeze([
 
 const confirmationWords = new Set(["confirm", "yes", "yes confirm", "book it", "confirm booking"]);
 const negativeWords = new Set(["no", "cancel", "stop", "never mind", "nevermind", "forget it", "cancel this", "cancel booking", "i do not want to book anymore", "i dont want to book anymore", "change time", "go back"]);
+
+const formatLocalTime = (value) => String(value || "").replace(/^(\d{1,2}:\d{2}):\d{2}$/, "$1");
 
 export const resetReservationFlowSelections = (flow = {}, status = "cancelled") => ({
   ...flow,
@@ -80,7 +82,8 @@ export const buildReservationConfirmationSummary = ({ context, flow, service, pr
   providerName: provider?.displayName || null,
   startsAt: slot?.startsAt || flow.startsAt || null,
   endsAt: slot?.endsAt || null,
-  localTime: slot?.localTime || null,
+  localDate: flow.localDate || null,
+  localTime: formatLocalTime(slot?.localTime || flow.localTime),
   timezone: slot?.timezone || null,
   durationMinutes: provider?.customDurationMinutes || service?.durationMinutes || null,
   price: provider?.customPrice ?? service?.price ?? null,
@@ -91,10 +94,47 @@ export const buildReservationConfirmationSummary = ({ context, flow, service, pr
     email: customer?.email || null,
     phone: customer?.phone || null,
   },
+  customFields: (Array.isArray(form) ? form : [])
+    .filter((field) => !getCustomerCoreFieldKey(field))
+    .map((field) => ({ label: field.label, value: flow.customData?.[field.id] }))
+    .filter((field) => field.value !== undefined && field.value !== null && field.value !== ""),
   bookingBehavior: context.configuration.bookingBehavior,
   terminology: context.configuration.terminology,
   formFieldCount: Array.isArray(form) ? form.length : 0,
 });
+
+const summaryValue = (value, fallback = "Not provided") => value === undefined || value === null || value === "" ? fallback : String(value);
+
+export function formatReservationConfirmationSummary(summary = {}) {
+  const lines = [
+    "Booking summary",
+    "",
+    `Service: ${summaryValue(summary.serviceName)}`,
+    `Provider: ${summaryValue(summary.providerName)}`,
+    `Date: ${summaryValue(summary.localDate)}`,
+    `Time: ${summaryValue(summary.localTime)}${summary.timezone ? ` (${summary.timezone})` : ""}`,
+    `Customer: ${summaryValue(summary.customer?.name)}`,
+  ];
+  if (summary.customFields?.length) {
+    lines.push("", "Additional details:");
+    for (const field of summary.customFields) lines.push(`${field.label}: ${field.value}`);
+  }
+  lines.push("", "Reply **yes** to confirm or **no** to cancel.");
+  return lines.join("\n");
+}
+
+export function formatReservationSuccessResponse(summary = {}, result = {}) {
+  const reference = result.reference || result.bookingReference || "not available";
+  return [
+    "Your appointment is confirmed.",
+    "",
+    `Service: ${summaryValue(summary.serviceName)}`,
+    `Provider: ${summaryValue(summary.providerName)}`,
+    `Date: ${summaryValue(summary.localDate)}`,
+    `Time: ${summaryValue(summary.localTime)}${summary.timezone ? ` (${summary.timezone})` : ""}`,
+    `Reference: ${reference}`,
+  ].join("\n");
+}
 
 export async function prepareReservationConfirmation({ context, session, flow, service, provider, slot, customer, form, model }) {
   const summary = buildReservationConfirmationSummary({ context, flow, service, provider, slot, customer, form });
