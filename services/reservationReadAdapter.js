@@ -50,7 +50,7 @@ const normalizeProvider = (provider, assignment = {}) => ({
   displayName: provider.display_name,
   bio: provider.bio || "",
   photoUrl: provider.photo_url || null,
-  timezone: provider.timezone || "UTC",
+  timezone: provider.timezone || null,
   customDurationMinutes: assignment.custom_duration_minutes ?? null,
   customPrice: assignment.custom_price ?? null,
 });

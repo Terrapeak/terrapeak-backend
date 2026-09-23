@@ -6,12 +6,12 @@ import {
   customerFormValidationField,
   getCustomerCoreFieldKey,
   isOptionalCustomerFormSkip,
-  normalizeStructuredDateInput,
   parseCustomerFormInput,
   validateCustomerFormValue,
 } from "../utils/aiReservationCustomerForm.js";
 import { normalizeReservationOptionText, resolveAiReservationOption } from "../utils/aiReservationOptionResolver.js";
 import { measureAiReservationStage } from "../utils/aiReservationLogger.js";
+import { parseNaturalReservationDate } from "../utils/aiReservationDateParser.js";
 
 const supportedTemplates = new Set(["general", "physiotherapy", "dental", "salon"]);
 const naturalServiceWords = new Set([
@@ -136,6 +136,7 @@ const applyProvider = (flow, provider) => {
   flow.providerId = provider.id;
   flow.providerSlug = provider.slug;
   flow.providerName = provider.displayName;
+  flow.timezone = provider.timezone || null;
 };
 
 const terminalStatuses = new Set(["completed", "cancelled", "failed", "unknown"]);
@@ -191,6 +192,7 @@ export async function handleAiReservationConversation({
   readAdapter,
   writeAdapter,
   contextResolver,
+  now = () => new Date(),
 } = {}) {
   const current = session.reservationFlow;
   const startRequested = isGenericBookingIntent(message) || isNaturalServiceBookingIntent(message) || isRestartMessage(message);
@@ -214,7 +216,7 @@ export async function handleAiReservationConversation({
       const providers = await measureAiReservationStage({ context, flow, stage: "providers_read", operation: "list_bookable_providers" }, () => readAdapter.listBookableProviders(context, service));
       if (!providers.length) return { handled: true, reply: "No providers are available for that service.", reservation: reservationPayload(session, flow, "") };
       flow.status = "provider_selection";
-      flow.selectionOptions = providers.map(({ id, slug, displayName }) => ({ id, slug, displayName }));
+      flow.selectionOptions = providers.map(({ id, slug, displayName, timezone }) => ({ id, slug, displayName, timezone }));
       session.reservationFlow = flow;
       return { handled: true, reply: optionReply("provider", providers), reservation: reservationPayload(session, flow, "") };
     }
@@ -324,7 +326,7 @@ export async function handleAiReservationConversation({
     const providers = await measureAiReservationStage({ context, flow, stage: "providers_read", operation: "list_bookable_providers" }, () => readAdapter.listBookableProviders(context, service));
     if (!providers.length) return { handled: true, reply: "No providers are available for that service.", reservation: reservationPayload(session, flow, "") };
     flow.status = "provider_selection";
-    flow.selectionOptions = providers.map(({ id, slug, displayName }) => ({ id, slug, displayName }));
+    flow.selectionOptions = providers.map(({ id, slug, displayName, timezone }) => ({ id, slug, displayName, timezone }));
     return { handled: true, reply: optionReply("provider", providers), reservation: reservationPayload(session, flow, "") };
   }
 
@@ -338,9 +340,9 @@ export async function handleAiReservationConversation({
   }
 
   if (flow.status === "date_selection") {
-    const date = normalizeStructuredDateInput(message);
+    const date = parseNaturalReservationDate(message, { timezone: flow.timezone, now: now() });
     if (!date.valid) return { handled: true, reply: date.message, reservation: reservationPayload(session, flow, "") };
-    const slots = await measureAiReservationStage({ context, flow, stage: "availability_read", operation: "list_appointment_availability" }, () => readAdapter.listAppointmentAvailability(context, { serviceId: flow.serviceId, serviceSlug: flow.serviceSlug, providerId: flow.providerId, providerSlug: flow.providerSlug, localDate: date.value }));
+    const slots = await measureAiReservationStage({ context, flow, stage: "availability_read", operation: "list_appointment_availability" }, () => readAdapter.listAppointmentAvailability(context, { serviceId: flow.serviceId, serviceSlug: flow.serviceSlug, providerId: flow.providerId, providerSlug: flow.providerSlug, localDate: date.value, timezone: flow.timezone }));
     if (!slots.length) return { handled: true, reply: "No appointment times are available on that date. Please choose another date.", reservation: reservationPayload(session, flow, "") };
     clearDateDependents(flow);
     flow.localDate = date.value;
