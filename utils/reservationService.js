@@ -902,6 +902,7 @@ export async function createOrUpdateReservationBusinessSettings({
   capabilities,
   terminology,
   platformAuthoritative = false,
+  capabilitiesManagedByPlatform,
 }) {
   const existingSettings = await findByBusinessId(
     "reservation_business_settings",
@@ -920,6 +921,9 @@ export async function createOrUpdateReservationBusinessSettings({
     capabilities: resolved.capabilities,
     terminology: resolved.terminology,
   };
+  if (capabilitiesManagedByPlatform !== undefined) {
+    settingsData.capabilities_managed_by_platform = Boolean(capabilitiesManagedByPlatform);
+  }
 
   if (existingSettings) {
     const patch = buildReservationBusinessSettingsPatch({
@@ -958,6 +962,9 @@ export const buildReservationBusinessSettingsPatch = ({
       template_key: settingsData.template_key,
       capabilities: settingsData.capabilities,
       terminology: settingsData.terminology,
+      ...(settingsData.capabilities_managed_by_platform !== undefined
+        ? { capabilities_managed_by_platform: settingsData.capabilities_managed_by_platform }
+        : {}),
     };
   }
   const patch = getMissingReservationFieldValues(existingSettings, settingsData);

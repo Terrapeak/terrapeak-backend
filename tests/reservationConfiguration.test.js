@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { RESERVATIONS_TEMPLATES } from "../config/reservationsTemplates.js";
 import {
+  buildReservationGovernanceContract,
   NEUTRAL_RESERVATION_TERMINOLOGY,
   resolveReservationsConfiguration,
 } from "../utils/reservationConfiguration.js";
@@ -67,6 +68,62 @@ test("platform-authoritative template envelopes match each supported template", 
     resolveReservationsConfiguration({ templateKey: "restaurant", capabilities: { services: true, guestCount: false }, platformAuthoritative: true }).capabilities,
     { services: false, teamResources: false, scheduledSessions: false, packages: false, guestCount: true },
   );
+});
+
+test("governance contract exposes Platform authority and effective general configuration", () => {
+  const contract = buildReservationGovernanceContract({
+    company: { reservationTemplate: "general" },
+    settings: {
+      template_key: "restaurant",
+      capabilities: { teamResources: false, guestCount: true },
+      terminology: { customerSingular: "Guest" },
+      booking_behavior: "request",
+      confirmation_message: "Custom confirmation",
+    },
+  });
+
+  assert.equal(contract.templateAuthority, "platform");
+  assert.equal(contract.capabilitiesManagedByPlatform, true);
+  assert.equal(contract.effectiveTemplateKey, "general");
+  assert.equal(contract.effectiveTemplateLabel, "General appointments");
+  assert.equal(contract.effectiveCapabilities.teamResources, true);
+  assert.equal(contract.effectiveCapabilities.guestCount, false);
+  assert.equal(contract.effectiveTerminology.customerSingular, "Customer");
+  assert.equal(contract.bookingBehavior.booking_behavior, "request");
+  assert.equal(contract.confirmationMessage, "Custom confirmation");
+});
+
+test("governance contract uses authoritative envelopes for physiotherapy and restaurant", () => {
+  const physiotherapy = buildReservationGovernanceContract({
+    company: { reservationTemplate: "physiotherapy" },
+    settings: { capabilities: { packages: false } },
+  });
+  const restaurant = buildReservationGovernanceContract({
+    company: { reservationTemplate: "restaurant" },
+    settings: { capabilities: { services: true, guestCount: false } },
+  });
+
+  assert.equal(physiotherapy.effectiveTemplateLabel, "Physiotherapy");
+  assert.equal(physiotherapy.effectiveCapabilities.packages, true);
+  assert.equal(restaurant.effectiveTemplateLabel, "Restaurant");
+  assert.equal(restaurant.effectiveCapabilities.services, false);
+  assert.equal(restaurant.effectiveCapabilities.guestCount, true);
+});
+
+test("legacy governance remains customer-managed and retains canonical fallback", () => {
+  const contract = buildReservationGovernanceContract({
+    company: { reservationTemplate: undefined },
+    settings: {
+      template_key: "restaurant",
+      capabilities: { guestCount: true },
+      terminology: { customerSingular: "Guest" },
+    },
+  });
+
+  assert.equal(contract.templateAuthority, "legacy");
+  assert.equal(contract.capabilitiesManagedByPlatform, false);
+  assert.equal(contract.effectiveTemplateKey, "restaurant");
+  assert.equal(contract.effectiveCapabilities.guestCount, true);
 });
 
 test("template defaults override neutral terminology", () => {

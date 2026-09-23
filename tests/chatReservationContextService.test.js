@@ -53,6 +53,13 @@ test("resolves chatbot to its active Company, installation, and canonical busine
   assert.equal(context.configuration.templateKey, "general");
   assert.equal(context.configuration.bookingBehavior.booking_behavior, "request");
   assert.equal(context.configuration.terminology.bookingSingular, "Booking");
+  assert.equal(context.templateAuthority, "platform");
+  assert.equal(context.capabilitiesManagedByPlatform, true);
+  assert.equal(context.effectiveTemplateKey, "general");
+  assert.equal(context.effectiveTemplateLabel, "General appointments");
+  assert.equal(context.effectiveCapabilities.teamResources, true);
+  assert.equal(context.bookingBehavior.booking_behavior, "request");
+  assert.equal(context.confirmationMessage, "We received your request.");
 });
 
 test("Platform template authority wins over conflicting canonical template and capabilities", async () => {
@@ -95,6 +102,10 @@ test("legacy companies without an explicit template retain canonical template co
 
   assert.equal(context.configuration.templateKey, "restaurant");
   assert.equal(context.configuration.capabilities.guestCount, true);
+  assert.equal(context.templateAuthority, "legacy");
+  assert.equal(context.capabilitiesManagedByPlatform, false);
+  assert.equal(context.effectiveTemplateKey, "restaurant");
+  assert.equal(context.effectiveTemplateLabel, "Restaurant");
 });
 
 test("does not accept a client-selected business or use a global fallback", async () => {

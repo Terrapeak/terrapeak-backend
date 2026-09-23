@@ -68,6 +68,45 @@ export const resolveReservationsConfiguration = ({
   };
 };
 
+export const buildReservationGovernanceContract = ({
+  company = {},
+  settings = {},
+} = {}) => {
+  const platformTemplate = isReservationsTemplate(company.reservationTemplate)
+    ? company.reservationTemplate
+    : null;
+  const templateAuthority = platformTemplate ? "platform" : "legacy";
+  const effectiveTemplateKey = normalizeReservationsTemplateKey(
+    platformTemplate || settings.template_key || "restaurant",
+  );
+  const bookingBehavior = {};
+  if (settings.booking_behavior !== undefined) {
+    bookingBehavior.booking_behavior = settings.booking_behavior;
+  }
+  if (settings.confirmation_message !== undefined) {
+    bookingBehavior.confirmation_message = settings.confirmation_message;
+  }
+  const resolved = resolveReservationsConfiguration({
+    templateKey: effectiveTemplateKey,
+    capabilities: settings.capabilities,
+    terminology: settings.terminology,
+    bookingBehavior,
+    platformAuthoritative: Boolean(platformTemplate),
+  });
+  const template = getReservationsTemplate(resolved.templateKey);
+
+  return {
+    templateAuthority,
+    capabilitiesManagedByPlatform: templateAuthority === "platform",
+    effectiveTemplateKey: resolved.templateKey,
+    effectiveTemplateLabel: template.label,
+    effectiveCapabilities: resolved.capabilities,
+    effectiveTerminology: resolved.terminology,
+    bookingBehavior: resolved.bookingBehavior,
+    confirmationMessage: resolved.bookingBehavior.confirmation_message,
+  };
+};
+
 export const getReservationTemplateConfigurationDrift = ({ templateKey, settings } = {}) => {
   const expected = resolveReservationsConfiguration({
     templateKey,

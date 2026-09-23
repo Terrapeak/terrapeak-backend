@@ -184,6 +184,7 @@ export const updatePlatformCompany = asyncHandler(async (req, res) => {
         businessId: company.reservationBusinessId,
         templateKey: updates.reservationTemplate,
         platformAuthoritative: true,
+        capabilitiesManagedByPlatform: true,
       });
     }
   }

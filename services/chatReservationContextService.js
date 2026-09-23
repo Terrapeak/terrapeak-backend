@@ -2,7 +2,10 @@ import ChatbotSettings from "../models/chatbotSettings.js";
 import Company from "../models/company.js";
 import CompanyAppInstallation from "../models/companyAppInstallation.js";
 import { isCompanyOperational } from "../utils/companyLifecycle.js";
-import { resolveReservationsConfiguration } from "../utils/reservationConfiguration.js";
+import {
+  buildReservationGovernanceContract,
+  resolveReservationsConfiguration,
+} from "../utils/reservationConfiguration.js";
 import { reservationsReadAdapter } from "./reservationReadAdapter.js";
 import { isReservationsTemplate } from "../config/reservationsTemplates.js";
 import { logAiReservationEvent, measureAiReservationStage } from "../utils/aiReservationLogger.js";
@@ -264,6 +267,17 @@ export async function resolveChatReservationContext({
     fail("RESERVATION_TENANT_MISMATCH", "The Reservations business does not match the Company.");
   }
 
+  const governanceSettings = configurationSource === "cache"
+    ? {
+        template_key: canonicalConfiguration.templateKey,
+        capabilities: canonicalConfiguration.capabilities,
+        terminology: canonicalConfiguration.terminology,
+        booking_behavior: canonicalConfiguration.bookingBehavior?.booking_behavior,
+        confirmation_message: canonicalConfiguration.bookingBehavior?.confirmation_message,
+      }
+    : canonicalConfiguration;
+  const governance = buildReservationGovernanceContract({ company, settings: governanceSettings });
+
   if (configurationSource === "supabase" && cache && !bypassConfigurationCache) {
     try {
       cache.set(cacheKey, normalizeReservationContextConfiguration(canonicalConfiguration, company));
@@ -284,6 +298,7 @@ export async function resolveChatReservationContext({
     configuration: configurationSource === "cache"
       ? canonicalConfiguration
       : normalizeReservationContextConfiguration(canonicalConfiguration, company),
+    ...governance,
   });
   onResolved?.({ settings, company, installation });
   return context;
@@ -299,6 +314,18 @@ export const buildReservationConversationContextSnapshot = (context = {}) => ({
   companyLifecycleStatus: context.companyLifecycleStatus || "active",
   reservationTemplate: context.reservationTemplate || "general",
   configuration: context.configuration,
+  ...(context.templateAuthority !== undefined
+    ? {
+        templateAuthority: context.templateAuthority,
+        capabilitiesManagedByPlatform: context.capabilitiesManagedByPlatform,
+        effectiveTemplateKey: context.effectiveTemplateKey,
+        effectiveTemplateLabel: context.effectiveTemplateLabel,
+        effectiveCapabilities: context.effectiveCapabilities,
+        effectiveTerminology: context.effectiveTerminology,
+        bookingBehavior: context.bookingBehavior,
+        confirmationMessage: context.confirmationMessage,
+      }
+    : {}),
 });
 
 export const getReusableReservationConversationContext = ({

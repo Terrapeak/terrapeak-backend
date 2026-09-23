@@ -127,10 +127,10 @@ const createMemoryStore = (initial = {}) => {
       }
       return state.branding;
     },
-    async createOrUpdateReservationBusinessSettings({ businessId, templateKey, capabilities, terminology }) {
+    async createOrUpdateReservationBusinessSettings({ businessId, templateKey, capabilities, terminology, capabilitiesManagedByPlatform }) {
       if (!state.reservationSettings) {
         state.creates.reservationSettings += 1;
-        state.reservationSettings = { business_id: businessId, template_key: templateKey, capabilities, terminology };
+        state.reservationSettings = { business_id: businessId, template_key: templateKey, capabilities, terminology, capabilities_managed_by_platform: capabilitiesManagedByPlatform };
       }
       return state.reservationSettings;
     },
@@ -193,6 +193,18 @@ test("repeat provisioning creates missing rows once and preserves existing rows"
     reservationSettings: 1,
   });
   assert.deepEqual(company.installedApps, ["reservations"]);
+});
+
+test("explicit Platform provisioning sets the authority marker", async (t) => {
+  const company = createCompany({ reservationTemplate: "general" });
+  t.mock.method(ChatbotSettings, "findOne", async () => null);
+  const store = createMemoryStore({
+    business: { id: 10, business_slug: "terrapeak", business_name: "Terrapeak", booking_model_version: 2 },
+  });
+
+  await installReservations({ company, user: { _id: OWNER_ID }, provisioningStore: store });
+
+  assert.equal(store.state.reservationSettings.capabilities_managed_by_platform, true);
 });
 
 test("existing customized profile, settings, and branding are reused unchanged", async (t) => {
@@ -308,6 +320,29 @@ test("platform template synchronization replaces only governed canonical fields"
     capabilities: { services: true, teamResources: true, packages: true },
     terminology: { customerSingular: "Patient" },
   });
+  assert.equal(patch.booking_behavior, undefined);
+  assert.equal(patch.confirmation_message, undefined);
+});
+
+test("Platform synchronization patch preserves customer settings and sets the authority marker", () => {
+  const patch = buildReservationBusinessSettingsPatch({
+    existingSettings: {
+      template_key: "general",
+      capabilities: { teamResources: false },
+      terminology: { customerSingular: "Client" },
+      booking_behavior: "request",
+      confirmation_message: "Custom confirmation",
+    },
+    settingsData: {
+      template_key: "general",
+      capabilities: { services: true, teamResources: true },
+      terminology: { customerSingular: "Customer" },
+      capabilities_managed_by_platform: true,
+    },
+    platformAuthoritative: true,
+  });
+
+  assert.equal(patch.capabilities_managed_by_platform, true);
   assert.equal(patch.booking_behavior, undefined);
   assert.equal(patch.confirmation_message, undefined);
 });

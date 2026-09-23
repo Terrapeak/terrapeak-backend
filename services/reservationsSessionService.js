@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { logReservationsOperation } from "../utils/reservationsOperationalLog.js";
+import { buildReservationGovernanceContract } from "../utils/reservationConfiguration.js";
 
 const CANONICAL_RESERVATIONS_ROLES = new Set([
   "owner",
@@ -72,6 +73,23 @@ export async function createReservationsSessionBootstrap({
   const compatibilityRole =
     RESERVATIONS_COMPATIBILITY_ROLE_BY_PLATFORM_ROLE[normalizedRole];
   const supabase = getSupabaseAdmin();
+  const { data: reservationSettings, error: reservationSettingsError } = await supabase
+    .from("reservation_business_settings")
+    .select("template_key,capabilities,terminology,booking_behavior,confirmation_message")
+    .eq("business_id", Number(company.reservationBusinessId))
+    .maybeSingle();
+
+  if (reservationSettingsError || !reservationSettings) {
+    const error = new Error("Could not load the Reservations configuration.");
+    error.code = "RESERVATIONS_CONFIGURATION_LOAD_FAILED";
+    error.cause = reservationSettingsError || null;
+    throw error;
+  }
+
+  const governance = buildReservationGovernanceContract({
+    company,
+    settings: reservationSettings,
+  });
 
   // GenerateLink creates the Supabase Auth user when needed but does not send
   // an email. The resulting token hash is exchanged by the Reservations client
@@ -172,5 +190,6 @@ export async function createReservationsSessionBootstrap({
     accessSource,
     reservationsCompatibilityRole: compatibilityRole,
     supabaseUserId: linkData.user.id,
+    ...governance,
   };
 }

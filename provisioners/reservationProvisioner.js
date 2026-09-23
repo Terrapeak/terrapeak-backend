@@ -207,6 +207,7 @@ export default async function provisionReservations({
         capabilities: plan.capabilities,
         terminology: plan.terminology,
         platformAuthoritative: !plan.legacyRestaurant,
+        capabilitiesManagedByPlatform: !plan.legacyRestaurant,
       })
     : null;
 
