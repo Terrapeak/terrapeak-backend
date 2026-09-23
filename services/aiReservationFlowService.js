@@ -114,6 +114,8 @@ export function formatReservationConfirmationSummary(summary = {}) {
     `Date: ${summaryValue(summary.localDate)}`,
     `Time: ${summaryValue(summary.localTime)}${summary.timezone ? ` (${summary.timezone})` : ""}`,
     `Customer: ${summaryValue(summary.customer?.name)}`,
+    `Email: ${summaryValue(summary.customer?.email)}`,
+    `Phone: ${summaryValue(summary.customer?.phone)}`,
   ];
   if (summary.customFields?.length) {
     lines.push("", "Additional details:");
@@ -125,7 +127,7 @@ export function formatReservationConfirmationSummary(summary = {}) {
 
 export function formatReservationSuccessResponse(summary = {}, result = {}) {
   const reference = result.reference || result.bookingReference || "not available";
-  return [
+  const lines = [
     "Your appointment is confirmed.",
     "",
     `Service: ${summaryValue(summary.serviceName)}`,
@@ -133,7 +135,11 @@ export function formatReservationSuccessResponse(summary = {}, result = {}) {
     `Date: ${summaryValue(summary.localDate)}`,
     `Time: ${summaryValue(summary.localTime)}${summary.timezone ? ` (${summary.timezone})` : ""}`,
     `Reference: ${reference}`,
-  ].join("\n");
+  ];
+  if (result.confirmationEmail?.status === "failed") {
+    lines.push("", "We couldn't send the confirmation email. Please keep this booking reference.");
+  }
+  return lines.join("\n");
 }
 
 export async function prepareReservationConfirmation({ context, session, flow, service, provider, slot, customer, form, model }) {

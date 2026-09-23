@@ -6,9 +6,11 @@ import {
   customerFormValidationField,
   getCustomerCoreFieldKey,
   isOptionalCustomerFormSkip,
+  normalizeStructuredDateInput,
   parseCustomerFormInput,
   validateCustomerFormValue,
 } from "../utils/aiReservationCustomerForm.js";
+import { normalizeReservationOptionText, resolveAiReservationOption } from "../utils/aiReservationOptionResolver.js";
 import { measureAiReservationStage } from "../utils/aiReservationLogger.js";
 
 const supportedTemplates = new Set(["general", "physiotherapy", "dental", "salon"]);
@@ -65,29 +67,16 @@ const isRestartMessage = (message = "") => /^(?:start over|restart|start again|r
 
 export const formatTimeForDisplay = (value) => String(value || "").replace(/^(\d{1,2}:\d{2}):\d{2}$/, "$1");
 
-const normalizeTimeOption = (value) => normalizeOptionText(formatTimeForDisplay(value));
+const resolveOption = (message, options, labelKey = "name") => resolveAiReservationOption(message, options, {
+  labelKey,
+  normalize: labelKey === "localTime" ? (value) => normalizeOptionText(formatTimeForDisplay(value)) : normalizeOptionText,
+});
 
-const selectOption = (message, options, labelKey = "name") => {
-  const value = String(message || "").trim();
-  const normalizedValue = normalizeOptionText(value);
-  const normalizedTimeValue = normalizeTimeOption(value);
-  const exact = options.find((option) => [
-    option.slug,
-    option[labelKey],
-    option.name,
-    option.displayName,
-    option.localTime,
-    option.id,
-  ].some((candidate) => {
-    const candidateValue = labelKey === "localTime" ? normalizeTimeOption(candidate) : normalizeOptionText(candidate);
-    return candidateValue === (labelKey === "localTime" ? normalizedTimeValue : normalizedValue);
-  }));
-  if (exact) return exact;
-  if (/^\d+$/.test(value)) {
-    const numeric = Number.parseInt(value, 10);
-    if (numeric >= 1 && numeric <= options.length) return options[numeric - 1];
-  }
-  return null;
+const optionSelectionReply = (label, options, message, result) => {
+  const candidates = result?.status === "ambiguous" && result.matches?.length ? result.matches : options;
+  const rendered = candidates.map((option, index) => `${index + 1}. ${option.name || option.displayName || option.localTime || option.label || option}`).join("\n");
+  if (result?.status === "ambiguous") return `I found more than one match for "${String(message).trim()}". Which did you mean?\n\n${rendered}`;
+  return `I couldn't match "${String(message).trim()}" to a ${label}. Please choose one of:\n\n${rendered}`;
 };
 
 const matchService = (message, services) => {
@@ -299,7 +288,7 @@ export async function handleAiReservationConversation({
       : result.errorCode === "BOOKING_IN_PROGRESS"
         ? "We’re still checking whether your appointment was created. Please don’t submit it again yet."
       : result.bookingCreated
-      ? formatReservationSuccessResponse(result.summary || flow.confirmation?.summary || {}, result.result || {})
+      ? formatReservationSuccessResponse(result.summary || flow.confirmation?.summary || {}, { ...(result.result || {}), confirmationEmail: result.confirmationEmail })
       : result.fallbackRequired
         ? "I could not safely complete that appointment in chat. Please use the Reservations form or request a callback."
         : "Please reply **yes** to confirm or **no** to cancel.";
@@ -307,8 +296,10 @@ export async function handleAiReservationConversation({
   }
 
   if (flow.status === "service_selection") {
-    const service = selectOption(message, flow.selectionOptions || []) || matchService(message, flow.selectionOptions || []);
-    if (!service) return { handled: true, reply: optionReply("service", flow.selectionOptions || []), reservation: reservationPayload(session, flow, "") };
+    const resolved = resolveOption(message, flow.selectionOptions || []);
+    const service = resolved.status === "matched" ? resolved.option : matchService(message, flow.selectionOptions || []);
+    if (resolved.status === "ambiguous") return { handled: true, reply: optionSelectionReply("service", flow.selectionOptions || [], message, resolved), reservation: reservationPayload(session, flow, "") };
+    if (!service) return { handled: true, reply: optionSelectionReply("service", flow.selectionOptions || [], message, resolved), reservation: reservationPayload(session, flow, "") };
     applyService(flow, service);
     const providers = await measureAiReservationStage({ context, flow, stage: "providers_read", operation: "list_bookable_providers" }, () => readAdapter.listBookableProviders(context, service));
     if (!providers.length) return { handled: true, reply: "No providers are available for that service.", reservation: reservationPayload(session, flow, "") };
@@ -318,27 +309,30 @@ export async function handleAiReservationConversation({
   }
 
   if (flow.status === "provider_selection") {
-    const provider = selectOption(message, flow.selectionOptions || [], "displayName");
-    if (!provider) return { handled: true, reply: optionReply("provider", flow.selectionOptions || []), reservation: reservationPayload(session, flow, "") };
+    const resolved = resolveOption(message, flow.selectionOptions || [], "displayName");
+    const provider = resolved.status === "matched" ? resolved.option : null;
+    if (!provider) return { handled: true, reply: optionSelectionReply("provider", flow.selectionOptions || [], message, resolved), reservation: reservationPayload(session, flow, "") };
     applyProvider(flow, provider);
     flow.status = "date_selection";
     return { handled: true, reply: "What date would you like? Please use YYYY-MM-DD.", reservation: reservationPayload(session, flow, "") };
   }
 
   if (flow.status === "date_selection") {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(message).trim())) return { handled: true, reply: "Please provide a valid date in YYYY-MM-DD format.", reservation: reservationPayload(session, flow, "") };
-    const slots = await measureAiReservationStage({ context, flow, stage: "availability_read", operation: "list_appointment_availability" }, () => readAdapter.listAppointmentAvailability(context, { serviceId: flow.serviceId, serviceSlug: flow.serviceSlug, providerId: flow.providerId, providerSlug: flow.providerSlug, localDate: String(message).trim() }));
+    const date = normalizeStructuredDateInput(message);
+    if (!date.valid) return { handled: true, reply: date.message, reservation: reservationPayload(session, flow, "") };
+    const slots = await measureAiReservationStage({ context, flow, stage: "availability_read", operation: "list_appointment_availability" }, () => readAdapter.listAppointmentAvailability(context, { serviceId: flow.serviceId, serviceSlug: flow.serviceSlug, providerId: flow.providerId, providerSlug: flow.providerSlug, localDate: date.value }));
     if (!slots.length) return { handled: true, reply: "No appointment times are available on that date. Please choose another date.", reservation: reservationPayload(session, flow, "") };
     clearDateDependents(flow);
-    flow.localDate = String(message).trim();
+    flow.localDate = date.value;
     flow.selectionOptions = slots;
     flow.status = "slot_selection";
     return { handled: true, reply: optionReply("time", slots), reservation: reservationPayload(session, flow, "") };
   }
 
   if (flow.status === "slot_selection") {
-    const slot = selectOption(message, flow.selectionOptions || [], "localTime");
-    if (!slot) return { handled: true, reply: optionReply("time", flow.selectionOptions || []), reservation: reservationPayload(session, flow, "") };
+    const resolved = resolveOption(message, flow.selectionOptions || [], "localTime");
+    const slot = resolved.status === "matched" ? resolved.option : null;
+    if (!slot) return { handled: true, reply: optionSelectionReply("time", flow.selectionOptions || [], message, resolved), reservation: reservationPayload(session, flow, "") };
     flow.startsAt = slot.startsAt;
     flow.localTime = slot.localTime || null;
     flow.timezone = slot.timezone;

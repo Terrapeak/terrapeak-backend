@@ -14,6 +14,7 @@ import { fingerprintReservationBookingRequest } from "../utils/reservationReques
 import ReservationBookingAttempt from "../models/reservationBookingAttempt.js";
 import { normalizeCustomerForm, serializeCustomerFormAnswers, validateCustomerForm } from "../utils/aiReservationCustomerForm.js";
 import { logAiReservationEvent, measureAiReservationStage } from "../utils/aiReservationLogger.js";
+import { sendAiReservationConfirmationEmail } from "./aiReservationConfirmationEmailService.js";
 
 const supportedTemplates = new Set(["general", "physiotherapy", "dental", "salon"]);
 
@@ -232,6 +233,24 @@ export async function executeAiReservationBooking({
     stage = "attempt_completed";
     logStage(stage);
     session.reservationFlow = { ...flow, status: "completed", confirmation: { ...flow.confirmation, result } };
+    let confirmationEmail = { status: "failed", failureCode: "EMAIL_NOTIFICATION_FAILED" };
+    try {
+      confirmationEmail = await sendAiReservationConfirmationEmail({
+        context: freshContext,
+        bookingAttemptId: flow.bookingAttemptId,
+        summary: flow.confirmation?.summary || {},
+        result,
+        model,
+      });
+    } catch (emailError) {
+      logAiReservationEvent("reservation_confirmation_email_failed", {
+        companyId: freshContext.companyId,
+        chatbotId: freshContext.chatbotId,
+        businessId: freshContext.reservationBusinessId,
+        attemptId: flow.bookingAttemptId,
+        errorCode: emailError.code || "EMAIL_NOTIFICATION_FAILED",
+      });
+    }
     logAiReservationEvent("reservation_booking_completed", {
       companyId: freshContext.companyId,
       chatbotId: freshContext.chatbotId,
@@ -240,7 +259,7 @@ export async function executeAiReservationBooking({
       attemptId: flow.bookingAttemptId,
       bookingId: result.bookingId,
     });
-    return { bookingCreated: true, replayed: false, result, flowStatus: "completed" };
+    return { bookingCreated: true, replayed: false, result, confirmationEmail, flowStatus: "completed" };
   } catch (error) {
     if (error.ambiguous) {
       let reconciled = null;

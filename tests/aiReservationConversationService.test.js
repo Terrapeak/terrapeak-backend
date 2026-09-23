@@ -462,7 +462,9 @@ test("maps canonical core fields once and presents typed custom prompts", async 
   assert.equal(result.reservation.confirmationRequired, true);
   assert.match(result.reply, /Booking summary/);
   assert.match(result.reply, /Company Name: TerraPeak/);
-  assert.doesNotMatch(result.reply, /Customer name:|Email: tim@example|Phone: \+601/);
+  assert.match(result.reply, /Email: tim@example\.com/);
+  assert.match(result.reply, /Phone: \+60123456789/);
+  assert.doesNotMatch(result.reply, /Customer name:/);
 });
 
 test("required skips and invalid typed answers stay on the same field", async () => {

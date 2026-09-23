@@ -22,6 +22,7 @@ const reservationFlowSchema = new mongoose.Schema(
     providerName: { type: String, default: null },
     scheduledSessionId: { type: String, default: null },
     localDate: { type: String, default: null },
+    localTime: { type: String, default: null },
     startsAt: { type: Date, default: null },
     timezone: { type: String, default: null },
     quantity: { type: Number, default: 1 },

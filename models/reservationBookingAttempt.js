@@ -13,6 +13,18 @@ const ReservationBookingAttemptSchema = new mongoose.Schema(
     requestFingerprint: { type: String, default: "" },
     result: { type: mongoose.Schema.Types.Mixed, default: null },
     errorCode: { type: String, default: null },
+    notification: {
+      email: {
+        status: { type: String, enum: ["not_attempted", "sending", "sent", "failed"], default: "not_attempted" },
+        attempts: { type: Number, default: 0 },
+        claimToken: { type: String, default: null },
+        claimedAt: { type: Date, default: null },
+        lastAttemptAt: { type: Date, default: null },
+        sentAt: { type: Date, default: null },
+        providerMessageId: { type: String, default: null },
+        failureCode: { type: String, default: null },
+      },
+    },
   },
   { timestamps: true },
 );

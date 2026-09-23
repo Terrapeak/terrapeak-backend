@@ -1,3 +1,5 @@
+import { resolveAiReservationOption } from "./aiReservationOptionResolver.js";
+
 export const CUSTOMER_FIELD_TYPES = Object.freeze([
   "text",
   "textarea",
@@ -105,12 +107,26 @@ export function buildCustomerFormValidationMessage(field, result = {}) {
   if (result.message?.includes("YYYY-MM-DD") || field.type === "date") return `Please enter the date in YYYY-MM-DD format.`;
   if (field.type === "checkbox") return "Please answer Yes or No.";
   if (field.type === "dropdown") {
+    if (result.message?.startsWith("I found more than one match") || result.message?.startsWith("I couldn't match")) return result.message;
     const options = field.options.map((option, index) => `${index + 1}. ${option}`).join("\n");
     return `Please choose one of the available options${options ? `:\n${options}` : "."}`;
   }
   if (field.type === "email") return "Please enter a valid email address.";
   if (field.type === "phone") return "Please enter a valid phone number.";
   return `Please enter ${label}.`;
+}
+
+export function normalizeStructuredDateInput(rawValue) {
+  const value = String(rawValue ?? "").trim();
+  const normalized = value.replace(/[./]/g, "-");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return { valid: false, value: null, message: "Please enter the date as YYYY-MM-DD, for example 2026-09-24." };
+  }
+  const parsed = new Date(`${normalized}T00:00:00Z`);
+  if (Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== normalized) {
+    return { valid: false, value: null, message: "That is not a valid calendar date. Please enter the date as YYYY-MM-DD, for example 2026-09-24." };
+  }
+  return { valid: true, value: normalized, message: null };
 }
 
 export function parseCustomerFormInput(field, rawValue) {
@@ -125,13 +141,12 @@ export function parseCustomerFormInput(field, rawValue) {
   }
 
   if (field.type === "dropdown") {
-    const option = field.options.find((candidate) => candidate.toLowerCase() === value.toLowerCase());
-    if (option) return { valid: true, value: option, message: null };
-    if (/^\d+$/.test(value)) {
-      const index = Number.parseInt(value, 10) - 1;
-      if (index >= 0 && index < field.options.length) return { valid: true, value: field.options[index], message: null };
+    const resolved = resolveAiReservationOption(value, field.options, { allowPartial: true });
+    if (resolved.status === "matched") return { valid: true, value: resolved.option, message: null };
+    if (resolved.status === "ambiguous") {
+      return invalid(`I found more than one match for "${value}". Which did you mean?\n\n${field.options.map((option, index) => `${index + 1}. ${option}`).join("\n")}`);
     }
-    return invalid(`${field.label} must be one of: ${field.options.join(", ")}.`);
+    return invalid(`I couldn't match "${value}". Please choose one of: ${field.options.join(", ")}\n\n${field.options.map((option, index) => `${index + 1}. ${option}`).join("\n")}`);
   }
 
   if (field.type === "number") {
@@ -142,8 +157,10 @@ export function parseCustomerFormInput(field, rawValue) {
       : invalid(`${field.label} must be a valid number.`);
   }
 
-  if (field.type === "date" && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return invalid(`${field.label} must use YYYY-MM-DD format.`);
+  if (field.type === "date") {
+    const date = normalizeStructuredDateInput(value);
+    if (!date.valid) return invalid(date.message);
+    return { valid: true, value: date.value, message: null };
   }
 
   return { valid: true, value, message: null };
@@ -162,9 +179,8 @@ export function validateCustomerFormValue(field, value) {
   if (field.type === "phone" && (String(value).trim().length < 3 || String(value).length > 50)) return invalid(`${field.label} must be a valid phone number.`);
   if (field.type === "number" && !/^-?[0-9]+([.][0-9]+)?$/.test(String(value))) return invalid(`${field.label} must be a valid number.`);
   if (field.type === "date") {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return invalid(`${field.label} must be a valid date.`);
-    const parsed = new Date(`${value}T00:00:00Z`);
-    if (Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== value) return invalid(`${field.label} must be a valid date.`);
+    const date = normalizeStructuredDateInput(value);
+    if (!date.valid) return invalid(`${field.label} must be a valid date in YYYY-MM-DD format.`);
   }
   const maxLength = field.type === "textarea" ? 2000 : 500;
   if (String(value).length > maxLength) return invalid(`${field.label} is too long.`);
