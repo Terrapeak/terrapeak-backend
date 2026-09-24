@@ -12,7 +12,7 @@ export function resolveChatReservationJourney({ configuration = {}, service = nu
   if (enrollmentMode === "cohort" || (templateKey === "learning_centre" && service?.bookingType === "cohort")) {
     return { journeyType: "cohort_enquiry", templateKey, capabilities };
   }
-  if (schedulingMode === "scheduled" || capabilities.scheduledSessions === true && service?.schedulingMode === "scheduled") {
+  if (schedulingMode === "scheduled" || capabilities.scheduledSessions === true) {
     return { journeyType: "scheduled_session", templateKey, capabilities };
   }
   if (APPOINTMENT_TEMPLATES.has(templateKey) || capabilities.services !== false) {

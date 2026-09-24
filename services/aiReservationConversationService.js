@@ -19,6 +19,27 @@ const naturalServiceWords = new Set([
   "dental", "dentist", "doctor", "haircut", "massage", "treatment", "session", "class", "service", "test",
 ]);
 
+const classInformationPattern = /\b(?:class(?:es)?|session(?:s)?|course(?:s)?|programme(?:s)?|program(?:s)?|register|enrol|enroll)\b/i;
+const packageInformationPattern = /\bpackage(?:s)?\b/i;
+const restaurantReservationPattern = /\b(?:table|restaurant|guest(?:s)?|party|people)\b/i;
+const reservationActionPattern = /\b(?:book|booking|reserve|reservation|register|enrol|enroll|join|available|offer|options?|have)\b/i;
+const restaurantActionPattern = /\b(?:book|booking|reserve|reservation|table|restaurant|guest(?:s)?|party)\b/i;
+
+export const isClassInformationIntent = (message = "") => {
+  const normalized = normalizeOptionText(message);
+  return classInformationPattern.test(normalized) && reservationActionPattern.test(normalized);
+};
+
+export const isPackageInformationIntent = (message = "") => {
+  const normalized = normalizeOptionText(message);
+  return packageInformationPattern.test(normalized) && reservationActionPattern.test(normalized);
+};
+
+export const isRestaurantReservationIntent = (message = "") => {
+  const normalized = normalizeOptionText(message);
+  return restaurantReservationPattern.test(normalized) && restaurantActionPattern.test(normalized);
+};
+
 const normalizeOptionText = (value) => String(value || "")
   .toLowerCase()
   .replace(/[’']/g, "")
@@ -57,6 +78,14 @@ export const isNaturalServiceBookingIntent = (message = "") => {
   if (words.length < 2 || words.length > 6) return false;
   return words.some((word) => naturalServiceWords.has(word));
 };
+
+export const isReservationDomainIntent = (message = "") => (
+  isGenericBookingIntent(message) ||
+  isNaturalServiceBookingIntent(message) ||
+  isClassInformationIntent(message) ||
+  isPackageInformationIntent(message) ||
+  isRestaurantReservationIntent(message)
+);
 
 export const isCancelMessage = (message = "") => {
   const normalized = normalizeOptionText(message);
@@ -101,6 +130,59 @@ const optionReply = (label, options) => `Please choose a ${label}:\n\n${options.
   const value = option.name || option.displayName || option.localTime || `Option ${index + 1}`;
   return `${index + 1}. ${label === "time" ? formatTimeForDisplay(value) : value}`;
 }).join("\n")}`;
+
+const capabilityLabel = (terminology, singularKey, fallback) =>
+  terminology?.[singularKey] || fallback;
+
+const buildPackageInformationReply = async ({ context, readAdapter }) => {
+  const capabilities = context.configuration?.capabilities || {};
+  const terminology = context.configuration?.terminology || {};
+  const packageLabel = capabilityLabel(terminology, "servicePlural", "services");
+  if (capabilities.packages !== true) return `Packages are not enabled for this ${packageLabel.toLowerCase()} catalogue.`;
+
+  const services = await readAdapter.listBookableServices(context);
+  const packageServices = services.filter((service) => service.packageSessionCount || service.packageValidityDays);
+  if (!packageServices.length) return "Packages are enabled, but no package options are currently configured or available.";
+  const lines = packageServices.map((service) => {
+    const details = [
+      service.packageSessionCount ? `${service.packageSessionCount} session(s)` : null,
+      service.packageValidityDays ? `valid for ${service.packageValidityDays} day(s)` : null,
+    ].filter(Boolean).join(", ");
+    return `${service.name}${details ? ` (${details})` : ""}`;
+  });
+  return `Available package options:\n\n${lines.map((line, index) => `${index + 1}. ${line}`).join("\n")}`;
+};
+
+const buildClassInformationReply = async ({ context, readAdapter }) => {
+  const capabilities = context.configuration?.capabilities || {};
+  const terminology = context.configuration?.terminology || {};
+  const classLabel = capabilityLabel(terminology, "servicePlural", "classes");
+  if (capabilities.scheduledSessions !== true) return `${classLabel} and scheduled sessions are not enabled for this business.`;
+
+  const services = await readAdapter.listBookableServices(context);
+  const sessions = [];
+  if (typeof readAdapter.listScheduledSessions === "function") {
+    for (const service of services) {
+      const serviceSessions = await readAdapter.listScheduledSessions(context, { serviceSlug: service.slug });
+      for (const session of serviceSessions || []) sessions.push({ ...session, serviceName: service.name });
+    }
+  }
+  if (!sessions.length) return `No bookable ${classLabel.toLowerCase()} or scheduled sessions are currently available.`;
+  const lines = sessions.map((session) => {
+    const date = session.startsAt ? new Date(session.startsAt).toISOString() : "date to be confirmed";
+    const teacher = session.staffName ? ` with ${session.staffName}` : "";
+    return `${session.serviceName || classLabel.slice(0, -1)} — ${date}${teacher}`;
+  });
+  return `Available ${classLabel.toLowerCase()}:\n\n${lines.map((line, index) => `${index + 1}. ${line}`).join("\n")}`;
+};
+
+const buildRestaurantCapabilityReply = ({ context }) => {
+  const capabilities = context.configuration?.capabilities || {};
+  const terminology = context.configuration?.terminology || {};
+  const guestLabel = capabilityLabel(terminology, "guestPlural", "guests");
+  if (capabilities.guestCount !== true) return "Restaurant-style guest-count reservations are not enabled for this business.";
+  return `Restaurant reservations are available for ${guestLabel.toLowerCase()}, but typed table booking in chat is not available yet. Please use the Reservations form or contact the team for help.`;
+};
 
 const clearServiceDependents = (flow) => {
   for (const key of ["providerId", "providerSlug", "providerName", "localDate", "startsAt", "timezone", "formFieldIndex", "currentCustomField", "customFieldIndex", "customerFormSnapshot", "customer", "customData", "confirmation", "bookingAttemptId", "idempotencyKey"]) delete flow[key];
@@ -195,11 +277,24 @@ export async function handleAiReservationConversation({
   now = () => new Date(),
 } = {}) {
   const current = session.reservationFlow;
-  const startRequested = isGenericBookingIntent(message) || isNaturalServiceBookingIntent(message) || isRestartMessage(message);
+  const startRequested = isReservationDomainIntent(message) || isRestartMessage(message);
   const startFlow = async () => {
     const naturalServiceStart = isNaturalServiceBookingIntent(message) && !isGenericBookingIntent(message);
     const journey = await measureAiReservationStage({ context, stage: "journey_resolution", operation: "resolve_reservation_journey" }, async () => resolveChatReservationJourney({ configuration: context.configuration }));
-    if (journey.journeyType !== "appointment" || !supportedTemplates.has(journey.templateKey)) return { handled: false };
+    if (isClassInformationIntent(message)) {
+      return { handled: true, reply: await buildClassInformationReply({ context, readAdapter }), reservation: buildReservationResponse({ reply: "", flowStatus: "idle", journeyType: journey.journeyType }).reservation };
+    }
+    if (isPackageInformationIntent(message)) {
+      return { handled: true, reply: await buildPackageInformationReply({ context, readAdapter }), reservation: buildReservationResponse({ reply: "", flowStatus: "idle", journeyType: journey.journeyType }).reservation };
+    }
+    if (journey.journeyType === "restaurant" || isRestaurantReservationIntent(message)) {
+      const restaurantEnabled = context.configuration?.capabilities?.guestCount === true;
+      return { handled: true, reply: buildRestaurantCapabilityReply({ context }), reservation: buildReservationResponse({ reply: "", flowStatus: "idle", journeyType: restaurantEnabled ? "restaurant" : null }).reservation };
+    }
+    if (journey.journeyType !== "appointment" || !supportedTemplates.has(journey.templateKey)) {
+      const templateLabel = context.configuration?.terminology?.servicePlural || "reservations";
+      return { handled: true, reply: `${templateLabel} are supported, but this typed Reservations journey is not available yet. Please use the Reservations form or contact the team for help.`, reservation: buildReservationResponse({ reply: "", flowStatus: "idle", journeyType: journey.journeyType }).reservation };
+    }
     const flow = initializeReservationFlow({ context, session, journeyType: "appointment" });
     const services = await measureAiReservationStage({ context, flow, stage: "services_read", operation: "list_bookable_services" }, () => readAdapter.listBookableServices(context));
     if (!services.length) {

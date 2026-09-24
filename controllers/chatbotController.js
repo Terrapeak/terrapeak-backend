@@ -40,7 +40,7 @@ import { buildReservationResponse } from "../services/aiReservationFlowService.j
 import { getReusableReservationConversationContext, resolveChatReservationContext } from "../services/chatReservationContextService.js";
 import { reservationsReadAdapter } from "../services/reservationReadAdapter.js";
 import { reservationWriteAdapter } from "../services/reservationWriteAdapter.js";
-import { handleAiReservationConversation, isGenericBookingIntent, isNaturalServiceBookingIntent } from "../services/aiReservationConversationService.js";
+import { handleAiReservationConversation, isGenericBookingIntent, isNaturalServiceBookingIntent, isReservationDomainIntent } from "../services/aiReservationConversationService.js";
 
 const normalizeReservationCapabilityQuestion = (message = "") => String(message)
   .toLowerCase()
@@ -585,6 +585,12 @@ if (!session.rescheduleReservationData) {
     message: lowerMsg,
     session,
   });
+  const shouldHandleRestaurantReservationRequest = Boolean(
+    reservationEnabled &&
+    isReservationDomainIntent(lowerMsg) &&
+    /\b(?:table|restaurant|guest(?:s)?|party|people)\b/i.test(lowerMsg) &&
+    !/\b(?:callback|meeting|call)\b/i.test(lowerMsg),
+  );
   logAiReservationEvent("reservation_performance_stage", {
     stage: "typed_r2b_routing",
     operation: "should_handle_typed_appointment",
@@ -596,7 +602,7 @@ if (!session.rescheduleReservationData) {
     success: true,
   });
   measuredStageMs += Math.round(performance.now() - routingStartedAt);
-  if (!botReply && shouldHandleTypedAppointmentRequest) {
+  if (!botReply && (shouldHandleTypedAppointmentRequest || shouldHandleRestaurantReservationRequest)) {
     try {
       const typedFlowStatus = session.reservationFlow?.status;
       const startsFreshTypedFlow = !typedFlowStatus || ["idle", "completed", "cancelled", "failed", "unknown"].includes(typedFlowStatus);
@@ -2997,7 +3003,7 @@ export function shouldHandleTypedAppointment({ reservationEnabled, message, sess
   const lowerMsg = String(message || "").toLowerCase().trim();
   const flowStatus = session?.reservationFlow?.status;
   if (session?.reservationCallbackStep) return false;
-  if (!flowStatus && /^(?:what|how|why|do you|does your|tell me|explain)\b/i.test(lowerMsg)) return false;
+  if (!flowStatus && !isReservationDomainIntent(lowerMsg) && /^(?:what|how|why|do you|does your|tell me|explain)\b/i.test(lowerMsg)) return false;
   const activeTypedFlow = flowStatus && !["idle", "completed", "cancelled", "failed", "unknown"].includes(flowStatus);
   const terminalRestart = ["completed", "cancelled", "failed"].includes(flowStatus) && (isGenericBookingIntent(lowerMsg) || isNaturalServiceBookingIntent(lowerMsg));
   if (reservationEnabled && (activeTypedFlow || terminalRestart) && !/\b(?:cancel\s+(?:my|the)|lookup|reschedul|change\s+(?:my|the)|move\s+(?:my|the))\b/i.test(lowerMsg)) return true;
@@ -3005,7 +3011,7 @@ export function shouldHandleTypedAppointment({ reservationEnabled, message, sess
     reservationEnabled &&
       !/\b(cancel|reschedul|change|move|lookup|callback|table|restaurant)\b/i.test(lowerMsg) &&
       (
-        isGenericBookingIntent(lowerMsg) ||
+        isReservationDomainIntent(lowerMsg) ||
         isNaturalServiceBookingIntent(lowerMsg) ||
         /\bappointment\b/i.test(lowerMsg) ||
         /\b(schedule|book)\s+(an?\s+)?appointment\b/i.test(lowerMsg) ||

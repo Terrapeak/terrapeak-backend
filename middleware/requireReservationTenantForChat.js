@@ -5,10 +5,10 @@ import {
   ChatReservationContextError,
   resolveChatReservationContext,
 } from "../services/chatReservationContextService.js";
-import { isGenericBookingIntent, isNaturalServiceBookingIntent } from "../services/aiReservationConversationService.js";
+import { isReservationDomainIntent } from "../services/aiReservationConversationService.js";
 import { logAiReservationEvent, measureAiReservationStage, setAiReservationTrace } from "../utils/aiReservationLogger.js";
 
-const reservationIntent = (message = "") => isGenericBookingIntent(message) || isNaturalServiceBookingIntent(message);
+const reservationIntent = (message = "") => isReservationDomainIntent(message);
 
 const reservationSessionActive = (session) =>
   Boolean(
