@@ -545,10 +545,18 @@ export async function handleAiReservationConversation({
   }
 
   if (flow.journeyType === "restaurant" && flow.status === "slot_selection") {
-    const requestedTime = parseRestaurantTime(message);
-    const resolved = requestedTime
-      ? { status: "matched", option: (flow.selectionOptions || []).find((slot) => restaurantTimeMatches(slot, requestedTime)) }
-      : resolveOption(message, flow.selectionOptions || [], "localTime");
+    const options = flow.selectionOptions || [];
+    const input = String(message ?? "").trim();
+    const isBareInteger = /^\d+$/.test(input);
+    const isSignedInteger = /^-?\d+$/.test(input);
+    const requestedTime = isSignedInteger ? null : parseRestaurantTime(message);
+    const resolved = isBareInteger
+      ? resolveOption(message, options, "localTime")
+      : isSignedInteger
+        ? { status: "none", option: null, matches: [] }
+        : requestedTime
+          ? { status: "matched", option: options.find((slot) => restaurantTimeMatches(slot, requestedTime)) }
+          : resolveOption(message, options, "localTime");
     const slot = resolved.status === "matched" ? resolved.option : null;
     if (!slot) return { handled: true, reply: optionSelectionReply("time", flow.selectionOptions || [], message, resolved), reservation: reservationPayload(session, flow, "") };
     flow.localTime = slot.localTime;

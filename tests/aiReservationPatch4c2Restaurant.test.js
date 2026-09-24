@@ -111,6 +111,40 @@ test("restaurant customer form summary is explicit and does not use appointment 
   assert.doesNotMatch(result.reply, /Service:|Provider:/);
 });
 
+test("restaurant numbered slot choices select the authoritative canonical slot", async () => {
+  const slots = [
+    { localTime: "11:00:00", startsAt: "2026-09-25T03:00:00.000Z", timezone: "Asia/Singapore", remainingCapacity: 10 },
+    { localTime: "11:30:00", startsAt: "2026-09-25T03:30:00.000Z", timezone: "Asia/Singapore", remainingCapacity: 10 },
+    { localTime: "12:00:00", startsAt: "2026-09-25T04:00:00.000Z", timezone: "Asia/Singapore", remainingCapacity: 10 },
+  ];
+  for (const [input, expected] of [["1", slots[0]], ["2", slots[1]], ["3", slots[2]]]) {
+    const session = { reservationFlow: { journeyType: "restaurant", status: "slot_selection", quantity: 2, timezone: "Asia/Singapore", selectionOptions: slots } };
+    await handleAiReservationConversation({ context, session, message: input, readAdapter: makeReadAdapter({ slots }) });
+    assert.equal(session.reservationFlow.localTime, expected.localTime);
+    assert.equal(session.reservationFlow.startsAt, expected.startsAt);
+  }
+});
+
+test("restaurant slot selection preserves explicit times and rejects invalid indexes", async () => {
+  const slots = [
+    { localTime: "11:00:00", startsAt: "2026-09-25T03:00:00.000Z", timezone: "Asia/Singapore", remainingCapacity: 10 },
+    { localTime: "11:30:00", startsAt: "2026-09-25T03:30:00.000Z", timezone: "Asia/Singapore", remainingCapacity: 10 },
+    { localTime: "12:00:00", startsAt: "2026-09-25T04:00:00.000Z", timezone: "Asia/Singapore", remainingCapacity: 10 },
+  ];
+  for (const input of ["11:00", "11:00:00", "11am"]) {
+    const session = { reservationFlow: { journeyType: "restaurant", status: "slot_selection", quantity: 2, timezone: "Asia/Singapore", selectionOptions: slots } };
+    await handleAiReservationConversation({ context, session, message: input, readAdapter: makeReadAdapter({ slots }) });
+    assert.equal(session.reservationFlow.localTime, "11:00:00");
+  }
+  for (const input of ["0", "4", "-1"]) {
+    const session = { reservationFlow: { journeyType: "restaurant", status: "slot_selection", quantity: 2, timezone: "Asia/Singapore", selectionOptions: slots } };
+    const result = await handleAiReservationConversation({ context, session, message: input, readAdapter: makeReadAdapter({ slots }) });
+    assert.equal(session.reservationFlow.status, "slot_selection");
+    assert.equal(session.reservationFlow.localTime, undefined);
+    assert.match(result.reply, /couldn't match|choose one/i);
+  }
+});
+
 test("restaurant read adapter filters slots by requested capacity and derives canonical start", async () => {
   const adapter = createReservationReadAdapter({
     async getRestaurantSlots() { return { data: [{ reservation_time: "19:00:00", remaining_capacity: 2, timezone: "Asia/Singapore" }, { reservation_time: "20:00:00", remaining_capacity: 6, timezone: "Asia/Singapore" }], error: null }; },
