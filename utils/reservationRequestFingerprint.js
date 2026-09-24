@@ -2,6 +2,13 @@ import { createHash } from "node:crypto";
 
 const normalizeText = (value) => String(value ?? "").trim();
 
+const normalizeRestaurantLocalTime = (value) => {
+  const normalized = normalizeText(value);
+  const match = /^(2[0-3]|[01]\d):([0-5]\d)(?::([0-5]\d))?$/.exec(normalized);
+  if (!match) return normalized;
+  return `${match[1]}:${match[2]}:${match[3] || "00"}`;
+};
+
 const normalizeCustomData = (value) => {
   if (Array.isArray(value)) return value.map(normalizeCustomData);
   if (value && typeof value === "object") {
@@ -64,7 +71,7 @@ export const buildCanonicalRestaurantBookingPayload = ({
   businessId: normalizeText(reservationBusinessId),
   business: normalizeText(reservationBusinessSlug).toLowerCase(),
   localDate: normalizeText(localDate),
-  localTime: normalizeText(localTime),
+  localTime: normalizeRestaurantLocalTime(localTime),
   quantity: Number(quantity),
   customerName: normalizeText(customerName),
   customerEmail: normalizeText(customerEmail).toLowerCase() || null,

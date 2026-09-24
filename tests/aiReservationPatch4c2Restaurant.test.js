@@ -164,19 +164,37 @@ test("restaurant write adapter delegates to the canonical RPC", async () => {
   assert.equal(calls[0].args.p_quantity, 2);
 });
 
+test("restaurant fingerprint normalizes equivalent local-time representations", () => {
+  const request = { journeyType: "restaurant", reservationBusinessId: 42, reservationBusinessSlug: "restaurant-test", localDate: "2026-09-25", quantity: 4, customerName: "test tim", customerEmail: "test-email@test.nl", customerPhone: "+63123456789", notes: null, customData: {} };
+  const short = fingerprintRestaurantBookingRequest({ ...request, localTime: "11:00" });
+  const canonical = fingerprintRestaurantBookingRequest({ ...request, localTime: "11:00:00" });
+  const halfHour = fingerprintRestaurantBookingRequest({ ...request, localTime: "11:30" });
+  const evening = fingerprintRestaurantBookingRequest({ ...request, localTime: "21:00" });
+  const invalid = fingerprintRestaurantBookingRequest({ ...request, localTime: "11:99" });
+  const otherInvalid = fingerprintRestaurantBookingRequest({ ...request, localTime: "11:99:00" });
+  assert.equal(short.fingerprint, canonical.fingerprint);
+  assert.notEqual(short.fingerprint, halfHour.fingerprint);
+  assert.notEqual(short.fingerprint, evening.fingerprint);
+  assert.notEqual(invalid.fingerprint, otherInvalid.fingerprint);
+  assert.equal(invalid.payload.localTime, "11:99");
+  assert.equal(canonical.payload.localTime, "11:00:00");
+});
+
 test("restaurant booking service revalidates and writes once after confirmation", async () => {
-  const flow = { status: "awaiting_confirmation", journeyType: "restaurant", companyId: context.companyId, chatbotId: context.chatbotId, businessId: "42", bookingAttemptId: "attempt-1", idempotencyKey: "company-restaurant:attempt-1", localDate: "2026-09-25", localTime: "19:00:00", startsAt: "2026-09-25T11:00:00.000Z", timezone: "Asia/Singapore", quantity: 2, customer: { name: "Aisha", email: "aisha@example.com", phone: "+31612345678" }, customData: {}, customerFormSnapshot: form, confirmation: { summary: { journeyType: "restaurant" } } };
-  const fingerprint = fingerprintRestaurantBookingRequest({ ...flow, reservationBusinessId: 42, reservationBusinessSlug: "restaurant-test", customerName: "Aisha", customerEmail: "aisha@example.com", customerPhone: "+31612345678", customData: {} }).fingerprint;
+  const flow = { status: "awaiting_confirmation", journeyType: "restaurant", companyId: context.companyId, chatbotId: context.chatbotId, businessId: "42", bookingAttemptId: "attempt-1", idempotencyKey: "company-restaurant:attempt-1", localDate: "2026-09-25", localTime: "11:00:00", startsAt: "2026-09-25T03:00:00.000Z", timezone: "Asia/Singapore", quantity: 4, customer: { name: "test tim", email: "test-email@test.nl", phone: "+63123456789" }, customData: {}, customerFormSnapshot: form, confirmation: { summary: { journeyType: "restaurant", localTime: "11:00" } } };
+  const fingerprint = fingerprintRestaurantBookingRequest({ ...flow, localTime: "11:00", reservationBusinessId: 42, reservationBusinessSlug: "restaurant-test", customerName: "test tim", customerEmail: "test-email@test.nl", customerPhone: "+63123456789", customData: {} }).fingerprint;
   const model = makeAttemptModel({ companyId: context.companyId, chatbotId: context.chatbotId, sessionId: context.sessionId, bookingAttemptId: "attempt-1", idempotencyKey: flow.idempotencyKey, requestFingerprint: fingerprint, status: "draft" });
   let writes = 0;
-  const result = await executeAiReservationBooking({ context, session: { reservationFlow: flow }, model, contextResolver: async () => context, readAdapter: makeReadAdapter(), writeAdapter: { async createRestaurantBooking() { writes += 1; return { bookingId: "booking-1", reference: "BK-1" }; }, async findByIdempotencyKey() { return null; } } });
+  const result = await executeAiReservationBooking({ context, session: { reservationFlow: flow }, model, contextResolver: async () => context, readAdapter: makeReadAdapter({ slots: [{ localTime: "11:00:00", startsAt: "2026-09-25T03:00:00.000Z", timezone: "Asia/Singapore", remainingCapacity: 10 }] }), writeAdapter: { async createRestaurantBooking() { writes += 1; return { bookingId: "booking-1", reference: "BK-1" }; }, async findByIdempotencyKey() { return null; } } });
   assert.equal(result.bookingCreated, true);
   assert.equal(writes, 1);
+  assert.deepEqual(model.history, ["draft", "confirmed", "processing", "completed"]);
   assert.equal(model.rows[0].status, "completed");
 });
 
 function makeAttemptModel(initial = null) {
   const rows = initial ? [initial] : [];
+  const history = initial?.status ? [initial.status] : [];
   const matches = (row, query) => Object.entries(query).every(([key, value]) => {
     if (key === "$or") return value.some((candidate) => Object.entries(candidate).every(([nested, expected]) => nested.split(".").reduce((item, part) => item?.[part], row) === expected));
     if (key === "status" && value?.$in) return value.$in.includes(row.status);
@@ -185,8 +203,9 @@ function makeAttemptModel(initial = null) {
   });
   return {
     rows,
+    history,
     async findOne(query) { return rows.find((row) => matches(row, query)) || null; },
     async create(row) { rows.push({ ...row }); return rows.at(-1); },
-    async findOneAndUpdate(query, update) { const row = rows.find((item) => matches(item, query)); if (!row) return null; Object.assign(row, update.$set || {}); return row; },
+    async findOneAndUpdate(query, update) { const row = rows.find((item) => matches(item, query)); if (!row) return null; Object.assign(row, update.$set || {}); if (update.$set?.status) history.push(update.$set.status); return row; },
   };
 }
