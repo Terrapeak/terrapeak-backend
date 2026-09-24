@@ -147,10 +147,11 @@ const optionReply = (label, options) => `Please choose a ${label}:\n\n${options.
   return `${index + 1}. ${label === "time" ? formatTimeForDisplay(value) : value}`;
 }).join("\n")}`;
 
+const scheduledServiceBookingTypes = new Set(["class", "course"]);
+
 const isEligibleScheduledService = (service) => (
   service?.schedulingMode === "scheduled"
-  && service?.enrollmentMode !== "cohort"
-  && service?.bookingType !== "cohort"
+  && scheduledServiceBookingTypes.has(String(service?.bookingType || "").toLowerCase())
 );
 
 const hasValidTimezone = (timezone) => {

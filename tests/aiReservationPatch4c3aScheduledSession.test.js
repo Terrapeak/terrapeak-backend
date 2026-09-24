@@ -20,8 +20,9 @@ const context = {
 };
 
 const services = [
-  { id: "class-1", slug: "maths-foundations", name: "Maths Foundations", schedulingMode: "scheduled", enrollmentMode: "individual", bookingType: "appointment" },
-  { id: "cohort-1", slug: "cohort-course", name: "Cohort Course", schedulingMode: "scheduled", enrollmentMode: "cohort", bookingType: "cohort" },
+  { id: "class-1", slug: "maths-foundations", name: "Maths Foundations", schedulingMode: "scheduled", enrollmentMode: "individual", bookingType: "class" },
+  { id: "cohort-class-1", slug: "cohort-class", name: "Cohort Class", schedulingMode: "scheduled", enrollmentMode: "cohort", bookingType: "class" },
+  { id: "cohort-only-1", slug: "cohort-course", name: "Cohort Course", schedulingMode: "scheduled", enrollmentMode: "cohort", bookingType: "cohort" },
   { id: "appointment-1", slug: "private-tutoring", name: "Private Tutoring", schedulingMode: "appointment", enrollmentMode: "individual", bookingType: "appointment" },
 ];
 
@@ -29,6 +30,7 @@ const sessions = [
   { id: "session-early", serviceId: "class-1", startsAt: "2026-10-02T09:00:00+08:00", endsAt: "2026-10-02T10:00:00+08:00", timezone: "Asia/Singapore", staffName: "Teacher Early", remainingCapacity: 5 },
   { id: "session-late", serviceId: "class-1", startsAt: "2026-10-09T09:00:00+08:00", endsAt: "2026-10-09T10:00:00+08:00", timezone: "Asia/Singapore", staffName: "Teacher Late", remainingCapacity: 4 },
   { id: "session-same-day", serviceId: "class-1", startsAt: "2026-10-02T11:00:00+08:00", endsAt: "2026-10-02T12:00:00+08:00", timezone: "Asia/Singapore", staffName: "Teacher Same Day", remainingCapacity: 3 },
+  { id: "session-cohort-class", serviceId: "cohort-class-1", startsAt: "2026-10-03T09:00:00+08:00", endsAt: "2026-10-03T10:00:00+08:00", timezone: "Asia/Manila", staffName: "Teacher Cohort Class", remainingCapacity: 5 },
 ];
 
 const form = [
@@ -41,9 +43,13 @@ const form = [
   { id: "first-visit", label: "First visit?", type: "dropdown", options: ["Yes", "No"], required: false, systemKey: "first_visit" },
 ];
 
-const makeReadAdapter = (calls = []) => ({
-  listBookableServices: async () => { calls.push("services"); return services; },
-  listScheduledSessions: async (_context, args) => { calls.push(["sessions", args]); return sessions.filter((item) => item.serviceId === "class-1"); },
+const makeReadAdapter = (calls = [], serviceRows = services, sessionRows = sessions) => ({
+  listBookableServices: async () => { calls.push("services"); return serviceRows; },
+  listScheduledSessions: async (_context, args) => {
+    calls.push(["sessions", args]);
+    const serviceId = args?.serviceSlug === "cohort-class" ? "cohort-class-1" : "class-1";
+    return sessionRows.filter((item) => item.serviceId === serviceId);
+  },
   getCustomerForm: async () => { calls.push("customer-form"); return form; },
 });
 
@@ -58,14 +64,58 @@ test("Learning Centre booking intent is transactional while class availability r
   assert.equal(isReservationDomainIntent("I want to register for a class"), true);
 });
 
-test("scheduled start filters out cohort and appointment services", async () => {
+test("scheduled start accepts cohort-enrollment classes but excludes cohort-only and appointment services", async () => {
   const calls = [];
   const session = makeSession();
   const result = await handleAiReservationConversation({ context, session, message: "I want to book a class", readAdapter: makeReadAdapter(calls) });
   assert.match(result.reply, /Maths Foundations/);
+  assert.match(result.reply, /Cohort Class/);
   assert.doesNotMatch(result.reply, /Cohort Course|Private Tutoring/);
   assert.equal(session.reservationFlow.journeyType, "scheduled_session");
   assert.equal(session.reservationFlow.quantity, 1);
+});
+
+test("scheduled-session eligibility follows class/course type, not enrollment mode", async () => {
+  const session = makeSession();
+  const result = await handleAiReservationConversation({ context, session, message: "I want to book a class", readAdapter: makeReadAdapter() });
+  assert.match(result.reply, /Cohort Class/);
+  assert.doesNotMatch(result.reply, /Cohort Course/);
+});
+
+test("cohort-enrollment class offers its authoritative scheduled session", async () => {
+  const session = makeSession();
+  const adapter = makeReadAdapter();
+  await handleAiReservationConversation({ context, session, message: "I want to book a class", readAdapter: adapter });
+  const result = await handleAiReservationConversation({ context, session, message: "Cohort Class", readAdapter: adapter });
+  assert.match(result.reply, /Teacher Cohort Class/);
+  assert.equal(session.reservationFlow.status, "slot_selection");
+  assert.equal(session.reservationFlow.selectionOptions[0].id, "session-cohort-class");
+});
+
+test("non-scheduled class is not offered as a scheduled-session journey", async () => {
+  const calls = [];
+  const session = makeSession();
+  const generatedClass = { id: "generated-class", slug: "generated-class", name: "Generated Class", schedulingMode: "generated", enrollmentMode: "cohort", bookingType: "class" };
+  const writeAdapter = new Proxy({}, { get: () => { throw new Error("non-scheduled class must not reach a write"); } });
+  const result = await handleAiReservationConversation({ context, session, message: "I want to book a class", readAdapter: makeReadAdapter(calls, [generatedClass], []), writeAdapter });
+  assert.match(result.reply, /No bookable classes or scheduled sessions are currently available/i);
+  assert.equal(session.reservationFlow, undefined);
+  assert.equal(calls.includes("sessions"), false);
+});
+
+test("eligible class with no authoritative sessions returns no availability without starting a form", async () => {
+  const calls = [];
+  const session = makeSession();
+  const cohortClass = services.find((service) => service.id === "cohort-class-1");
+  const writeAdapter = new Proxy({}, { get: () => { throw new Error("empty scheduled sessions must not reach a write"); } });
+  const adapter = makeReadAdapter(calls, [cohortClass], []);
+  await handleAiReservationConversation({ context, session, message: "I want to book a class", readAdapter: adapter, writeAdapter });
+  const result = await handleAiReservationConversation({ context, session, message: "Cohort Class", readAdapter: adapter, writeAdapter });
+  assert.match(result.reply, /No upcoming sessions are currently available for that class/i);
+  assert.equal(session.reservationFlow.status, "service_selection");
+  assert.equal(session.reservationFlow.selectionOptions.length, 0);
+  assert.doesNotMatch(result.reply, /full name|student name|registration summary/i);
+  assert.equal(calls.filter((call) => Array.isArray(call) && call[0] === "sessions").length, 1);
 });
 
 test("scheduled service selection reads authoritative sessions and preserves session identity", async () => {
