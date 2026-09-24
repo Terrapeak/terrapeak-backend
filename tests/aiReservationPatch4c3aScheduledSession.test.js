@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { handleAiReservationConversation, isClassInformationIntent, isReservationDomainIntent } from "../services/aiReservationConversationService.js";
 import { formatReservationConfirmationSummary } from "../services/aiReservationFlowService.js";
+import { createReservationReadAdapter } from "../services/reservationReadAdapter.js";
 import { fingerprintScheduledSessionBookingRequest } from "../utils/reservationRequestFingerprint.js";
+
+process.env.SUPABASE_URL ||= "https://example.supabase.co";
+process.env.SUPABASE_SERVICE_ROLE_KEY ||= "test-service-role-key";
 
 const context = {
   companyId: "company-learning-centre",
@@ -127,6 +131,84 @@ test("scheduled service selection reads authoritative sessions and preserves ses
   assert.match(result.reply, /2\./);
   assert.equal(session.reservationFlow.status, "slot_selection");
   assert.deepEqual(session.reservationFlow.selectionOptions.map((item) => item.id), ["session-early", "session-same-day", "session-late"]);
+});
+
+test("two-turn scheduled selection uses the real adapter date window after session round-trip", async () => {
+  const originalFetch = globalThis.fetch;
+  const rpcCalls = [];
+  let writeCalls = 0;
+  const productionContext = { ...context, reservationBusinessId: 10, reservationBusinessSlug: "terrapeak" };
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (url.includes("/rest/v1/services?")) {
+      return new Response(JSON.stringify([{
+        id: 56,
+        business_id: 10,
+        slug: "test-math-class",
+        name: "test Math Class",
+        booking_type: "class",
+        scheduling_mode: "scheduled",
+        enrollment_mode: "cohort",
+        is_active: true,
+        is_published: true,
+        is_internal: false,
+      }]), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.includes("/rest/v1/rpc/get_public_scheduled_sessions")) {
+      rpcCalls.push(JSON.parse(init.body));
+      return new Response(JSON.stringify([{
+        session_id: 300,
+        service_id: 56,
+        starts_at: "2026-09-30T05:00:00Z",
+        ends_at: "2026-09-30T06:00:00Z",
+        staff_slug: "test-math-jane-lin",
+        staff_name: "Test math Jane Lin",
+        staff_timezone: "Asia/Manila",
+        capacity: 5,
+        remaining_capacity: 5,
+        notes: null,
+      }]), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`Unexpected transport request: ${url}`);
+  };
+
+  try {
+    const readAdapter = createReservationReadAdapter(undefined, { now: () => new Date("2026-09-24T12:00:00Z") });
+    const writeAdapter = new Proxy({}, { get: () => { writeCalls += 1; throw new Error("scheduled-session write must not be called"); } });
+    const firstSession = makeSession();
+    const first = await handleAiReservationConversation({
+      context: productionContext,
+      session: firstSession,
+      message: "I want to book a class",
+      readAdapter,
+      writeAdapter,
+    });
+    assert.match(first.reply, /test Math Class/);
+    assert.equal(firstSession.reservationFlow.journeyType, "scheduled_session");
+    assert.equal(firstSession.reservationFlow.selectionOptions[0].slug, "test-math-class");
+
+    const restoredSession = JSON.parse(JSON.stringify(firstSession));
+    const second = await handleAiReservationConversation({
+      context: productionContext,
+      session: restoredSession,
+      message: "1",
+      readAdapter,
+      writeAdapter,
+    });
+    assert.equal(restoredSession.reservationFlow.serviceSlug, "test-math-class");
+    assert.equal(restoredSession.reservationFlow.status, "slot_selection");
+    assert.equal(restoredSession.reservationFlow.selectionOptions[0].id, 300);
+    assert.match(second.reply, /30 September 2026/);
+    assert.deepEqual(rpcCalls, [{
+      p_business_slug: "terrapeak",
+      p_service_slug: "test-math-class",
+      p_from_date: "2026-09-24",
+      p_to_date: "2026-11-23",
+    }]);
+    assert.equal(writeCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("next class selects the first chronological authoritative session", async () => {

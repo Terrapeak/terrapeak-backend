@@ -13,6 +13,43 @@ const serviceFields = [
 ].join(",");
 
 const providerFields = "id,display_name,slug,bio,photo_url,timezone,is_active,is_published";
+export const SCHEDULED_SESSION_HORIZON_DAYS = 60;
+
+const isValidCalendarDate = (value) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) return false;
+  const [year, month, day] = String(value).split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day;
+};
+
+const formatUtcDate = (date) => date.toISOString().slice(0, 10);
+
+export const buildScheduledSessionDateWindow = ({
+  fromDate,
+  toDate,
+  now = new Date(),
+  horizonDays = SCHEDULED_SESSION_HORIZON_DAYS,
+} = {}) => {
+  const defaultFromDate = formatUtcDate(now);
+  const normalizedFromDate = fromDate ?? defaultFromDate;
+  if (!isValidCalendarDate(normalizedFromDate)) {
+    throw new Error("Scheduled session start date must be a valid YYYY-MM-DD date.");
+  }
+
+  const defaultToDate = formatUtcDate(new Date(Date.UTC(
+    Number(normalizedFromDate.slice(0, 4)),
+    Number(normalizedFromDate.slice(5, 7)) - 1,
+    Number(normalizedFromDate.slice(8, 10)) + horizonDays,
+  )));
+  const normalizedToDate = toDate ?? defaultToDate;
+  if (!isValidCalendarDate(normalizedToDate) || normalizedToDate < normalizedFromDate) {
+    throw new Error("Scheduled session end date must be a valid date on or after the start date.");
+  }
+
+  return { fromDate: normalizedFromDate, toDate: normalizedToDate };
+};
 
 const getClient = () => {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -23,7 +60,11 @@ const getClient = () => {
 
 const resultOrThrow = async (operation, promise) => {
   const { data, error } = await promise;
-  if (error) throw new Error(`Reservations ${operation} could not be loaded.`);
+  if (error) {
+    const wrapped = new Error(`Reservations ${operation} could not be loaded.`);
+    if (error.code) wrapped.code = String(error.code).slice(0, 80);
+    throw wrapped;
+  }
   return data || [];
 };
 
@@ -109,7 +150,7 @@ export const reservationReadStore = {
   },
 };
 
-export function createReservationReadAdapter(store = reservationReadStore) {
+export function createReservationReadAdapter(store = reservationReadStore, { now = () => new Date() } = {}) {
   return {
     async getConfiguration(context) {
       const rows = await measureAiReservationStage({ context, stage: "configuration_read", operation: "supabase_configuration" }, () => resultOrThrow("configuration", store.getConfiguration(context.reservationBusinessSlug)));
@@ -149,11 +190,12 @@ export function createReservationReadAdapter(store = reservationReadStore) {
     },
 
     async listScheduledSessions(context, { serviceSlug, fromDate, toDate } = {}) {
+      const dateWindow = buildScheduledSessionDateWindow({ fromDate, toDate, now: now() });
       const rows = await resultOrThrow("scheduled sessions", store.getScheduledSessions({
         p_business_slug: context.reservationBusinessSlug,
         p_service_slug: serviceSlug,
-        p_from_date: fromDate,
-        p_to_date: toDate,
+        p_from_date: dateWindow.fromDate,
+        p_to_date: dateWindow.toDate,
       }));
       return rows.map((row) => ({
         id: row.session_id || row.id,
