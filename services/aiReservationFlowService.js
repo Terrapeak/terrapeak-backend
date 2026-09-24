@@ -3,7 +3,7 @@ import { getOrCreateReservationBookingAttempt } from "./reservationBookingAttemp
 import { logAiReservationEvent } from "../utils/aiReservationLogger.js";
 import { randomUUID } from "node:crypto";
 import { executeAiReservationBooking } from "./aiReservationBookingService.js";
-import { fingerprintReservationBookingRequest, fingerprintRestaurantBookingRequest } from "../utils/reservationRequestFingerprint.js";
+import { fingerprintReservationBookingRequest, fingerprintRestaurantBookingRequest, fingerprintScheduledSessionBookingRequest } from "../utils/reservationRequestFingerprint.js";
 import { getCustomerCoreFieldKey, serializeCustomerFormAnswers } from "../utils/aiReservationCustomerForm.js";
 
 export const RESERVATION_FLOW_STATES = Object.freeze([
@@ -26,8 +26,13 @@ export const resetReservationFlowSelections = (flow = {}, status = "cancelled") 
   providerId: null,
   providerSlug: null,
   providerName: null,
+  scheduledSessionId: null,
+  scheduledSessionEndsAt: null,
+  scheduledSessionRemainingCapacity: null,
   localDate: null,
+  localTime: null,
   startsAt: null,
+  endsAt: null,
   timezone: null,
   selectionOptions: [],
   customer: {},
@@ -58,7 +63,7 @@ export function initializeReservationFlow({ context, journeyType = "appointment"
     customerFormSnapshot: [],
     displaySnapshot: {},
     confirmation: {},
-    bookingAttemptId: randomUUID(),
+    bookingAttemptId: journeyType === "scheduled_session" ? null : randomUUID(),
     idempotencyKey: null,
     contextSnapshot: buildReservationConversationContextSnapshot(context),
   };
@@ -90,14 +95,24 @@ export const buildReservationConfirmationSummary = ({ context, flow, service, pr
     },
     customFields: (Array.isArray(form) ? form : [])
       .filter((field) => !getCustomerCoreFieldKey(field))
-      .map((field) => ({ label: field.label, value: flow.customData?.[field.id] }))
+      .map((field) => ({ label: field.label, fieldKey: field.systemKey || field.system_key || null, value: flow.customData?.[field.id] }))
       .filter((field) => field.value !== undefined && field.value !== null && field.value !== ""),
     bookingBehavior: context.configuration.bookingBehavior,
     terminology: context.configuration.terminology,
     formFieldCount: Array.isArray(form) ? form.length : 0,
     journeyType: flow?.journeyType || "appointment",
   };
-  if (flow?.journeyType === "restaurant") return common;
+  if (flow?.journeyType === "restaurant" || flow?.journeyType === "scheduled_session") {
+    return {
+      ...common,
+      serviceId: service?.id || flow.serviceId || null,
+      serviceName: service?.name || flow.serviceName || null,
+      scheduledSessionId: flow.scheduledSessionId || null,
+      teacherName: flow.providerName || null,
+      sessionEndsAt: slot?.endsAt || flow.endsAt || null,
+      sessionNotes: flow.sessionNotes || null,
+    };
+  }
   return {
     ...common,
     serviceId: service?.id || flow.serviceId || null,
@@ -113,6 +128,25 @@ export const buildReservationConfirmationSummary = ({ context, flow, service, pr
 const summaryValue = (value, fallback = "Not provided") => value === undefined || value === null || value === "" ? fallback : String(value);
 
 export function formatReservationConfirmationSummary(summary = {}) {
+  if (summary.journeyType === "scheduled_session") {
+    const blocks = [
+      "Learning Centre registration summary",
+      `Class: ${summaryValue(summary.serviceName)}`,
+      `Date: ${summaryValue(summary.localDate)}`,
+      `Time: ${summaryValue(summary.localTime)}${summary.timezone ? ` (${summary.timezone})` : ""}`,
+      `Teacher: ${summaryValue(summary.teacherName)}`,
+      `Student: ${summaryValue(summary.customFields?.find((field) => field.fieldKey === "student_name")?.value)}`,
+      `Contact: ${summaryValue(summary.customer?.name)}`,
+      `Email: ${summaryValue(summary.customer?.email)}`,
+      `Phone: ${summaryValue(summary.customer?.phone)}`,
+    ];
+    if (summary.customFields?.length) {
+      blocks.push("Additional details:");
+      for (const field of summary.customFields.filter((field) => field.fieldKey !== "student_name")) blocks.push(`${field.label}: ${field.value}`);
+    }
+    blocks.push("Reply **yes** to confirm or **no** to cancel.");
+    return blocks.join("\n\n");
+  }
   if (summary.journeyType === "restaurant") {
     const blocks = [
       "Reservation summary",
@@ -236,6 +270,49 @@ export async function prepareReservationConfirmation({ context, session, flow, s
   return { summary, attempt, flowStatus: "awaiting_confirmation" };
 }
 
+export async function prepareScheduledSessionConfirmation({ context, session, flow, service, customer, form }) {
+  const summary = buildReservationConfirmationSummary({
+    context,
+    flow: { ...flow, journeyType: "scheduled_session", quantity: 1 },
+    service,
+    provider: null,
+    slot: { startsAt: flow.startsAt, endsAt: flow.endsAt, localTime: flow.localTime, timezone: flow.timezone },
+    customer,
+    form,
+  });
+  const { fingerprint } = fingerprintScheduledSessionBookingRequest({
+    companyId: context.companyId,
+    reservationBusinessId: context.reservationBusinessId,
+    reservationBusinessSlug: context.reservationBusinessSlug,
+    serviceId: flow.serviceId,
+    serviceSlug: flow.serviceSlug,
+    scheduledSessionId: flow.scheduledSessionId,
+    quantity: 1,
+    startsAt: summary.startsAt,
+    customerName: customer?.name,
+    customerEmail: customer?.email,
+    customerPhone: customer?.phone,
+    customData: serializeCustomerFormAnswers(form, flow.customData || {}),
+  });
+  session.reservationFlow = {
+    ...flow,
+    quantity: 1,
+    status: "awaiting_confirmation",
+    bookingAttemptId: null,
+    idempotencyKey: null,
+    confirmation: { required: true, summary, fingerprint },
+  };
+  logAiReservationEvent("reservation_confirmation_prepared", {
+    companyId: context.companyId,
+    chatbotId: context.chatbotId,
+    businessId: context.reservationBusinessId,
+    journeyType: "scheduled_session",
+    attemptId: null,
+    flowStatus: "awaiting_confirmation",
+  });
+  return { summary, fingerprint, flowStatus: "awaiting_confirmation" };
+}
+
 export async function confirmReservationFoundation({
   context,
   session,
@@ -267,6 +344,18 @@ export async function confirmReservationFoundation({
   }
   if (decision !== "confirm") {
     return { flowStatus: "awaiting_confirmation", confirmationRequired: true, errorCode: "CONFIRMATION_REQUIRED" };
+  }
+  if (flow.journeyType === "scheduled_session") {
+    session.reservationFlow = { ...flow, status: "ready_to_commit" };
+    return {
+      flowStatus: "ready_to_commit",
+      confirmationRequired: false,
+      errorCode: "SCHEDULED_SESSION_BOOKING_NOT_ENABLED",
+      bookingCreated: false,
+      fallbackRequired: false,
+      scheduledSessionBookingPending: true,
+      summary: flow.confirmation?.summary || null,
+    };
   }
   const transactionalBookingEnabled = isTransactionalAiReservationsEnabled(env);
   logAiReservationEvent("reservation_transaction_gate_checked", {

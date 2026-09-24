@@ -21,6 +21,8 @@ const reservationFlowSchema = new mongoose.Schema(
     providerSlug: { type: String, default: null },
     providerName: { type: String, default: null },
     scheduledSessionId: { type: String, default: null },
+    scheduledSessionEndsAt: { type: Date, default: null },
+    scheduledSessionRemainingCapacity: { type: Number, default: null },
     localDate: { type: String, default: null },
     localTime: { type: String, default: null },
     startsAt: { type: Date, default: null },

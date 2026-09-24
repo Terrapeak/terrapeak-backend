@@ -88,6 +88,43 @@ export const fingerprintRestaurantBookingRequest = (request) => {
   };
 };
 
+export const buildCanonicalScheduledSessionBookingPayload = ({
+  companyId,
+  reservationBusinessId,
+  reservationBusinessSlug,
+  serviceId,
+  serviceSlug,
+  scheduledSessionId,
+  quantity,
+  startsAt,
+  customerName,
+  customerEmail,
+  customerPhone,
+  customData,
+}) => ({
+  journeyType: "scheduled_session",
+  companyId: normalizeText(companyId),
+  businessId: normalizeText(reservationBusinessId),
+  business: normalizeText(reservationBusinessSlug).toLowerCase(),
+  serviceId: normalizeText(serviceId),
+  service: normalizeText(serviceSlug).toLowerCase(),
+  scheduledSessionId: normalizeText(scheduledSessionId),
+  quantity: 1,
+  startsAt: startsAt instanceof Date ? startsAt.toISOString() : new Date(startsAt).toISOString(),
+  customerName: normalizeText(customerName),
+  customerEmail: normalizeText(customerEmail).toLowerCase() || null,
+  customerPhone: normalizeText(customerPhone).replace(/\D/g, "") || null,
+  customData: normalizeCustomData(customData || {}),
+});
+
+export const fingerprintScheduledSessionBookingRequest = (request) => {
+  const payload = buildCanonicalScheduledSessionBookingPayload(request);
+  return {
+    payload,
+    fingerprint: fingerprintCanonicalReservationBooking(payload),
+  };
+};
+
 export const fingerprintLegacyReservationRequest = (value) => {
   const stableSerialize = (item) => {
     if (Array.isArray(item)) return `[${item.map(stableSerialize).join(",")}]`;

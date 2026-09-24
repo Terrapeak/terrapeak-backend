@@ -1,5 +1,5 @@
 import { resolveChatReservationJourney } from "./chatReservationJourneyService.js";
-import { initializeReservationFlow, prepareReservationConfirmation, confirmReservationFoundation, buildReservationResponse, formatReservationConfirmationSummary, formatReservationSuccessResponse, resetReservationFlowSelections } from "./aiReservationFlowService.js";
+import { initializeReservationFlow, prepareReservationConfirmation, prepareScheduledSessionConfirmation, confirmReservationFoundation, buildReservationResponse, formatReservationConfirmationSummary, formatReservationSuccessResponse, resetReservationFlowSelections } from "./aiReservationFlowService.js";
 import {
   buildCustomerFormPrompt,
   buildCustomerFormValidationMessage,
@@ -29,7 +29,17 @@ const restaurantNumberWords = Object.freeze({ one: 1, two: 2, three: 3, four: 4,
 
 export const isClassInformationIntent = (message = "") => {
   const normalized = normalizeOptionText(message);
-  return classInformationPattern.test(normalized) && reservationActionPattern.test(normalized);
+  if (!classInformationPattern.test(normalized) || !reservationActionPattern.test(normalized)) return false;
+  return !isClassBookingIntent(normalized);
+};
+
+const isClassBookingIntent = (message = "") => {
+  const normalized = normalizeOptionText(message);
+  return Boolean(
+    /\b(?:i want to|i would like to|id like to|please|can i|could i|help me)\b.*\b(?:book|register|enrol|enroll|join)\b.*\b(?:class|session|course|programme|program)\b/.test(normalized)
+    || /\b(?:book|register|enrol|enroll|join)\b.*\b(?:class|session|course|programme|program)\b/.test(normalized)
+    || /\b(?:register|enrol|enroll)\b.*\b(?:child|student|learner)\b/.test(normalized)
+  );
 };
 
 export const isPackageInformationIntent = (message = "") => {
@@ -82,13 +92,16 @@ export const isNaturalServiceBookingIntent = (message = "") => {
   return words.some((word) => naturalServiceWords.has(word));
 };
 
-export const isReservationDomainIntent = (message = "") => (
-  isGenericBookingIntent(message) ||
-  isNaturalServiceBookingIntent(message) ||
-  isClassInformationIntent(message) ||
-  isPackageInformationIntent(message) ||
-  isRestaurantReservationIntent(message)
-);
+export const isReservationDomainIntent = (message = "") => {
+  const normalized = normalizeOptionText(message);
+  if (meetingOrCallbackPattern.test(normalized)) return false;
+  return isGenericBookingIntent(message)
+    || isNaturalServiceBookingIntent(message)
+    || isClassBookingIntent(message)
+    || isClassInformationIntent(message)
+    || isPackageInformationIntent(message)
+    || isRestaurantReservationIntent(message);
+};
 
 export const isCancelMessage = (message = "") => {
   const normalized = normalizeOptionText(message);
@@ -133,6 +146,29 @@ const optionReply = (label, options) => `Please choose a ${label}:\n\n${options.
   const value = option.name || option.displayName || option.localTime || `Option ${index + 1}`;
   return `${index + 1}. ${label === "time" ? formatTimeForDisplay(value) : value}`;
 }).join("\n")}`;
+
+const isEligibleScheduledService = (service) => (
+  service?.schedulingMode === "scheduled"
+  && service?.enrollmentMode !== "cohort"
+  && service?.bookingType !== "cohort"
+);
+
+const hasValidTimezone = (timezone) => {
+  if (!String(timezone || "").trim()) return false;
+  try { new Intl.DateTimeFormat("en-CA", { timeZone: timezone }).format(); return true; } catch { return false; }
+};
+
+const scheduledSessionLabel = (session) => {
+  const date = session.startsAt && hasValidTimezone(session.timezone) ? new Date(session.startsAt).toLocaleDateString("en-GB", { timeZone: session.timezone, day: "numeric", month: "long", year: "numeric" }) : "date to be confirmed";
+  const time = session.startsAt && hasValidTimezone(session.timezone) ? new Date(session.startsAt).toLocaleTimeString("en-GB", { timeZone: session.timezone, hour: "2-digit", minute: "2-digit" }) : "time to be confirmed";
+  const teacher = session.staffName ? ` with ${session.staffName}` : "";
+  return `${date} at ${time}${teacher}`;
+};
+
+const scheduledSessionOptions = (sessions) => sessions.filter((session) => hasValidTimezone(session.timezone)).map((session) => ({
+  ...session,
+  name: scheduledSessionLabel(session),
+})).sort((left, right) => new Date(left.startsAt || 0) - new Date(right.startsAt || 0));
 
 const parseRestaurantQuantity = (message, { exact = false } = {}) => {
   const normalized = normalizeOptionText(message);
@@ -212,12 +248,34 @@ const buildClassInformationReply = async ({ context, readAdapter }) => {
     }
   }
   if (!sessions.length) return `No bookable ${classLabel.toLowerCase()} or scheduled sessions are currently available.`;
-  const lines = sessions.map((session) => {
-    const date = session.startsAt ? new Date(session.startsAt).toISOString() : "date to be confirmed";
-    const teacher = session.staffName ? ` with ${session.staffName}` : "";
-    return `${session.serviceName || classLabel.slice(0, -1)} — ${date}${teacher}`;
-  });
+  const lines = sessions.map((session) => `${session.serviceName || classLabel.slice(0, -1)} — ${scheduledSessionLabel(session)}`);
   return `Available ${classLabel.toLowerCase()}:\n\n${lines.map((line, index) => `${index + 1}. ${line}`).join("\n")}`;
+};
+
+const listEligibleScheduledServices = async (context, readAdapter) => (
+  (await readAdapter.listBookableServices(context)).filter(isEligibleScheduledService)
+);
+
+const listScheduledSessionOptions = async (context, readAdapter, service) => {
+  if (typeof readAdapter.listScheduledSessions !== "function") return [];
+  const sessions = await readAdapter.listScheduledSessions(context, { serviceSlug: service.slug });
+  return scheduledSessionOptions((sessions || []).filter((session) => session?.id !== null && session?.id !== undefined));
+};
+
+const startScheduledSessionFlow = async ({ context, session, message, readAdapter }) => {
+  if (/\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:students?|learners?)\b/i.test(String(message || ""))) {
+    return { handled: true, reply: "I can prepare one student registration at a time. Please request one student.", reservation: buildReservationResponse({ reply: "", flowStatus: "idle", journeyType: "scheduled_session" }).reservation };
+  }
+  const flow = initializeReservationFlow({ context, session, journeyType: "scheduled_session" });
+  flow.quantity = 1;
+  const services = await measureAiReservationStage({ context, flow, stage: "services_read", operation: "list_bookable_scheduled_services" }, () => listEligibleScheduledServices(context, readAdapter));
+  if (!services.length) {
+    delete session.reservationFlow;
+    return { handled: true, reply: "No bookable classes or scheduled sessions are currently available.", reservation: buildReservationResponse({ reply: "", flowStatus: "idle", journeyType: "scheduled_session" }).reservation };
+  }
+  flow.selectionOptions = services.map(({ id, slug, name }) => ({ id, slug, name }));
+  session.reservationFlow = flow;
+  return { handled: true, reply: optionReply("class", services), reservation: reservationPayload(session, flow, "") };
 };
 
 const buildRestaurantCapabilityReply = ({ context }) => {
@@ -229,7 +287,7 @@ const buildRestaurantCapabilityReply = ({ context }) => {
 };
 
 const clearServiceDependents = (flow) => {
-  for (const key of ["providerId", "providerSlug", "providerName", "localDate", "startsAt", "timezone", "formFieldIndex", "currentCustomField", "customFieldIndex", "customerFormSnapshot", "customer", "customData", "confirmation", "bookingAttemptId", "idempotencyKey"]) delete flow[key];
+  for (const key of ["providerId", "providerSlug", "providerName", "scheduledSessionId", "scheduledSessionEndsAt", "scheduledSessionRemainingCapacity", "localDate", "startsAt", "endsAt", "localTime", "timezone", "formFieldIndex", "currentCustomField", "customFieldIndex", "customerFormSnapshot", "customer", "customData", "confirmation", "bookingAttemptId", "idempotencyKey"]) delete flow[key];
   flow.customer = {};
   flow.customData = {};
   flow.customerFormSnapshot = [];
@@ -385,6 +443,9 @@ export async function handleAiReservationConversation({
     if (isPackageInformationIntent(message)) {
       return { handled: true, reply: await buildPackageInformationReply({ context, readAdapter }), reservation: buildReservationResponse({ reply: "", flowStatus: "idle", journeyType: journey.journeyType }).reservation };
     }
+    if (journey.journeyType === "scheduled_session") {
+      return startScheduledSessionFlow({ context, session, message, readAdapter });
+    }
     if (journey.journeyType === "restaurant" || isRestaurantReservationIntent(message)) {
       const restaurantEnabled = context.configuration?.capabilities?.guestCount === true;
       if (!restaurantEnabled) return { handled: true, reply: buildRestaurantCapabilityReply({ context }), reservation: buildReservationResponse({ reply: "", flowStatus: "idle", journeyType: null }).reservation };
@@ -438,6 +499,17 @@ export async function handleAiReservationConversation({
 
   const flow = current;
   const prepareConfirmation = async () => {
+    if (flow.journeyType === "scheduled_session") {
+      const prepared = await measureAiReservationStage({ context, flow, stage: "confirmation_preparation", operation: "prepare_scheduled_session_confirmation" }, () => prepareScheduledSessionConfirmation({
+        context,
+        session,
+        flow,
+        service: { id: flow.serviceId, slug: flow.serviceSlug, name: flow.serviceName },
+        customer: flow.customer,
+        form: flow.customerFormSnapshot,
+      }));
+      return { handled: true, reply: formatReservationConfirmationSummary(prepared.summary), reservation: reservationPayload(session, session.reservationFlow, "") };
+    }
     if (context.configuration.bookingBehavior?.booking_behavior === "request") {
       flow.status = "completed";
       flow.requestedBooking = true;
@@ -499,12 +571,16 @@ export async function handleAiReservationConversation({
       contextResolver,
     }));
     if (result.errorCode === "RESERVATION_SLOT_CHANGED") return recoverChangedSlot();
-    const reply = result.errorCode === "BOOKING_RESULT_UNKNOWN"
+    const reply = result.flowStatus === "cancelled"
+      ? "Okay, I cancelled the Learning Centre registration."
+      : result.errorCode === "BOOKING_RESULT_UNKNOWN"
       ? "We’re checking whether your appointment was created. Please don’t submit it again yet."
       : result.errorCode === "BOOKING_IN_PROGRESS"
         ? "We’re still checking whether your appointment was created. Please don’t submit it again yet."
       : result.bookingCreated
       ? formatReservationSuccessResponse(result.summary || flow.confirmation?.summary || {}, { ...(result.result || {}), confirmationEmail: result.confirmationEmail })
+      : result.errorCode === "SCHEDULED_SESSION_BOOKING_NOT_ENABLED"
+        ? "Your Learning Centre registration details are confirmed. Scheduled-session booking is not enabled yet, so no registration was created."
       : result.fallbackRequired
         ? "I could not safely complete that appointment in chat. Please use the Reservations form or request a callback."
         : "Please reply **yes** to confirm or **no** to cancel.";
@@ -572,6 +648,13 @@ export async function handleAiReservationConversation({
     if (resolved.status === "ambiguous") return { handled: true, reply: optionSelectionReply("service", flow.selectionOptions || [], message, resolved), reservation: reservationPayload(session, flow, "") };
     if (!service) return { handled: true, reply: optionSelectionReply("service", flow.selectionOptions || [], message, resolved), reservation: reservationPayload(session, flow, "") };
     applyService(flow, service);
+    if (flow.journeyType === "scheduled_session") {
+      const sessions = await measureAiReservationStage({ context, flow, stage: "scheduled_sessions_read", operation: "list_public_scheduled_sessions" }, () => listScheduledSessionOptions(context, readAdapter, service));
+      if (!sessions.length) return { handled: true, reply: "No upcoming sessions are currently available for that class.", reservation: reservationPayload(session, flow, "") };
+      flow.selectionOptions = sessions;
+      flow.status = "slot_selection";
+      return { handled: true, reply: optionReply("session", sessions), reservation: reservationPayload(session, flow, "") };
+    }
     const providers = await measureAiReservationStage({ context, flow, stage: "providers_read", operation: "list_bookable_providers" }, () => readAdapter.listBookableProviders(context, service));
     if (!providers.length) return { handled: true, reply: "No providers are available for that service.", reservation: reservationPayload(session, flow, "") };
     flow.status = "provider_selection";
@@ -601,6 +684,51 @@ export async function handleAiReservationConversation({
   }
 
   if (flow.status === "slot_selection") {
+    if (flow.journeyType === "scheduled_session") {
+      const options = flow.selectionOptions || [];
+      const input = String(message ?? "").trim();
+      const resolved = resolveOption(message, options, "name");
+      let sessionOption = resolved.status === "matched" ? resolved.option : null;
+      if (!sessionOption && /^(?:next\s+)?class$/i.test(input)) sessionOption = options[0] || null;
+      if (!sessionOption && !/^\d+$/.test(input)) {
+        const timeMatch = input.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i)
+          || input.match(/\b(\d{1,2}):(\d{2})\s*(am|pm)?\b/i)
+          || input.match(/\b(\d{1,2})\s*(am|pm)\b/i);
+        const dateInput = input.replace(/\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*$/i, "").trim();
+        const date = parseNaturalReservationDate(dateInput, { timezone: options[0]?.timezone || null, now: now() });
+        if (date.valid) {
+          const candidates = options.filter((option) => {
+            const localDate = new Intl.DateTimeFormat("en-CA", { timeZone: option.timezone || "UTC" }).format(new Date(option.startsAt));
+            if (localDate !== date.value) return false;
+            if (!timeMatch) return true;
+            let hour = Number(timeMatch[1]);
+            const minute = Number(timeMatch[2] || 0);
+            if (timeMatch[3]?.toLowerCase() === "pm" && hour < 12) hour += 12;
+            if (timeMatch[3]?.toLowerCase() === "am" && hour === 12) hour = 0;
+            const localTime = new Intl.DateTimeFormat("en-GB", { timeZone: option.timezone || "UTC", hour: "2-digit", minute: "2-digit" }).format(new Date(option.startsAt));
+            return localTime === `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+          });
+          if (candidates.length === 1) sessionOption = candidates[0];
+          else if (candidates.length > 1) return { handled: true, reply: `I found more than one session on ${date.value}. Please choose a numbered option.\n\n${optionReply("session", candidates)}`, reservation: reservationPayload(session, flow, "") };
+        }
+      }
+      if (!sessionOption) return { handled: true, reply: optionSelectionReply("session", options, message, resolved), reservation: reservationPayload(session, flow, "") };
+      flow.scheduledSessionId = String(sessionOption.id);
+      flow.startsAt = sessionOption.startsAt;
+      flow.endsAt = sessionOption.endsAt || null;
+      flow.scheduledSessionEndsAt = sessionOption.endsAt || null;
+      flow.scheduledSessionRemainingCapacity = sessionOption.remainingCapacity ?? null;
+      flow.timezone = sessionOption.timezone || null;
+      flow.providerName = sessionOption.staffName || null;
+      flow.localDate = new Intl.DateTimeFormat("en-CA", { timeZone: flow.timezone || "UTC" }).format(new Date(flow.startsAt));
+      flow.localTime = new Intl.DateTimeFormat("en-GB", { timeZone: flow.timezone || "UTC", hour: "2-digit", minute: "2-digit" }).format(new Date(flow.startsAt));
+      const form = await measureAiReservationStage({ context, flow, stage: "customer_form_read", operation: "get_customer_form" }, () => readAdapter.getCustomerForm(context));
+      flow.customerFormSnapshot = form;
+      flow.formFieldIndex = 0;
+      const next = findNextCustomerFormField(flow);
+      flow.status = "customer_form";
+      return { handled: true, reply: next ? buildCustomerFormPrompt(next) : "What is your full name?", reservation: reservationPayload(session, flow, "") };
+    }
     const resolved = resolveOption(message, flow.selectionOptions || [], "localTime");
     const slot = resolved.status === "matched" ? resolved.option : null;
     if (!slot) return { handled: true, reply: optionSelectionReply("time", flow.selectionOptions || [], message, resolved), reservation: reservationPayload(session, flow, "") };
