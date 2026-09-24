@@ -46,11 +46,11 @@ export const RESERVATIONS_TEMPLATES = Object.freeze({
       bookingPlural: "Appointments",
     },
     fields: [
-      ["Main concern", "textarea", null, true],
-      ["Affected region", "text", null, false],
-      ["First visit?", "dropdown", ["Yes", "No"], false],
-      ["Preferred therapist", "text", null, false],
-      ["Pain level", "dropdown", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"], false],
+      ["Main concern", "textarea", null, true, "main_concern"],
+      ["Affected region", "text", null, false, "affected_region"],
+      ["First visit?", "dropdown", ["Yes", "No"], false, "first_visit"],
+      ["Preferred therapist", "text", null, false, "preferred_therapist"],
+      ["Pain level", "dropdown", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"], false, "pain_level"],
     ],
   },
   dental: {
@@ -64,10 +64,10 @@ export const RESERVATIONS_TEMPLATES = Object.freeze({
       bookingSingular: "Appointment", bookingPlural: "Appointments",
     },
     fields: [
-      ["Reason for visit", "textarea", null, true],
-      ["Procedure", "dropdown", ["Check-up", "Cleaning", "Filling", "Extraction", "Emergency", "Other"], false],
-      ["First visit?", "dropdown", ["Yes", "No"], false],
-      ["Preferred dentist", "text", null, false],
+      ["Reason for visit", "textarea", null, true, "reason_for_visit"],
+      ["Procedure", "dropdown", ["Check-up", "Cleaning", "Filling", "Extraction", "Emergency", "Other"], false, "procedure"],
+      ["First visit?", "dropdown", ["Yes", "No"], false, "first_visit"],
+      ["Preferred dentist", "text", null, false, "preferred_dentist"],
     ],
   },
   salon: {
@@ -79,9 +79,9 @@ export const RESERVATIONS_TEMPLATES = Object.freeze({
       bookingSingular: "Appointment", bookingPlural: "Appointments",
     },
     fields: [
-      ["Requested service", "text", null, true],
-      ["Preferred stylist", "text", null, false],
-      ["First visit?", "dropdown", ["Yes", "No"], false],
+      ["Requested service", "text", null, true, "requested_service"],
+      ["Preferred stylist", "text", null, false, "preferred_stylist"],
+      ["First visit?", "dropdown", ["Yes", "No"], false, "first_visit"],
     ],
   },
   learning_centre: {
@@ -95,10 +95,10 @@ export const RESERVATIONS_TEMPLATES = Object.freeze({
       bookingSingular: "Registration", bookingPlural: "Registrations",
     },
     fields: [
-      ["Student name", "text", null, true],
-      ["Age / year level", "text", null, false],
-      ["Subject or programme", "text", null, true],
-      ["First visit?", "dropdown", ["Yes", "No"], false],
+      ["Student name", "text", null, true, "student_name"],
+      ["Age / year level", "text", null, false, "age_year_level"],
+      ["Subject or programme", "text", null, true, "subject_or_programme"],
+      ["First visit?", "dropdown", ["Yes", "No"], false, "first_visit"],
     ],
   },
   restaurant: {
@@ -112,7 +112,7 @@ export const RESERVATIONS_TEMPLATES = Object.freeze({
       bookingSingular: "Reservation", bookingPlural: "Reservations",
       guestSingular: "Guest", guestPlural: "Guests",
     },
-    fields: [["Special requests", "textarea", null, false]],
+    fields: [["Special requests", "textarea", null, false, "special_requests"]],
   },
 });
 

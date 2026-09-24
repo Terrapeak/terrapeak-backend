@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-describe("safe Reservations template changes", () => {
-  it("adds missing defaults without reactivating, retiring, or changing service defaults", async () => {
+describe("ownership-aware Reservations template changes", () => {
+  it("adds target defaults without label-based legacy ownership changes", async () => {
     process.env.SUPABASE_URL = "https://example.supabase.co";
     process.env.SUPABASE_SERVICE_ROLE_KEY = "test-key";
     const { buildReservationsTemplateFieldPlan } = await import(
@@ -23,14 +23,16 @@ describe("safe Reservations template changes", () => {
     assert.deepEqual(plan.missing.map((field) => field.field_label), [
       "Phone",
       "Email",
+      "Reason for visit",
       "Procedure",
       "First visit?",
       "Preferred dentist",
     ]);
     assert.equal(plan.missing.every((field) => field.business_id === 42), true);
-    assert.deepEqual(plan.desiredExistingIds, []);
+    assert.deepEqual(plan.desiredExistingIds, [1]);
     assert.deepEqual(plan.staleTemplateIds, []);
     assert.equal(plan.applyServiceDefaults, false);
+    assert.equal(plan.missing.some((field) => field.field_label === "Reason for visit" && field.field_source === "template"), true);
   });
 });
 
