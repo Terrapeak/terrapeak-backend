@@ -48,6 +48,39 @@ export const fingerprintReservationBookingRequest = (request) => {
   };
 };
 
+export const buildCanonicalRestaurantBookingPayload = ({
+  reservationBusinessId,
+  reservationBusinessSlug,
+  localDate,
+  localTime,
+  quantity,
+  customerName,
+  customerEmail,
+  customerPhone,
+  notes,
+  customData,
+}) => ({
+  journeyType: "restaurant",
+  businessId: normalizeText(reservationBusinessId),
+  business: normalizeText(reservationBusinessSlug).toLowerCase(),
+  localDate: normalizeText(localDate),
+  localTime: normalizeText(localTime),
+  quantity: Number(quantity),
+  customerName: normalizeText(customerName),
+  customerEmail: normalizeText(customerEmail).toLowerCase() || null,
+  customerPhone: normalizeText(customerPhone).replace(/\D/g, "") || null,
+  notes: normalizeText(notes) || null,
+  customData: normalizeCustomData(customData || {}),
+});
+
+export const fingerprintRestaurantBookingRequest = (request) => {
+  const payload = buildCanonicalRestaurantBookingPayload(request);
+  return {
+    payload,
+    fingerprint: createHash("sha256").update(JSON.stringify(payload)).digest("hex"),
+  };
+};
+
 export const fingerprintLegacyReservationRequest = (value) => {
   const stableSerialize = (item) => {
     if (Array.isArray(item)) return `[${item.map(stableSerialize).join(",")}]`;

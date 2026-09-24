@@ -5,7 +5,7 @@ const reservationFlowSchema = new mongoose.Schema(
     version: { type: Number, default: 1 },
     status: {
       type: String,
-      enum: ["idle", "service_selection", "provider_selection", "date_selection", "slot_selection", "customer_form", "review", "awaiting_confirmation", "ready_to_commit", "completed", "cancelled", "failed", "unknown"],
+      enum: ["idle", "guest_count", "service_selection", "provider_selection", "date_selection", "slot_selection", "customer_form", "review", "awaiting_confirmation", "ready_to_commit", "completed", "cancelled", "failed", "unknown"],
       default: "idle",
     },
     journeyType: { type: String, enum: ["appointment", "restaurant", "scheduled_session", "cohort_enquiry", null], default: null },

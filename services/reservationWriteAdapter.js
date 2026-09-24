@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { fingerprintReservationBookingRequest } from "../utils/reservationRequestFingerprint.js";
+import { fingerprintReservationBookingRequest, fingerprintRestaurantBookingRequest } from "../utils/reservationRequestFingerprint.js";
 import { hashOperationalIdentifier, logAiReservationEvent, measureAiReservationStage } from "../utils/aiReservationLogger.js";
 
 export class ReservationBookingWriteError extends Error {
@@ -23,7 +23,8 @@ const getClient = () => {
 
 const normalizeResult = (rows) => {
   const result = Array.isArray(rows) ? rows[0] : rows;
-  if (!result?.booking_id || !result.reference) {
+  const bookingId = result?.booking_id || result?.id;
+  if (!bookingId || !result.reference) {
     throw new ReservationBookingWriteError(
       "RESERVATIONS_WRITE_INVALID_RESULT",
       "Reservations returned an invalid booking result.",
@@ -31,7 +32,7 @@ const normalizeResult = (rows) => {
     );
   }
   return {
-    bookingId: result.booking_id,
+    bookingId,
     reference: result.reference,
     startsAt: result.starts_at,
     endsAt: result.ends_at,
@@ -182,6 +183,78 @@ export const createReservationWriteAdapter = ({ clientFactory = getClient } = {}
       "The booking result could not be confirmed safely.",
       { ambiguous: true, cause: error },
     );
+  },
+
+  async createRestaurantBooking({
+    reservationBusinessId,
+    reservationBusinessSlug,
+    localDate,
+    localTime,
+    quantity,
+    customerName,
+    customerEmail,
+    customerPhone,
+    notes,
+    customData,
+    idempotencyKey,
+  }) {
+    if (!idempotencyKey) throw new ReservationBookingWriteError(
+      "RESERVATIONS_WRITE_IDEMPOTENCY_REQUIRED",
+      "A booking idempotency key is required.",
+    );
+    const { fingerprint } = fingerprintRestaurantBookingRequest({
+      reservationBusinessId,
+      reservationBusinessSlug,
+      localDate,
+      localTime,
+      quantity,
+      customerName,
+      customerEmail,
+      customerPhone,
+      notes,
+      customData,
+    });
+    const metadata = {
+      businessId: reservationBusinessId,
+      businessSlug: reservationBusinessSlug,
+      idempotencyKeyHash: hashOperationalIdentifier(idempotencyKey),
+      requestFingerprint: fingerprint,
+      journeyType: "restaurant",
+    };
+    logAiReservationEvent("reservation_write_rpc_start", metadata);
+    let data;
+    let error;
+    try {
+      ({ data, error } = await measureAiReservationStage({ stage: "supabase_write_rpc", operation: "create_canonical_restaurant_booking", context: { reservationBusinessId, reservationBusinessSlug } }, () => clientFactory().rpc("create_canonical_restaurant_booking", {
+        p_business_id: Number(reservationBusinessId),
+        p_customer_name: customerName,
+        p_customer_phone: customerPhone,
+        p_local_date: localDate,
+        p_local_time: localTime,
+        p_quantity: Number(quantity),
+        p_notes: notes || null,
+        p_custom_data: customData || {},
+        p_customer_email: customerEmail || null,
+      })));
+    } catch (rpcError) {
+      logAiReservationEvent("reservation_write_rpc_failed", {
+        ...metadata,
+        supabaseErrorCode: rpcError?.code,
+        mappedErrorCode: rpcError?.code || "RESERVATIONS_WRITE_AMBIGUOUS",
+        ambiguous: Boolean(rpcError?.ambiguous ?? true),
+      });
+      throw rpcError;
+    }
+    if (!error) {
+      const result = normalizeResult(data);
+      logAiReservationEvent("reservation_write_rpc_success", { businessId: reservationBusinessId, bookingId: result.bookingId, reference: result.reference, journeyType: "restaurant" });
+      return result;
+    }
+    if (isKnownRejectedWrite(error)) {
+      const mappedErrorCode = error.code === "23P01" ? "RESERVATION_SLOT_UNAVAILABLE" : "RESERVATIONS_WRITE_REJECTED";
+      throw new ReservationBookingWriteError(mappedErrorCode, error.message || "Reservations rejected the booking.", { cause: error });
+    }
+    throw new ReservationBookingWriteError("RESERVATIONS_WRITE_AMBIGUOUS", "The booking result could not be confirmed safely.", { ambiguous: true, cause: error });
   },
 });
 

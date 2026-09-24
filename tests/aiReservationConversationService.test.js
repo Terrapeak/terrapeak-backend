@@ -183,7 +183,7 @@ test("service and provider labels remain exact case-insensitive matches", async 
   assert.equal(providerSession.reservationFlow.status, "date_selection");
 });
 
-test("restaurant journeys are recognized without entering the appointment write flow", async () => {
+test("restaurant journeys enter the typed guest-count flow without appointment concepts", async () => {
   const result = await handleAiReservationConversation({
     context: { ...context, configuration: { ...context.configuration, templateKey: "restaurant", capabilities: { guestCount: true } } },
     session: {},
@@ -192,7 +192,9 @@ test("restaurant journeys are recognized without entering the appointment write 
   });
   assert.equal(result.handled, true);
   assert.equal(result.reservation.journeyType, "restaurant");
-  assert.match(result.reply, /typed table booking in chat is not available yet/i);
+  assert.equal(result.reservation.step, "guest_count");
+  assert.match(result.reply, /how many guests/i);
+  assert.doesNotMatch(result.reply, /service|provider/i);
 });
 
 test("request booking behavior never invokes an appointment write", async () => {

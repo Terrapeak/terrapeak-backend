@@ -1,5 +1,5 @@
 import ReservationBookingAttempt from "../models/reservationBookingAttempt.js";
-import { fingerprintLegacyReservationRequest, fingerprintReservationBookingRequest } from "../utils/reservationRequestFingerprint.js";
+import { fingerprintLegacyReservationRequest, fingerprintReservationBookingRequest, fingerprintRestaurantBookingRequest } from "../utils/reservationRequestFingerprint.js";
 
 export const buildReservationIdempotencyKey = ({ companyId, bookingAttemptId }) => {
   if (!companyId || !bookingAttemptId) {
@@ -11,7 +11,9 @@ export const buildReservationIdempotencyKey = ({ companyId, bookingAttemptId }) 
 };
 
 export const fingerprintReservationRequest = (value) =>
-  value && value.reservationBusinessSlug && value.serviceSlug && value.providerSlug && value.startsAt
+  value?.journeyType === "restaurant"
+    ? fingerprintRestaurantBookingRequest(value).fingerprint
+    : value && value.reservationBusinessSlug && value.serviceSlug && value.providerSlug && value.startsAt
     ? fingerprintReservationBookingRequest(value).fingerprint
     : fingerprintLegacyReservationRequest(value);
 

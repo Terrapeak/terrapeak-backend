@@ -10,7 +10,7 @@ import {
   markReservationBookingAttemptConfirmed,
 } from "./reservationBookingAttemptService.js";
 import { reconcileReservationBookingAttempt } from "./reservationBookingReconciliationService.js";
-import { fingerprintReservationBookingRequest } from "../utils/reservationRequestFingerprint.js";
+import { fingerprintReservationBookingRequest, fingerprintRestaurantBookingRequest } from "../utils/reservationRequestFingerprint.js";
 import ReservationBookingAttempt from "../models/reservationBookingAttempt.js";
 import { normalizeCustomerForm, serializeCustomerFormAnswers, validateCustomerForm } from "../utils/aiReservationCustomerForm.js";
 import { logAiReservationEvent, measureAiReservationStage } from "../utils/aiReservationLogger.js";
@@ -64,11 +64,92 @@ export async function executeAiReservationBooking({
     businessId: context.reservationBusinessId,
     attemptId: flow?.bookingAttemptId,
     stage: name,
-  });
+});
+
+const executeRestaurantBooking = async ({ context, session, flow, model, readAdapter, writeAdapter }) => {
+  if (context.configuration?.templateKey !== "restaurant" || context.configuration?.capabilities?.guestCount !== true) {
+    throw fail("RESERVATION_JOURNEY_UNSUPPORTED", "Automated restaurant booking is not available for this Reservations template.");
+  }
+  const settings = typeof readAdapter.getRestaurantSettings === "function"
+    ? await readAdapter.getRestaurantSettings(context)
+    : context.configuration?.restaurantSettings || {};
+  const timezone = settings.timezone || flow.timezone;
+  if (flow.timezone && settings.timezone && flow.timezone !== settings.timezone) {
+    throw fail("RESERVATION_CONFIGURATION_CHANGED", "The restaurant booking settings changed before confirmation.");
+  }
+  const maxGuests = Number(settings.maxGuests || 0) || null;
+  const quantity = Number(flow.quantity);
+  if (!Number.isInteger(quantity) || quantity < 1 || (maxGuests && quantity > maxGuests)) {
+    throw fail("RESERVATION_GUEST_COUNT_INVALID", "Please choose a valid number of guests for this restaurant.");
+  }
+  if (!flow.localDate || !flow.localTime) throw fail("RESERVATION_SLOT_CHANGED", "The selected restaurant time is incomplete.");
+  const slots = await measureAiReservationStage({ stage: "restaurant_slot_revalidation", operation: "list_restaurant_availability", context, flow }, () => readAdapter.listRestaurantAvailability(context, flow.localDate, quantity));
+  const selected = slots.find((slot) => String(slot.localTime).slice(0, 5) === String(flow.localTime).slice(0, 5)
+    || (flow.startsAt && slot.startsAt && toValidEpochMillis(slot.startsAt) === toValidEpochMillis(flow.startsAt)));
+  if (!selected) throw fail("RESERVATION_SLOT_CHANGED", "The selected restaurant time is no longer available.");
+
+  const form = normalizeCustomerForm(await measureAiReservationStage({ stage: "customer_form_revalidation", operation: "get_customer_form", context, flow }, () => readAdapter.getCustomerForm(context)));
+  const customer = flow.customer || {};
+  const customData = flow.customData || {};
+  const validationData = { ...customData };
+  for (const field of form) {
+    const coreKey = field.systemKey === "customer_name" || field.systemKey === "name" ? "name" : field.systemKey === "customer_email" || field.systemKey === "email" ? "email" : field.systemKey === "customer_phone" || field.systemKey === "phone" ? "phone" : null;
+    if (coreKey && customer[coreKey] !== undefined) validationData[field.id] = customer[coreKey];
+  }
+  const formError = validateCustomerForm(form, validationData);
+  if (formError || !String(customer.name || "").trim() || String(customer.phone || "").replace(/\D/g, "").length < 6) {
+    throw fail("RESERVATION_CUSTOMER_FORM_INVALID", formError || "Customer name and phone are required.");
+  }
+  const request = {
+    journeyType: "restaurant",
+    reservationBusinessId: context.reservationBusinessId,
+    reservationBusinessSlug: context.reservationBusinessSlug,
+    localDate: flow.localDate,
+    localTime: String(selected.localTime).slice(0, 8),
+    quantity,
+    customerName: customer.name,
+    customerEmail: customer.email,
+    customerPhone: customer.phone,
+    notes: customer.notes,
+    customData: serializeCustomerFormAnswers(form, customData),
+    idempotencyKey: flow.idempotencyKey,
+  };
+  const { fingerprint } = fingerprintRestaurantBookingRequest(request);
+  const currentAttempt = await getStoredAttempt(context, flow.bookingAttemptId, model);
+  if (!currentAttempt?.requestFingerprint || currentAttempt.requestFingerprint !== fingerprint) throw fail("BOOKING_ATTEMPT_CONFLICT", "The booking request changed and cannot be safely submitted.");
+  await markReservationBookingAttemptConfirmed({ context, bookingAttemptId: flow.bookingAttemptId, model });
+  const claimedAttempt = await claimReservationBookingAttempt({ context, bookingAttemptId: flow.bookingAttemptId, model });
+  if (!claimedAttempt) {
+    const existing = await getStoredAttempt(context, flow.bookingAttemptId, model);
+    if (existing?.status === "completed" && existing.result) return { bookingCreated: true, replayed: true, result: existing.result, flowStatus: "completed" };
+    throw fail("BOOKING_ATTEMPT_IN_PROGRESS", "This booking is already being processed.");
+  }
+  try {
+    if (typeof writeAdapter.createRestaurantBooking !== "function") throw fail("RESERVATION_JOURNEY_UNSUPPORTED", "Restaurant booking is not available through the configured write adapter.");
+    const result = await writeAdapter.createRestaurantBooking(request);
+    const completed = await completeReservationBookingAttempt({ context, bookingAttemptId: flow.bookingAttemptId, result, model });
+    if (!completed) throw Object.assign(new Error("The booking attempt could not be finalized."), { ambiguous: true });
+    session.reservationFlow = { ...flow, status: "completed", confirmation: { ...flow.confirmation, result } };
+    let confirmationEmail = { status: "failed", failureCode: "EMAIL_NOTIFICATION_FAILED" };
+    try {
+      confirmationEmail = await sendAiReservationConfirmationEmail({ context, bookingAttemptId: flow.bookingAttemptId, summary: flow.confirmation?.summary || {}, result, model });
+    } catch (emailError) {
+      logAiReservationEvent("reservation_confirmation_email_failed", { companyId: context.companyId, chatbotId: context.chatbotId, businessId: context.reservationBusinessId, attemptId: flow.bookingAttemptId, errorCode: emailError.code || "EMAIL_NOTIFICATION_FAILED" });
+    }
+    return { bookingCreated: true, replayed: false, result, confirmationEmail, flowStatus: "completed" };
+  } catch (error) {
+    if (error.ambiguous) {
+      await model.findOneAndUpdate({ companyId: context.companyId, chatbotId: context.chatbotId, sessionId: context.sessionId, idempotencyKey: flow.idempotencyKey, status: "processing" }, { $set: { status: "unknown", errorCode: "BOOKING_RESULT_UNKNOWN" } }, { new: true });
+      throw fail("BOOKING_RESULT_UNKNOWN", "The booking result could not be confirmed safely.");
+    }
+    await failReservationBookingAttempt({ context, bookingAttemptId: flow.bookingAttemptId, errorCode: error.code || "RESERVATIONS_WRITE_FAILED", model });
+    throw error;
+  }
+};
 
   try {
     if (!flow?.bookingAttemptId) throw fail("BOOKING_ATTEMPT_ID_REQUIRED", "The booking attempt is incomplete.");
-    if (flow.journeyType !== "appointment") throw fail("RESERVATION_JOURNEY_UNSUPPORTED", "This Reservations journey is not supported for automated booking.");
+    if (!['appointment', 'restaurant'].includes(flow.journeyType)) throw fail("RESERVATION_JOURNEY_UNSUPPORTED", "This Reservations journey is not supported for automated booking.");
     logStage(stage);
 
     const storedBeforeConfirmation = await getStoredAttempt(context, flow.bookingAttemptId, model);
@@ -111,11 +192,19 @@ export async function executeAiReservationBooking({
   assertReservationSessionBinding(flow, freshContext);
   stage = "context_revalidated";
   logStage(stage);
-  if (!supportedTemplates.has(freshContext.configuration.templateKey) || freshContext.configuration.capabilities.services !== true) {
+  if (flow.journeyType === "restaurant") {
+    if (freshContext.configuration.templateKey !== "restaurant" || freshContext.configuration.capabilities.guestCount !== true) {
+      throw fail("RESERVATION_JOURNEY_UNSUPPORTED", "Automated restaurant booking is not available for this Reservations template.");
+    }
+  } else if (!supportedTemplates.has(freshContext.configuration.templateKey) || freshContext.configuration.capabilities.services !== true) {
     throw fail("RESERVATION_JOURNEY_UNSUPPORTED", "Automated booking is not available for this Reservations template.");
   }
   if (String(freshContext.reservationBusinessId) !== String(flow.businessId)) {
     throw fail("RESERVATION_TENANT_MISMATCH", "The Reservations business changed before booking.");
+  }
+
+  if (flow.journeyType === "restaurant") {
+    return executeRestaurantBooking({ context: freshContext, session, flow, model, readAdapter, writeAdapter });
   }
 
   stage = "service_revalidated";

@@ -24,6 +24,8 @@ const packageInformationPattern = /\bpackage(?:s)?\b/i;
 const restaurantReservationPattern = /\b(?:table|restaurant|guest(?:s)?|party|people)\b/i;
 const reservationActionPattern = /\b(?:book|booking|reserve|reservation|register|enrol|enroll|join|available|offer|options?|have)\b/i;
 const restaurantActionPattern = /\b(?:book|booking|reserve|reservation|table|restaurant|guest(?:s)?|party)\b/i;
+const meetingOrCallbackPattern = /\b(?:meeting|callback|call\s+me|consultation)\b/i;
+const restaurantNumberWords = Object.freeze({ one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 });
 
 export const isClassInformationIntent = (message = "") => {
   const normalized = normalizeOptionText(message);
@@ -37,6 +39,7 @@ export const isPackageInformationIntent = (message = "") => {
 
 export const isRestaurantReservationIntent = (message = "") => {
   const normalized = normalizeOptionText(message);
+  if (meetingOrCallbackPattern.test(normalized)) return false;
   return restaurantReservationPattern.test(normalized) && restaurantActionPattern.test(normalized);
 };
 
@@ -130,6 +133,47 @@ const optionReply = (label, options) => `Please choose a ${label}:\n\n${options.
   const value = option.name || option.displayName || option.localTime || `Option ${index + 1}`;
   return `${index + 1}. ${label === "time" ? formatTimeForDisplay(value) : value}`;
 }).join("\n")}`;
+
+const parseRestaurantQuantity = (message, { exact = false } = {}) => {
+  const normalized = normalizeOptionText(message);
+  const token = normalized.match(/(?:party of|for)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b/i)?.[1]
+    || normalized.match(/(?:^|\s)(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:guests?|people|persons?)\b/i)?.[1]
+    || (exact ? normalized.match(/^(\d+)$/)?.[1] : null);
+  if (!token) return null;
+  return Number.isFinite(Number(token)) ? Number(token) : restaurantNumberWords[token.toLowerCase()] || null;
+};
+
+const extractRestaurantDate = (message) => {
+  const normalized = normalizeOptionText(message);
+  const structured = normalized.match(/\b\d{4}[-./]\d{2}[-./]\d{2}\b/);
+  if (structured) return structured[0];
+  const natural = normalized.match(/\b(?:today|tomorrow|next\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|\d{1,2}\s+(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)|(?:january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\s+\d{1,2})\b/i);
+  return natural?.[0] || null;
+};
+
+const parseRestaurantTime = (message) => {
+  const normalized = normalizeOptionText(message);
+  const match = normalized.match(/(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
+  if (!match || (match[1].length === 4 && !match[2])) return null;
+  let hour = Number(match[1]);
+  const minute = Number(match[2] || 0);
+  const meridiem = match[3]?.toLowerCase();
+  if (minute > 59 || hour > 23 || (meridiem && hour > 12)) return null;
+  if (meridiem === "pm" && hour < 12) hour += 12;
+  if (meridiem === "am" && hour === 12) hour = 0;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+};
+
+const loadRestaurantSettings = async (context, readAdapter) => {
+  if (typeof readAdapter.getRestaurantSettings === "function") return readAdapter.getRestaurantSettings(context);
+  return context.configuration?.restaurantSettings || {};
+};
+
+const restaurantTimeMatches = (slot, requested) => String(slot?.localTime || "").slice(0, 5) === requested;
+
+const restaurantSlotReply = (slots, localDate) => slots.length
+  ? `Available restaurant times on ${localDate}:\n\n${slots.map((slot, index) => `${index + 1}. ${formatTimeForDisplay(slot.localTime)}`).join("\n")}`
+  : `There are no restaurant times available on ${localDate} for that party size. Please choose another date.`;
 
 const capabilityLabel = (terminology, singularKey, fallback) =>
   terminology?.[singularKey] || fallback;
@@ -260,6 +304,60 @@ const findNextCustomerFormField = (flow) => {
   return null;
 };
 
+const beginRestaurantCustomerForm = async ({ context, session, flow, readAdapter }) => {
+  flow.customerFormSnapshot = await measureAiReservationStage({ context, flow, stage: "customer_form_read", operation: "get_customer_form" }, () => readAdapter.getCustomerForm(context));
+  flow.formFieldIndex = 0;
+  const next = findNextCustomerFormField(flow);
+  flow.status = "customer_form";
+  session.reservationFlow = flow;
+  return next ? buildCustomerFormPrompt(next) : "What is the full name for this reservation?";
+};
+
+const startRestaurantFlow = async ({ context, session, message, readAdapter, now }) => {
+  const flow = initializeReservationFlow({ context, session, journeyType: "restaurant" });
+  const settings = await loadRestaurantSettings(context, readAdapter);
+  flow.timezone = settings.timezone || null;
+  const quantity = parseRestaurantQuantity(message, { exact: false });
+  if (quantity === null) {
+    return { handled: true, reply: "How many guests should I reserve for? Please provide a positive whole number.", reservation: reservationPayload(session, flow, "") };
+  }
+  const maxGuests = Number(settings.maxGuests || 0) || null;
+  if (!Number.isInteger(quantity) || quantity < 1 || (maxGuests && quantity > maxGuests)) {
+    return { handled: true, reply: maxGuests ? `I can only accept parties of up to ${maxGuests} guests. Please choose a smaller party size.` : "Please provide a positive whole number of guests.", reservation: reservationPayload(session, flow, "") };
+  }
+  flow.quantity = quantity;
+  flow.status = "date_selection";
+  const dateInput = extractRestaurantDate(message);
+  if (!dateInput) {
+    session.reservationFlow = flow;
+    return { handled: true, reply: "What date would you like for the reservation? You can say tomorrow or enter YYYY-MM-DD.", reservation: reservationPayload(session, flow, "") };
+  }
+  const date = parseNaturalReservationDate(dateInput, { timezone: flow.timezone, now: now() });
+  if (!date.valid) {
+    session.reservationFlow = flow;
+    return { handled: true, reply: date.message, reservation: reservationPayload(session, flow, "") };
+  }
+  flow.localDate = date.value;
+  const slots = await measureAiReservationStage({ context, flow, stage: "availability_read", operation: "list_restaurant_availability" }, () => readAdapter.listRestaurantAvailability(context, flow.localDate, flow.quantity));
+  flow.selectionOptions = slots;
+  flow.status = slots.length ? "slot_selection" : "date_selection";
+  const requestedTime = parseRestaurantTime(message);
+  if (requestedTime) {
+    const selected = slots.find((slot) => restaurantTimeMatches(slot, requestedTime));
+    if (!selected) {
+      session.reservationFlow = flow;
+      return { handled: true, reply: slots.length ? `That time is not available.\n\n${restaurantSlotReply(slots, flow.localDate)}` : restaurantSlotReply(slots, flow.localDate), reservation: reservationPayload(session, flow, "") };
+    }
+    flow.localTime = selected.localTime;
+    flow.startsAt = selected.startsAt;
+    flow.timezone = selected.timezone || flow.timezone;
+    const reply = await beginRestaurantCustomerForm({ context, session, flow, readAdapter });
+    return { handled: true, reply, reservation: reservationPayload(session, flow, "") };
+  }
+  session.reservationFlow = flow;
+    return { handled: true, reply: restaurantSlotReply(slots, flow.localDate), reservation: reservationPayload(session, flow, "") };
+};
+
 const clearCustomerFormSelection = (flow) => {
   flow.currentCustomField = null;
   flow.customFieldIndex = null;
@@ -289,7 +387,8 @@ export async function handleAiReservationConversation({
     }
     if (journey.journeyType === "restaurant" || isRestaurantReservationIntent(message)) {
       const restaurantEnabled = context.configuration?.capabilities?.guestCount === true;
-      return { handled: true, reply: buildRestaurantCapabilityReply({ context }), reservation: buildReservationResponse({ reply: "", flowStatus: "idle", journeyType: restaurantEnabled ? "restaurant" : null }).reservation };
+      if (!restaurantEnabled) return { handled: true, reply: buildRestaurantCapabilityReply({ context }), reservation: buildReservationResponse({ reply: "", flowStatus: "idle", journeyType: null }).reservation };
+      return startRestaurantFlow({ context, session, message, readAdapter, now });
     }
     if (journey.journeyType !== "appointment" || !supportedTemplates.has(journey.templateKey)) {
       const templateLabel = context.configuration?.terminology?.servicePlural || "reservations";
@@ -348,8 +447,8 @@ export async function handleAiReservationConversation({
       context,
       session,
       flow,
-      service: { id: flow.serviceId, slug: flow.serviceSlug, name: flow.serviceName },
-      provider: { id: flow.providerId, slug: flow.providerSlug, displayName: flow.providerName },
+      service: flow.journeyType === "restaurant" ? null : { id: flow.serviceId, slug: flow.serviceSlug, name: flow.serviceName },
+      provider: flow.journeyType === "restaurant" ? null : { id: flow.providerId, slug: flow.providerSlug, displayName: flow.providerName },
       slot: { startsAt: flow.startsAt, localTime: flow.localTime, timezone: flow.timezone },
       customer: flow.customer,
       form: flow.customerFormSnapshot,
@@ -385,7 +484,7 @@ export async function handleAiReservationConversation({
   if (isRestartMessage(message)) return startFlow();
   if (isCancelMessage(message)) {
     session.reservationFlow = resetReservationFlowSelections(flow);
-    return { handled: true, reply: "Okay, I cancelled the appointment booking.", reservation: reservationPayload(session, session.reservationFlow, "") };
+    return { handled: true, reply: `Okay, I cancelled the ${flow.journeyType === "restaurant" ? "restaurant reservation" : "appointment booking"}.`, reservation: reservationPayload(session, session.reservationFlow, "") };
   }
 
   if (flow.status === "awaiting_confirmation") {
@@ -410,6 +509,53 @@ export async function handleAiReservationConversation({
         ? "I could not safely complete that appointment in chat. Please use the Reservations form or request a callback."
         : "Please reply **yes** to confirm or **no** to cancel.";
     return { handled: true, reply, reservation: reservationPayload(session, session.reservationFlow, reply, result.errorCode) };
+  }
+
+  if (flow.journeyType === "restaurant" && flow.status === "guest_count") {
+    const quantity = parseRestaurantQuantity(message, { exact: true });
+    const settings = await loadRestaurantSettings(context, readAdapter);
+    const maxGuests = Number(settings.maxGuests || 0) || null;
+    if (!Number.isInteger(quantity) || quantity < 1 || (maxGuests && quantity > maxGuests)) {
+      return { handled: true, reply: maxGuests ? `I can only accept parties of up to ${maxGuests} guests. Please enter a smaller whole number.` : "Please enter a positive whole number of guests.", reservation: reservationPayload(session, flow, "") };
+    }
+    flow.quantity = quantity;
+    flow.timezone = settings.timezone || flow.timezone || null;
+    flow.status = "date_selection";
+    return { handled: true, reply: "What date would you like for the reservation? You can say tomorrow or enter YYYY-MM-DD.", reservation: reservationPayload(session, flow, "") };
+  }
+
+  if (flow.journeyType === "restaurant" && flow.status === "date_selection") {
+    const date = parseNaturalReservationDate(message, { timezone: flow.timezone, now: now() });
+    if (!date.valid) return { handled: true, reply: date.message, reservation: reservationPayload(session, flow, "") };
+    const slots = await measureAiReservationStage({ context, flow, stage: "availability_read", operation: "list_restaurant_availability" }, () => readAdapter.listRestaurantAvailability(context, date.value, flow.quantity));
+    flow.localDate = date.value;
+    flow.selectionOptions = slots;
+    flow.status = slots.length ? "slot_selection" : "date_selection";
+    const requestedTime = parseRestaurantTime(message);
+    if (requestedTime) {
+      const selected = slots.find((slot) => restaurantTimeMatches(slot, requestedTime));
+      if (!selected) return { handled: true, reply: slots.length ? `That time is not available.\n\n${restaurantSlotReply(slots, date.value)}` : restaurantSlotReply(slots, date.value), reservation: reservationPayload(session, flow, "") };
+      flow.localTime = selected.localTime;
+      flow.startsAt = selected.startsAt;
+      flow.timezone = selected.timezone || flow.timezone;
+      const reply = await beginRestaurantCustomerForm({ context, session, flow, readAdapter });
+      return { handled: true, reply, reservation: reservationPayload(session, flow, "") };
+    }
+    return { handled: true, reply: restaurantSlotReply(slots, date.value), reservation: reservationPayload(session, flow, "") };
+  }
+
+  if (flow.journeyType === "restaurant" && flow.status === "slot_selection") {
+    const requestedTime = parseRestaurantTime(message);
+    const resolved = requestedTime
+      ? { status: "matched", option: (flow.selectionOptions || []).find((slot) => restaurantTimeMatches(slot, requestedTime)) }
+      : resolveOption(message, flow.selectionOptions || [], "localTime");
+    const slot = resolved.status === "matched" ? resolved.option : null;
+    if (!slot) return { handled: true, reply: optionSelectionReply("time", flow.selectionOptions || [], message, resolved), reservation: reservationPayload(session, flow, "") };
+    flow.localTime = slot.localTime;
+    flow.startsAt = slot.startsAt;
+    flow.timezone = slot.timezone || flow.timezone;
+    const reply = await beginRestaurantCustomerForm({ context, session, flow, readAdapter });
+    return { handled: true, reply, reservation: reservationPayload(session, flow, "") };
   }
 
   if (flow.status === "service_selection") {
@@ -466,6 +612,29 @@ export async function handleAiReservationConversation({
   }
 
   if (flow.status === "customer_form") {
+    if (flow.journeyType === "restaurant") {
+      const fields = customerFormFields(flow);
+      const field = fields.find((item) => String(item.id) === String(flow.currentCustomField));
+      if (!field) return prepareConfirmation();
+      const skipRequested = isOptionalCustomerFormSkip(message);
+      if (!field.required && skipRequested) {
+        delete flow.customData[field.id];
+      } else if (field.required && skipRequested) {
+        return { handled: true, reply: `This field is required. Please enter ${field.label}.`, reservation: reservationPayload(session, flow, "") };
+      } else {
+        const parsed = parseCustomerFormInput(customerFormValidationField(field), message);
+        const validation = parsed.valid ? validateCustomerFormValue(customerFormValidationField(field), parsed.value) : parsed;
+        if (!validation.valid) return { handled: true, reply: `${buildCustomerFormValidationMessage(customerFormValidationField(field), validation)} Please try again.`, reservation: reservationPayload(session, flow, "") };
+        const coreKey = getCustomerCoreFieldKey(field);
+        if (coreKey) flow.customer = { ...(flow.customer || {}), [coreKey]: parsed.value };
+        flow.customData = { ...(flow.customData || {}), [field.id]: parsed.value };
+      }
+      flow.customFieldIndex = Number(flow.customFieldIndex || 0) + 1;
+      const next = findNextCustomerFormField(flow);
+      if (next) return { handled: true, reply: buildCustomerFormPrompt(next), reservation: reservationPayload(session, flow, "") };
+      clearCustomerFormSelection(flow);
+      return prepareConfirmation();
+    }
     const index = Number(flow.formFieldIndex || 0);
     if (index === 0) {
       flow.customer = { ...(flow.customer || {}), name: String(message).trim() };

@@ -110,7 +110,7 @@ test("enabled capabilities without configured package or session data do not fab
   assert.match(result.reply, /No bookable classes or scheduled sessions/i);
 });
 
-test("restaurant reservation intent is recognized without entering appointment service flow or writing", async () => {
+test("restaurant reservation intent enters typed guest/date flow without appointment service flow or writing", async () => {
   let serviceReads = 0;
   let writes = 0;
   const result = await handleAiReservationConversation({
@@ -124,9 +124,10 @@ test("restaurant reservation intent is recognized without entering appointment s
     model: { generate: noGemini },
   });
   assert.equal(result.handled, true);
-  assert.match(result.reply, /Restaurant reservations are available/i);
+  assert.match(result.reply, /what date/i);
   assert.doesNotMatch(result.reply, /choose a service/i);
   assert.equal(result.reservation.journeyType, "restaurant");
+  assert.equal(result.reservation.step, "date_selection");
   assert.equal(serviceReads, 0);
   assert.equal(writes, 0);
 });

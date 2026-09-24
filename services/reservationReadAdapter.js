@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { DateTime } from "luxon";
 import { normalizeCustomerForm } from "../utils/aiReservationCustomerForm.js";
 import { measureAiReservationStage } from "../utils/aiReservationLogger.js";
 
@@ -95,6 +96,12 @@ export const reservationReadStore = {
   async getRestaurantSlots(args) {
     return getClient().rpc("get_public_restaurant_slots", args);
   },
+  async getRestaurantSettings(businessId) {
+    return getClient().from("restaurant_settings")
+      .select("timezone,max_guests_per_slot,default_duration_minutes,opening_time,closing_time")
+      .eq("business_id", businessId)
+      .maybeSingle();
+  },
   async getCustomerForm(businessSlug) {
     return getClient().rpc("get_public_booking_custom_fields", {
       p_business_slug: businessSlug,
@@ -159,16 +166,41 @@ export function createReservationReadAdapter(store = reservationReadStore) {
       }));
     },
 
-    async listRestaurantAvailability(context, localDate) {
+    async getRestaurantSettings(context) {
+      const result = await store.getRestaurantSettings(context.reservationBusinessId);
+      if (result?.error) throw new Error("Reservations restaurant settings could not be loaded.");
+      const settings = result?.data || result;
+      if (!settings) throw new Error("Restaurant settings are not configured.");
+      return {
+        timezone: settings.timezone || null,
+        maxGuests: Number(settings.max_guests_per_slot || settings.maxGuests || 0) || null,
+        durationMinutes: Number(settings.default_duration_minutes || settings.durationMinutes || 0) || null,
+        openingTime: settings.opening_time || settings.openingTime || null,
+        closingTime: settings.closing_time || settings.closingTime || null,
+      };
+    },
+
+    async listRestaurantAvailability(context, localDate, quantity = 1) {
       const rows = await resultOrThrow("restaurant availability", store.getRestaurantSlots({
         p_business_slug: context.reservationBusinessSlug,
         p_local_date: localDate,
       }));
-      return rows.map((row) => ({
-        localTime: row.reservation_time,
-        remainingCapacity: Number(row.remaining_capacity ?? 0),
-        timezone: row.timezone || null,
-      }));
+      return rows
+        .map((row) => {
+          const localTime = String(row.reservation_time || "").slice(0, 8);
+          const timezone = row.timezone || context.configuration?.restaurantSettings?.timezone || null;
+          const startsAt = timezone && localTime
+            ? DateTime.fromISO(`${localDate}T${localTime}`, { zone: timezone }).toUTC().toISO()
+            : null;
+          return {
+            localTime,
+            startsAt,
+            remainingCapacity: Number(row.remaining_capacity ?? 0),
+            timezone,
+            businessId: context.reservationBusinessId,
+          };
+        })
+        .filter((slot) => slot.remainingCapacity >= Number(quantity));
     },
 
     async getCustomerForm(context) {
