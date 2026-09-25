@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { handleAiReservationConversation, isClassInformationIntent, isReservationDomainIntent } from "../services/aiReservationConversationService.js";
-import { formatReservationConfirmationSummary } from "../services/aiReservationFlowService.js";
+import { buildReservationConfirmationSummary, formatReservationConfirmationSummary } from "../services/aiReservationFlowService.js";
 import { createReservationReadAdapter } from "../services/reservationReadAdapter.js";
 import { fingerprintScheduledSessionBookingRequest } from "../utils/reservationRequestFingerprint.js";
+import { normalizeCustomerForm } from "../utils/aiReservationCustomerForm.js";
 import Session from "../models/sessionModel.js";
 
 process.env.SUPABASE_URL ||= "https://example.supabase.co";
@@ -385,6 +386,40 @@ test("scheduled summary uses Learning Centre terminology and explicit confirmati
   assert.match(summary, /Student: Student Name/);
   assert.doesNotMatch(summary, /appointment|restaurant|booking reference/i);
   assert.match(summary, /Reply \*\*yes\*\* to confirm or \*\*no\*\* to cancel/);
+});
+
+test("production-shaped Customer Form RPC metadata promotes Student and preserves other template fields", () => {
+  const rawForm = [
+    { id: 303, field_label: "Student name", field_type: "text", is_required: true, system_key: null, field_source: "template", template_key: "learning_centre", template_field_key: "student_name" },
+    { id: 304, field_label: "Age / year level", field_type: "text", is_required: false, system_key: null, field_source: "template", template_key: "learning_centre", template_field_key: "age_year_level" },
+    { id: 305, field_label: "Subject or programme", field_type: "text", is_required: true, system_key: null, field_source: "template", template_key: "learning_centre", template_field_key: "subject_or_programme" },
+    { id: 306, field_label: "First visit?", field_type: "dropdown", field_options: "Yes\nNo", is_required: false, system_key: null, field_source: "template", template_key: "learning_centre", template_field_key: "first_visit" },
+  ];
+  const form = normalizeCustomerForm(rawForm);
+  const summary = buildReservationConfirmationSummary({
+    context,
+    flow: {
+      journeyType: "scheduled_session",
+      localDate: "2026-09-30",
+      localTime: "13:00",
+      timezone: "Asia/Manila",
+      providerName: "Test math Jane Lin",
+      scheduledSessionId: "300",
+      customData: { "303": "skye", "304": "6/1", "305": "math", "306": "Yes" },
+    },
+    service: { id: 56, name: "test Math Class" },
+    slot: { startsAt: "2026-09-30T05:00:00Z", timezone: "Asia/Manila", localTime: "13:00" },
+    customer: { name: "test tim", email: "tim@test.nl", phone: "01234567" },
+    form,
+  });
+  const reply = formatReservationConfirmationSummary(summary);
+
+  assert.equal(form[0].templateFieldKey, "student_name");
+  assert.match(reply, /Student: skye/);
+  assert.doesNotMatch(reply, /Additional details:[\s\S]*Student name: skye/);
+  assert.match(reply, /Age \/ year level: 6\/1/);
+  assert.match(reply, /Subject or programme: math/);
+  assert.match(reply, /First visit\?: Yes/);
 });
 
 test("yes is deterministic and performs no booking or class-enrollment writes", async () => {
