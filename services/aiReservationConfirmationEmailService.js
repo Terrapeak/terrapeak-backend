@@ -16,13 +16,16 @@ const buildEmailContent = ({ summary = {}, result = {} }) => {
     ? `\n\nAdditional details:\n${summary.customFields.map((field) => `${safeText(field.label)}: ${safeText(field.value)}`).join("\n")}`
     : "";
   const isRestaurant = summary.journeyType === "restaurant";
+  const isScheduledSession = summary.journeyType === "scheduled_session";
   const time = `${safeText(summary.localTime)}${summary.timezone ? ` (${summary.timezone})` : ""}`;
-  const lines = isRestaurant
+  const lines = isScheduledSession
+    ? ["Class registration confirmed", "", `Reference: ${safeText(reference)}`, `Class: ${safeText(summary.serviceName)}`, `Date: ${safeText(summary.localDate)}`, `Time: ${time}`, `Teacher: ${safeText(summary.teacherName)}`, `Student: ${safeText(summary.customFields?.find((field) => field.fieldKey === "student_name")?.value)}`, `Contact: ${safeText(summary.customer?.name)}`, customFields]
+    : isRestaurant
     ? ["Reservation confirmed", "", `Reference: ${safeText(reference)}`, `Date: ${safeText(summary.localDate)}`, `Time: ${time}`, `Guests: ${safeText(summary.quantity)}`, `Customer: ${safeText(summary.customer?.name)}`, customFields]
     : ["Appointment confirmed", "", `Reference: ${safeText(reference)}`, `Service: ${safeText(summary.serviceName)}`, `Provider: ${safeText(summary.providerName)}`, `Date: ${safeText(summary.localDate)}`, `Time: ${time}`, `Customer: ${safeText(summary.customer?.name)}`, customFields];
   const text = lines.join("\n");
   const html = text.split("\n").map((line) => line ? `<div>${htmlEscape(line)}</div>` : "<br>").join("");
-  return { reference: String(reference), subject: `${isRestaurant ? "Reservation" : "Appointment"} confirmed — ${String(summary.serviceName || "Terrapeak Reservations")}`, text, html };
+  return { reference: String(reference), subject: `${isScheduledSession ? "Class registration" : isRestaurant ? "Reservation" : "Appointment"} confirmed — ${String(summary.serviceName || "Terrapeak Reservations")}`, text, html };
 };
 
 export async function sendAiReservationConfirmationEmail({ context, bookingAttemptId, summary, result, model = ReservationBookingAttempt, send = sendEmail } = {}) {

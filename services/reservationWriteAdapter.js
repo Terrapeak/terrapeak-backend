@@ -42,7 +42,7 @@ const normalizeResult = (rows) => {
 const normalizeLookupResult = (rows) => {
   const result = Array.isArray(rows) ? rows[0] : rows;
   if (!result?.booking_id || !result.reference || !result.request_fingerprint) return null;
-  return {
+  const normalized = {
     bookingId: result.booking_id,
     reference: result.reference,
     startsAt: result.starts_at,
@@ -51,6 +51,10 @@ const normalizeLookupResult = (rows) => {
     businessId: result.business_id || null,
     requestFingerprint: result.request_fingerprint,
   };
+  if (Object.prototype.hasOwnProperty.call(result, "service_id")) normalized.serviceId = result.service_id || null;
+  if (Object.prototype.hasOwnProperty.call(result, "scheduled_session_id")) normalized.scheduledSessionId = result.scheduled_session_id || null;
+  if (Object.prototype.hasOwnProperty.call(result, "idempotency_key")) normalized.idempotencyKey = result.idempotency_key || null;
+  return normalized;
 };
 
 const isKnownRejectedWrite = (error) => ["22023", "P0002", "23P01", "42501"].includes(error?.code);
@@ -253,6 +257,51 @@ export const createReservationWriteAdapter = ({ clientFactory = getClient } = {}
     if (isKnownRejectedWrite(error)) {
       const mappedErrorCode = error.code === "23P01" ? "RESERVATION_SLOT_UNAVAILABLE" : "RESERVATIONS_WRITE_REJECTED";
       throw new ReservationBookingWriteError(mappedErrorCode, error.message || "Reservations rejected the booking.", { cause: error });
+    }
+    throw new ReservationBookingWriteError("RESERVATIONS_WRITE_AMBIGUOUS", "The booking result could not be confirmed safely.", { ambiguous: true, cause: error });
+  },
+
+  async createScheduledSessionBooking({
+    reservationBusinessSlug,
+    serviceSlug,
+    sessionId,
+    customerName,
+    customerEmail,
+    customerPhone,
+    notes,
+    quantity,
+    customData,
+    idempotencyKey,
+    requestFingerprint,
+  }) {
+    if (!idempotencyKey) throw new ReservationBookingWriteError("RESERVATIONS_WRITE_IDEMPOTENCY_REQUIRED", "A booking idempotency key is required.");
+    if (Number(quantity) !== 1) throw new ReservationBookingWriteError("RESERVATION_QUANTITY_INVALID", "Only one student can be registered at a time.");
+    if (!requestFingerprint) throw new ReservationBookingWriteError("RESERVATIONS_WRITE_FINGERPRINT_REQUIRED", "A booking request fingerprint is required.");
+    const args = {
+      p_business_slug: reservationBusinessSlug,
+      p_service_slug: serviceSlug,
+      p_session_id: sessionId,
+      p_customer_name: customerName,
+      p_customer_email: customerEmail || null,
+      p_customer_phone: customerPhone || null,
+      p_notes: notes || null,
+      p_quantity: 1,
+      p_custom_data: customData || {},
+      p_idempotency_key: idempotencyKey,
+      p_request_fingerprint: requestFingerprint,
+    };
+    let data;
+    let error;
+    try {
+      ({ data, error } = await measureAiReservationStage({ stage: "supabase_write_rpc", operation: "create_public_session_booking_idempotent", context: { reservationBusinessSlug, sessionId } }, () => clientFactory().rpc("create_public_session_booking_idempotent", args)));
+    } catch (rpcError) {
+      throw rpcError;
+    }
+    if (!error) return normalizeResult(data);
+    if (isIdempotencyConflict(error)) throw new ReservationBookingWriteError("IDEMPOTENCY_REQUEST_CONFLICT", "The booking key was already used for a different request.", { cause: error });
+    if (isKnownRejectedWrite(error)) {
+      const code = error.code === "23P01" ? "RESERVATION_CAPACITY_UNAVAILABLE" : error.code === "P0002" ? "RESERVATION_SESSION_UNAVAILABLE" : error.code === "22023" ? "RESERVATION_CUSTOMER_FORM_INVALID" : "RESERVATIONS_WRITE_REJECTED";
+      throw new ReservationBookingWriteError(code, error.message || "Reservations rejected the booking.", { cause: error });
     }
     throw new ReservationBookingWriteError("RESERVATIONS_WRITE_AMBIGUOUS", "The booking result could not be confirmed safely.", { ambiguous: true, cause: error });
   },

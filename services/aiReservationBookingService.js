@@ -1,4 +1,5 @@
 import { performance } from "node:perf_hooks";
+import { randomUUID } from "node:crypto";
 import { resolveChatReservationContext, assertReservationSessionBinding } from "./chatReservationContextService.js";
 import { resolveChatReservationJourney } from "./chatReservationJourneyService.js";
 import { reservationsReadAdapter } from "./reservationReadAdapter.js";
@@ -7,12 +8,13 @@ import {
   claimReservationBookingAttempt,
   completeReservationBookingAttempt,
   failReservationBookingAttempt,
+  getOrCreateReservationBookingAttempt,
   markReservationBookingAttemptConfirmed,
 } from "./reservationBookingAttemptService.js";
 import { reconcileReservationBookingAttempt } from "./reservationBookingReconciliationService.js";
-import { fingerprintReservationBookingRequest, fingerprintRestaurantBookingRequest } from "../utils/reservationRequestFingerprint.js";
+import { fingerprintReservationBookingRequest, fingerprintRestaurantBookingRequest, fingerprintScheduledSessionBookingRequest } from "../utils/reservationRequestFingerprint.js";
 import ReservationBookingAttempt from "../models/reservationBookingAttempt.js";
-import { normalizeCustomerForm, serializeCustomerFormAnswers, validateCustomerForm } from "../utils/aiReservationCustomerForm.js";
+import { normalizeCustomerForm, serializeCustomerFormAnswers, serializeScheduledSessionCustomerFormAnswers, validateCustomerForm } from "../utils/aiReservationCustomerForm.js";
 import { logAiReservationEvent, measureAiReservationStage } from "../utils/aiReservationLogger.js";
 import { sendAiReservationConfirmationEmail } from "./aiReservationConfirmationEmailService.js";
 
@@ -46,6 +48,100 @@ const getStoredAttempt = async (context, bookingAttemptId, model) => measureAiRe
   sessionId: context.sessionId,
   bookingAttemptId,
 }));
+
+const isFutureSession = (value) => {
+  const timestamp = new Date(value).valueOf();
+  return Number.isFinite(timestamp) && timestamp > Date.now();
+};
+
+const executeScheduledSessionBooking = async ({ context, session, flow, model, readAdapter, writeAdapter }) => {
+  if (Number(flow.quantity) !== 1) throw fail("RESERVATION_QUANTITY_INVALID", "Only one student can be registered at a time.");
+  if (context.configuration?.capabilities?.scheduledSessions !== true) throw fail("RESERVATION_JOURNEY_UNSUPPORTED", "Scheduled-session booking is not available for this Reservations template.");
+  if (!context.configuration?.capabilities?.services) throw fail("RESERVATION_JOURNEY_UNSUPPORTED", "Class registration is not available for this Reservations template.");
+  if (flow.bookingAttemptId) {
+    const existingAttempt = await getStoredAttempt(context, flow.bookingAttemptId, model);
+    if (existingAttempt?.status === "completed" && existingAttempt.result) return { bookingCreated: true, replayed: true, result: existingAttempt.result, flowStatus: "completed" };
+  }
+
+  const services = await readAdapter.listBookableServices(context);
+  const service = services.find((item) => sameId(item.id, flow.serviceId) || item.slug === flow.serviceSlug);
+  if (!service || service.isActive === false || service.isPublished === false || !["class", "course"].includes(String(service.bookingType || "").toLowerCase()) || String(service.schedulingMode || "").toLowerCase() !== "scheduled") {
+    throw fail("RESERVATION_SERVICE_CHANGED", "The selected class is no longer available.");
+  }
+  const sessions = await readAdapter.listScheduledSessions(context, { serviceSlug: service.slug });
+  const selected = sessions.find((item) => sameId(item.id, flow.scheduledSessionId));
+  if (!selected || !sameId(selected.serviceId, service.id) || selected.active === false || selected.isActive === false || selected.published === false || selected.isPublished === false || selected.status === "cancelled" || selected.schedulingMode === "generated" || !isFutureSession(selected.startsAt) || Number(selected.remainingCapacity ?? 0) < 1) {
+    throw fail("RESERVATION_SESSION_UNAVAILABLE", "The selected class session is no longer available.");
+  }
+
+  const form = normalizeCustomerForm(await readAdapter.getCustomerForm(context));
+  const customer = flow.customer || {};
+  const customData = flow.customData || {};
+  const validationData = { ...customData };
+  for (const field of form) {
+    const key = field.systemKey === "customer_name" || field.systemKey === "name" ? "name" : field.systemKey === "customer_email" || field.systemKey === "email" ? "email" : field.systemKey === "customer_phone" || field.systemKey === "phone" ? "phone" : null;
+    if (key && customer[key] !== undefined) validationData[field.id] = customer[key];
+  }
+  const formError = validateCustomerForm(form, validationData);
+  if (formError || !String(customer.name || "").trim() || !String(customer.email || "").trim() || String(customer.phone || "").replace(/\D/g, "").length < 6) {
+    throw fail("RESERVATION_CUSTOMER_FORM_INVALID", formError || "Student and contact details are required.");
+  }
+  const customDataPayload = serializeScheduledSessionCustomerFormAnswers(form, customData);
+  const request = {
+    companyId: context.companyId,
+    reservationBusinessId: context.reservationBusinessId,
+    reservationBusinessSlug: context.reservationBusinessSlug,
+    serviceId: service.id,
+    serviceSlug: service.slug,
+    scheduledSessionId: selected.id,
+    quantity: 1,
+    startsAt: selected.startsAt,
+    customerName: customer.name,
+    customerEmail: customer.email,
+    customerPhone: customer.phone,
+    notes: customer.notes,
+    customData: customDataPayload,
+  };
+  const { fingerprint } = fingerprintScheduledSessionBookingRequest(request);
+  if (flow.confirmation?.fingerprint !== fingerprint) throw fail("BOOKING_ATTEMPT_CONFLICT", "The booking request changed and cannot be safely submitted.");
+  const bookingAttemptId = flow.bookingAttemptId || randomUUID();
+  const ensured = await getOrCreateReservationBookingAttempt({ context, journeyType: "scheduled_session", request: { bookingAttemptId, fingerprint }, model });
+  session.reservationFlow = { ...flow, bookingAttemptId: ensured.attempt.bookingAttemptId, idempotencyKey: ensured.idempotencyKey, serviceId: service.id, serviceSlug: service.slug, scheduledSessionId: selected.id, quantity: 1 };
+  const activeFlow = session.reservationFlow;
+  const currentAttempt = await getStoredAttempt(context, activeFlow.bookingAttemptId, model);
+  if (currentAttempt?.status === "completed" && currentAttempt.result) return { bookingCreated: true, replayed: true, result: currentAttempt.result, flowStatus: "completed" };
+  if (currentAttempt?.status === "processing" || currentAttempt?.status === "unknown" || (currentAttempt?.status === "failed" && currentAttempt.errorCode === "BOOKING_RESULT_UNKNOWN")) {
+    const reconciled = await reconcileReservationBookingAttempt({ attempt: currentAttempt, context, writeAdapter, model, forceLookup: true, expectedIdentity: { businessId: context.reservationBusinessId, idempotencyKey: activeFlow.idempotencyKey, serviceId: service.id, scheduledSessionId: selected.id } });
+    if (reconciled.status === "completed") return { bookingCreated: true, replayed: true, recovered: true, result: reconciled.result, flowStatus: "completed" };
+    throw fail(reconciled.errorCode || "BOOKING_RESULT_UNKNOWN", "The booking result is still being checked. Please do not submit it again yet.");
+  }
+  await markReservationBookingAttemptConfirmed({ context, bookingAttemptId: activeFlow.bookingAttemptId, model });
+  const claimed = await claimReservationBookingAttempt({ context, bookingAttemptId: activeFlow.bookingAttemptId, model });
+  if (!claimed) {
+    const existing = await getStoredAttempt(context, activeFlow.bookingAttemptId, model);
+    if (existing?.status === "completed" && existing.result) return { bookingCreated: true, replayed: true, result: existing.result, flowStatus: "completed" };
+    throw fail("BOOKING_ATTEMPT_IN_PROGRESS", "This booking is already being processed.");
+  }
+  try {
+    if (typeof writeAdapter.createScheduledSessionBooking !== "function") throw fail("RESERVATION_JOURNEY_UNSUPPORTED", "Class registration is not available through the configured write adapter.");
+    const result = await writeAdapter.createScheduledSessionBooking({ reservationBusinessSlug: context.reservationBusinessSlug, serviceSlug: service.slug, sessionId: selected.id, customerName: customer.name, customerEmail: customer.email, customerPhone: customer.phone, notes: customer.notes, quantity: 1, customData: customDataPayload, idempotencyKey: activeFlow.idempotencyKey, requestFingerprint: fingerprint });
+    const completed = await completeReservationBookingAttempt({ context, bookingAttemptId: activeFlow.bookingAttemptId, result, model });
+    if (!completed) throw Object.assign(new Error("The booking attempt could not be finalized."), { ambiguous: true });
+    session.reservationFlow = { ...activeFlow, status: "completed", confirmation: { ...activeFlow.confirmation, result } };
+    let confirmationEmail = { status: "failed", failureCode: "EMAIL_NOTIFICATION_FAILED" };
+    try { confirmationEmail = await sendAiReservationConfirmationEmail({ context, bookingAttemptId: activeFlow.bookingAttemptId, summary: activeFlow.confirmation?.summary || {}, result, model }); } catch {}
+    return { bookingCreated: true, replayed: false, result, confirmationEmail, flowStatus: "completed" };
+  } catch (error) {
+    if (error.ambiguous) {
+      const reconciled = await reconcileReservationBookingAttempt({ attempt: await getStoredAttempt(context, activeFlow.bookingAttemptId, model), context, writeAdapter, model, forceLookup: true, expectedIdentity: { businessId: context.reservationBusinessId, idempotencyKey: activeFlow.idempotencyKey, serviceId: service.id, scheduledSessionId: selected.id } }).catch(() => null);
+      if (reconciled?.status === "completed") return { bookingCreated: true, replayed: true, recovered: true, result: reconciled.result, flowStatus: "completed" };
+      await model.findOneAndUpdate({ companyId: context.companyId, chatbotId: context.chatbotId, sessionId: context.sessionId, idempotencyKey: activeFlow.idempotencyKey, status: "processing" }, { $set: { status: "unknown", errorCode: "BOOKING_RESULT_UNKNOWN" } }, { new: true });
+      throw fail("BOOKING_RESULT_UNKNOWN", "The booking result could not be confirmed safely.");
+    }
+    await failReservationBookingAttempt({ context, bookingAttemptId: activeFlow.bookingAttemptId, errorCode: error.code || "RESERVATIONS_WRITE_FAILED", model });
+    throw error;
+  }
+};
 
 export async function executeAiReservationBooking({
   context,
@@ -148,6 +244,9 @@ const executeRestaurantBooking = async ({ context, session, flow, model, readAda
 };
 
   try {
+    if (flow?.journeyType === "scheduled_session") {
+      return await executeScheduledSessionBooking({ context, session, flow, model, readAdapter, writeAdapter });
+    }
     if (!flow?.bookingAttemptId) throw fail("BOOKING_ATTEMPT_ID_REQUIRED", "The booking attempt is incomplete.");
     if (!['appointment', 'restaurant'].includes(flow.journeyType)) throw fail("RESERVATION_JOURNEY_UNSUPPORTED", "This Reservations journey is not supported for automated booking.");
     logStage(stage);

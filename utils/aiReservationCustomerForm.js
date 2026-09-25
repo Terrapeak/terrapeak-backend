@@ -207,3 +207,17 @@ export function serializeCustomerFormAnswers(fields, values = {}) {
   if (Object.keys(labels).length) result._field_labels = labels;
   return result;
 }
+
+export function serializeScheduledSessionCustomerFormAnswers(fields, values = {}) {
+  const result = {};
+  const labels = {};
+  for (const field of fields) {
+    if (getCustomerCoreFieldKey(field)) continue;
+    const value = values[field.id];
+    if (value === undefined || value === null || value === "") continue;
+    result[field.id] = value;
+    labels[field.id] = field.label;
+  }
+  if (Object.keys(labels).length) result._field_labels = labels;
+  return result;
+}

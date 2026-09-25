@@ -22,6 +22,7 @@ export async function reconcileReservationBookingAttempt({
   now = Date.now(),
   staleAfterMs = DEFAULT_RESERVATION_PROCESSING_TIMEOUT_MS,
   forceLookup = false,
+  expectedIdentity = null,
 }) {
   if (!attempt || !["processing", "unknown", "failed"].includes(attempt.status) || (attempt.status === "failed" && !isUnknownAttempt(attempt))) {
     return { status: "not_reconcilable", lookupPerformed: false };
@@ -48,6 +49,16 @@ export async function reconcileReservationBookingAttempt({
       model,
     });
     return { status: "conflict", errorCode: "IDEMPOTENCY_REQUEST_CONFLICT", lookupPerformed: true };
+  }
+  if (expectedIdentity) {
+    const identitiesMatch = (!expectedIdentity.businessId || String(recovered.businessId) === String(expectedIdentity.businessId))
+      && (!expectedIdentity.idempotencyKey || String(recovered.idempotencyKey) === String(expectedIdentity.idempotencyKey))
+      && (!expectedIdentity.serviceId || String(recovered.serviceId) === String(expectedIdentity.serviceId))
+      && (!expectedIdentity.scheduledSessionId || String(recovered.scheduledSessionId) === String(expectedIdentity.scheduledSessionId));
+    if (!identitiesMatch) {
+      await failReservationBookingAttempt({ context, bookingAttemptId: attempt.bookingAttemptId, errorCode: "IDEMPOTENCY_REQUEST_CONFLICT", model });
+      return { status: "conflict", errorCode: "IDEMPOTENCY_REQUEST_CONFLICT", lookupPerformed: true };
+    }
   }
   const completed = await completeReservationBookingAttempt({
     context,

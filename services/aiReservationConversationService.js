@@ -582,8 +582,14 @@ export async function handleAiReservationConversation({
       ? formatReservationSuccessResponse(result.summary || flow.confirmation?.summary || {}, { ...(result.result || {}), confirmationEmail: result.confirmationEmail })
       : result.errorCode === "SCHEDULED_SESSION_BOOKING_NOT_ENABLED"
         ? "Your Learning Centre registration details are confirmed. Scheduled-session booking is not enabled yet, so no registration was created."
+      : ["RESERVATION_SESSION_UNAVAILABLE", "RESERVATION_CAPACITY_UNAVAILABLE"].includes(result.errorCode)
+        ? "That class session is no longer available. Please choose another session."
+      : ["RESERVATION_CUSTOMER_FORM_INVALID", "RESERVATION_QUANTITY_INVALID"].includes(result.errorCode)
+        ? "I could not safely complete that class registration because the current student or contact details are invalid."
       : result.fallbackRequired
-        ? "I could not safely complete that appointment in chat. Please use the Reservations form or request a callback."
+        ? flow.journeyType === "scheduled_session"
+          ? "I could not safely complete that class registration in chat. Please use the Reservations form or request a callback."
+          : "I could not safely complete that appointment in chat. Please use the Reservations form or request a callback."
         : "Please reply **yes** to confirm or **no** to cancel.";
     return { handled: true, reply, reservation: reservationPayload(session, session.reservationFlow, reply, result.errorCode) };
   }

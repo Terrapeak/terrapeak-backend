@@ -4,7 +4,7 @@ import { logAiReservationEvent } from "../utils/aiReservationLogger.js";
 import { randomUUID } from "node:crypto";
 import { executeAiReservationBooking } from "./aiReservationBookingService.js";
 import { fingerprintReservationBookingRequest, fingerprintRestaurantBookingRequest, fingerprintScheduledSessionBookingRequest } from "../utils/reservationRequestFingerprint.js";
-import { getCustomerCoreFieldKey, serializeCustomerFormAnswers } from "../utils/aiReservationCustomerForm.js";
+import { getCustomerCoreFieldKey, serializeCustomerFormAnswers, serializeScheduledSessionCustomerFormAnswers } from "../utils/aiReservationCustomerForm.js";
 
 export const RESERVATION_FLOW_STATES = Object.freeze([
   "idle", "service_selection", "provider_selection", "date_selection",
@@ -192,6 +192,18 @@ export function formatReservationConfirmationSummary(summary = {}) {
 
 export function formatReservationSuccessResponse(summary = {}, result = {}) {
   const reference = result.reference || result.bookingReference || "not available";
+  if (summary.journeyType === "scheduled_session") {
+    const blocks = [
+      "Your class registration is confirmed.",
+      `Class: ${summaryValue(summary.serviceName)}`,
+      `Date: ${summaryValue(summary.localDate)}`,
+      `Time: ${summaryValue(summary.localTime)}${summary.timezone ? ` (${summary.timezone})` : ""}`,
+      `Teacher: ${summaryValue(summary.teacherName)}`,
+      `Reference: ${reference}`,
+    ];
+    if (result.confirmationEmail?.status === "failed") blocks.push("We couldn't send the confirmation email. Please keep this booking reference.");
+    return blocks.join("\n\n");
+  }
   if (summary.journeyType === "restaurant") {
     const blocks = [
       "Your reservation is confirmed.",
@@ -301,7 +313,7 @@ export async function prepareScheduledSessionConfirmation({ context, session, fl
     customerName: customer?.name,
     customerEmail: customer?.email,
     customerPhone: customer?.phone,
-    customData: serializeCustomerFormAnswers(form, plainFlow.customData || {}),
+    customData: serializeScheduledSessionCustomerFormAnswers(form, plainFlow.customData || {}),
   });
   session.reservationFlow = {
     ...plainFlow,
@@ -354,18 +366,6 @@ export async function confirmReservationFoundation({
   if (decision !== "confirm") {
     return { flowStatus: "awaiting_confirmation", confirmationRequired: true, errorCode: "CONFIRMATION_REQUIRED" };
   }
-  if (flow.journeyType === "scheduled_session") {
-    session.reservationFlow = { ...flow, status: "ready_to_commit" };
-    return {
-      flowStatus: "ready_to_commit",
-      confirmationRequired: false,
-      errorCode: "SCHEDULED_SESSION_BOOKING_NOT_ENABLED",
-      bookingCreated: false,
-      fallbackRequired: false,
-      scheduledSessionBookingPending: true,
-      summary: flow.confirmation?.summary || null,
-    };
-  }
   const transactionalBookingEnabled = isTransactionalAiReservationsEnabled(env);
   logAiReservationEvent("reservation_transaction_gate_checked", {
     companyId: context.companyId,
@@ -385,11 +385,13 @@ export async function confirmReservationFoundation({
       outcome: "transactional_booking_disabled",
       errorCode: "TRANSACTIONAL_BOOKING_DISABLED",
     });
+    session.reservationFlow = { ...flow, status: "ready_to_commit" };
     return {
       flowStatus: "ready_to_commit",
       confirmationRequired: false,
-      errorCode: "TRANSACTIONAL_BOOKING_DISABLED",
-      fallbackRequired: true,
+      errorCode: flow.journeyType === "scheduled_session" ? "SCHEDULED_SESSION_BOOKING_NOT_ENABLED" : "TRANSACTIONAL_BOOKING_DISABLED",
+      fallbackRequired: flow.journeyType !== "scheduled_session",
+      ...(flow.journeyType === "scheduled_session" ? { bookingCreated: false, scheduledSessionBookingPending: true } : {}),
       summary: flow.confirmation?.summary || null,
     };
   }
@@ -419,6 +421,10 @@ export async function confirmReservationFoundation({
       "RESERVATION_PROVIDER_CHANGED",
       "RESERVATION_CUSTOMER_FORM_INVALID",
       "RESERVATION_CONFIGURATION_CHANGED",
+      "RESERVATION_SESSION_UNAVAILABLE",
+      "RESERVATION_CAPACITY_UNAVAILABLE",
+      "RESERVATION_QUANTITY_INVALID",
+      "RESERVATIONS_WRITE_REJECTED",
       "BOOKING_RESULT_UNKNOWN",
       "BOOKING_IN_PROGRESS",
       "IDEMPOTENCY_REQUEST_CONFLICT",
