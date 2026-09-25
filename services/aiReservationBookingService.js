@@ -68,7 +68,7 @@ const executeScheduledSessionBooking = async ({ context, session, flow, model, r
   if (!service || service.isActive === false || service.isPublished === false || !["class", "course"].includes(String(service.bookingType || "").toLowerCase()) || String(service.schedulingMode || "").toLowerCase() !== "scheduled") {
     throw fail("RESERVATION_SERVICE_CHANGED", "The selected class is no longer available.");
   }
-  const sessions = await readAdapter.listScheduledSessions(context, { serviceSlug: service.slug });
+  const sessions = await readAdapter.listScheduledSessions(context, { serviceSlug: service.slug, serviceId: service.id });
   const selected = sessions.find((item) => sameId(item.id, flow.scheduledSessionId));
   if (!selected || !sameId(selected.serviceId, service.id) || selected.active === false || selected.isActive === false || selected.published === false || selected.isPublished === false || selected.status === "cancelled" || selected.schedulingMode === "generated" || !isFutureSession(selected.startsAt) || Number(selected.remainingCapacity ?? 0) < 1) {
     throw fail("RESERVATION_SESSION_UNAVAILABLE", "The selected class session is no longer available.");

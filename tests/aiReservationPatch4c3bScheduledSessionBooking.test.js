@@ -8,6 +8,7 @@ import { buildEmailContent } from "../services/aiReservationConfirmationEmailSer
 import { sendAiReservationConfirmationEmail } from "../services/aiReservationConfirmationEmailService.js";
 import { formatReservationSuccessResponse } from "../services/aiReservationFlowService.js";
 import { fingerprintScheduledSessionBookingRequest } from "../utils/reservationRequestFingerprint.js";
+import { createReservationReadAdapter } from "../services/reservationReadAdapter.js";
 
 const context = {
   companyId: "company-learning",
@@ -126,6 +127,59 @@ test("valid scheduled-session YES calls the exact idempotent adapter contract on
   });
   assert.equal(model.value.status, "completed");
   assert.equal(session.reservationFlow.scheduledSessionId, "session-1");
+});
+
+test("production-shaped scheduled sessions 300 and 301 revalidate through the real adapter", async () => {
+  for (const sessionId of [300, 301]) {
+    const productionService = { id: 56, slug: "test-math-class", name: "test Math Class", bookingType: "class", schedulingMode: "scheduled" };
+    const rawSession = {
+      session_id: sessionId,
+      starts_at: sessionId === 300 ? "2026-09-30T05:00:00Z" : "2026-10-07T05:00:00Z",
+      ends_at: sessionId === 300 ? "2026-09-30T06:00:00Z" : "2026-10-07T06:00:00Z",
+      staff_slug: "test-math-jane-lin",
+      staff_name: "Test math Jane Lin",
+      staff_timezone: "Asia/Manila",
+      capacity: 5,
+      remaining_capacity: 5,
+      notes: null,
+    };
+    const productionReadAdapter = createReservationReadAdapter({
+      listServices: async () => ({ data: [{ id: 56, business_id: 10, name: productionService.name, slug: productionService.slug, booking_type: productionService.bookingType, is_active: true, is_published: true, scheduling_mode: productionService.schedulingMode }], error: null }),
+      getScheduledSessions: async () => ({ data: [rawSession], error: null }),
+      getCustomerForm: async () => ({ data: form, error: null }),
+    }, { now: () => new Date("2026-09-25T00:00:00Z") });
+    const productionContext = { ...context, reservationBusinessId: 10, reservationBusinessSlug: "terrapeak" };
+    const productionSession = { reservationFlow: makeFlow({ serviceId: 56, serviceSlug: productionService.slug, scheduledSessionId: String(sessionId), businessId: "10", confirmation: { fingerprint: null } }) };
+    const readRows = await productionReadAdapter.listScheduledSessions(productionContext, { serviceSlug: productionService.slug, serviceId: 56 });
+    const flow = productionSession.reservationFlow;
+    const request = {
+      companyId: productionContext.companyId,
+      reservationBusinessId: productionContext.reservationBusinessId,
+      reservationBusinessSlug: productionContext.reservationBusinessSlug,
+      serviceId: 56,
+      serviceSlug: productionService.slug,
+      scheduledSessionId: String(sessionId),
+      startsAt: readRows[0].startsAt,
+      quantity: 1,
+      customerName: flow.customer.name,
+      customerEmail: flow.customer.email,
+      customerPhone: flow.customer.phone,
+      customData: { ...flow.customData, _field_labels: { student: "Student name", subject: "Subject" } },
+    };
+    flow.confirmation = { fingerprint: fingerprintScheduledSessionBookingRequest(request).fingerprint };
+    const calls = [];
+    const result = await executeAiReservationBooking({
+      context: productionContext,
+      session: productionSession,
+      model: makeModel(),
+      readAdapter: productionReadAdapter,
+      writeAdapter: { async createScheduledSessionBooking(payload) { calls.push(payload); return { bookingId: `booking-${sessionId}`, reference: `BK-${sessionId}` }; } },
+    });
+    assert.equal(readRows[0].serviceId, 56);
+    assert.equal(result.bookingCreated, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].sessionId, sessionId);
+  }
 });
 
 test("duplicate scheduled-session confirmation returns the same attempt result without a second write", async () => {

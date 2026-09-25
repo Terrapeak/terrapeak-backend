@@ -244,7 +244,7 @@ const buildClassInformationReply = async ({ context, readAdapter }) => {
   const sessions = [];
   if (typeof readAdapter.listScheduledSessions === "function") {
     for (const service of services) {
-      const serviceSessions = await readAdapter.listScheduledSessions(context, { serviceSlug: service.slug });
+      const serviceSessions = await readAdapter.listScheduledSessions(context, { serviceSlug: service.slug, serviceId: service.id });
       for (const session of serviceSessions || []) sessions.push({ ...session, serviceName: service.name });
     }
   }
@@ -259,7 +259,7 @@ const listEligibleScheduledServices = async (context, readAdapter) => (
 
 const listScheduledSessionOptions = async (context, readAdapter, service) => {
   if (typeof readAdapter.listScheduledSessions !== "function") return [];
-  const sessions = await readAdapter.listScheduledSessions(context, { serviceSlug: service.slug });
+  const sessions = await readAdapter.listScheduledSessions(context, { serviceSlug: service.slug, serviceId: service.id });
   return scheduledSessionOptions((sessions || []).filter((session) => session?.id !== null && session?.id !== undefined));
 };
 

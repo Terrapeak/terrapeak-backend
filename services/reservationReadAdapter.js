@@ -189,7 +189,7 @@ export function createReservationReadAdapter(store = reservationReadStore, { now
       }));
     },
 
-    async listScheduledSessions(context, { serviceSlug, fromDate, toDate } = {}) {
+    async listScheduledSessions(context, { serviceSlug, serviceId, fromDate, toDate } = {}) {
       const dateWindow = buildScheduledSessionDateWindow({ fromDate, toDate, now: now() });
       const rows = await resultOrThrow("scheduled sessions", store.getScheduledSessions({
         p_business_slug: context.reservationBusinessSlug,
@@ -197,15 +197,21 @@ export function createReservationReadAdapter(store = reservationReadStore, { now
         p_from_date: dateWindow.fromDate,
         p_to_date: dateWindow.toDate,
       }));
-      return rows.map((row) => ({
+      return rows.map((row) => {
+        const returnedServiceId = row.service_id ?? null;
+        if (serviceId !== undefined && returnedServiceId !== null && String(returnedServiceId) !== String(serviceId)) {
+          throw new Error("Reservations scheduled session service identity mismatch.");
+        }
+        return {
         id: row.session_id || row.id,
-        serviceId: row.service_id,
+        serviceId: serviceId ?? returnedServiceId,
         startsAt: row.starts_at,
         endsAt: row.ends_at,
         timezone: row.staff_timezone || null,
         remainingCapacity: Number(row.remaining_capacity ?? 0),
         staffName: row.staff_name || null,
-      }));
+        };
+      });
     },
 
     async getRestaurantSettings(context) {

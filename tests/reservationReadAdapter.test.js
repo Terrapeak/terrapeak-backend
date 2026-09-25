@@ -57,7 +57,6 @@ test("sends the exact production-shaped scheduled-session RPC payload and preser
       return {
         data: [{
           session_id: 300,
-          service_id: 56,
           starts_at: "2026-09-30T05:00:00Z",
           ends_at: "2026-09-30T06:00:00Z",
           staff_slug: "test-math-jane-lin",
@@ -74,7 +73,7 @@ test("sends the exact production-shaped scheduled-session RPC payload and preser
   const adapter = createReservationReadAdapter(productionStore, { now: () => referenceNow });
   const rows = await adapter.listScheduledSessions(
     { reservationBusinessSlug: "terrapeak" },
-    { serviceSlug: "test-math-class" },
+    { serviceSlug: "test-math-class", serviceId: 56 },
   );
   assert.deepEqual(calls, [{
     p_business_slug: "terrapeak",
@@ -91,6 +90,19 @@ test("sends the exact production-shaped scheduled-session RPC payload and preser
     remainingCapacity: 5,
     staffName: "Test math Jane Lin",
   });
+});
+
+test("fails closed when a future RPC row contradicts the authoritative service identity", async () => {
+  const adapter = createReservationReadAdapter({
+    getScheduledSessions: async () => ({
+      data: [{ session_id: 300, service_id: 99, starts_at: "2026-09-30T05:00:00Z", ends_at: "2026-09-30T06:00:00Z", remaining_capacity: 5 }],
+      error: null,
+    }),
+  });
+  await assert.rejects(
+    () => adapter.listScheduledSessions(context, { serviceSlug: "test-math-class", serviceId: 56 }),
+    /service identity mismatch/,
+  );
 });
 
 test("rejects invalid explicit scheduled-session dates and preserves safe RPC errors", async () => {
