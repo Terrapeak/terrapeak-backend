@@ -21,6 +21,9 @@ const naturalServiceWords = new Set([
 
 const classInformationPattern = /\b(?:class(?:es)?|session(?:s)?|course(?:s)?|programme(?:s)?|program(?:s)?|register|enrol|enroll)\b/i;
 const packageInformationPattern = /\bpackage(?:s)?\b/i;
+const packageActionPattern = /\b(?:what|which|offer|show|list|have|available|options?|want|buy|purchase|get|take|how\s+can\s+i)\b/i;
+const packagePurchasePattern = /\b(?:buy|purchase|get|take|i[’']?ll\s+take|how\s+can\s+i\s+get)\b/i;
+const packageSessionRequestPattern = /\b(\d+)\s+(?:[a-z][\w-]*\s+)?sessions?\b/i;
 const restaurantReservationPattern = /\b(?:table|restaurant|guest(?:s)?|party|people)\b/i;
 const reservationActionPattern = /\b(?:book|booking|reserve|reservation|register|enrol|enroll|join|available|offer|options?|have)\b/i;
 const restaurantActionPattern = /\b(?:book|booking|reserve|reservation|table|restaurant|guest(?:s)?|party)\b/i;
@@ -42,11 +45,6 @@ const isClassBookingIntent = (message = "") => {
   );
 };
 
-export const isPackageInformationIntent = (message = "") => {
-  const normalized = normalizeOptionText(message);
-  return packageInformationPattern.test(normalized) && reservationActionPattern.test(normalized);
-};
-
 export const isRestaurantReservationIntent = (message = "") => {
   const normalized = normalizeOptionText(message);
   if (meetingOrCallbackPattern.test(normalized)) return false;
@@ -59,6 +57,43 @@ const normalizeOptionText = (value) => String(value || "")
   .replace(/[^\p{L}\p{N}]+/gu, " ")
   .replace(/\s+/g, " ")
   .trim();
+
+const hasPackageServiceContext = (message) => {
+  const normalized = normalizeOptionText(message);
+  return /\b(?:physio(?:therapy)?|math(?:ematics)?|class|course|treatment|therapy|service|appointment)\b/i.test(normalized);
+};
+
+export const isPackagePurchaseIntent = (message = "") => {
+  const normalized = normalizeOptionText(message);
+  return packagePurchasePattern.test(normalized) && (
+    packageInformationPattern.test(normalized) || packageSessionRequestPattern.test(normalized)
+  );
+};
+
+export const isPackageInformationIntent = (message = "") => {
+  const normalized = normalizeOptionText(message);
+  if (packageInformationPattern.test(normalized)) {
+    return packageActionPattern.test(normalized) || packagePurchasePattern.test(normalized);
+  }
+  const sessionRequest = packageSessionRequestPattern.exec(normalized);
+  return Boolean(sessionRequest && Number(sessionRequest[1]) > 1 && hasPackageServiceContext(normalized));
+};
+
+const packageOptionMatchesText = (option, message) => {
+  const normalized = normalizeOptionText(message);
+  const optionWords = [option.name, option.slug].filter(Boolean).map((value) => normalizeOptionText(value));
+  return optionWords.some((value) => value === normalized || normalized.includes(value) || value.includes(normalized));
+};
+
+export const isPackageSelectionIntent = (message = "", session = {}) => {
+  const options = session?.packageSelection?.options;
+  if (!Array.isArray(options) || !options.length) return false;
+  const normalized = normalizeOptionText(message);
+  return /^\d+$/.test(normalized)
+    || /\b(?:package|option)\s+#?\d+\b/i.test(normalized)
+    || (options.length === 1 && isPackagePurchaseIntent(normalized))
+    || options.some((option) => packageOptionMatchesText(option, normalized));
+};
 
 const stripBookingWrapper = (message) => normalizeOptionText(message)
   .replace(/^(?:i want to|i would like to|id like to|can i|could i|please|i need to|i need|id like)\s+/, "")
@@ -215,23 +250,148 @@ const restaurantSlotReply = (slots, localDate) => slots.length
 const capabilityLabel = (terminology, singularKey, fallback) =>
   terminology?.[singularKey] || fallback;
 
-const buildPackageInformationReply = async ({ context, readAdapter }) => {
+const packageServiceIsEligible = (service, context) => {
+  const sessionCount = Number(service?.packageSessionCount);
+  const validityDays = Number(service?.packageValidityDays);
+  return service
+    && service.isActive !== false
+    && service.isPublished !== false
+    && (!service.businessId || String(service.businessId) === String(context.reservationBusinessId))
+    && ((Number.isFinite(sessionCount) && sessionCount > 0) || (Number.isFinite(validityDays) && validityDays > 0));
+};
+
+const packageServicesForContext = async (context, readAdapter) => {
+  const services = await readAdapter.listBookableServices(context);
+  return (services || []).filter((service) => packageServiceIsEligible(service, context));
+};
+
+const packagePriceLabel = (service) => {
+  if (service.price === null || service.price === undefined || service.price === "") return "Price not provided";
+  return `${service.currency ? `${service.currency} ` : ""}${service.price}`;
+};
+
+const packageDetailLines = (service) => [
+  `${service.name}:`,
+  `   ${packagePriceLabel(service)} — ${service.packageSessionCount ? `${service.packageSessionCount} ${Number(service.packageSessionCount) === 1 ? "session" : "sessions"}` : "Session count not provided"}`,
+  `   ${service.packageValidityDays ? `Valid for ${service.packageValidityDays} ${Number(service.packageValidityDays) === 1 ? "day" : "days"}` : "Validity not provided"}`,
+];
+
+const packageListReply = (services, { purchase = false } = {}) => {
+  const lines = services.flatMap((service, index) => [
+    `${index + 1}. ${service.name}`,
+    `   ${packagePriceLabel(service)} — ${service.packageSessionCount ? `${service.packageSessionCount} ${Number(service.packageSessionCount) === 1 ? "session" : "sessions"}` : "Session count not provided"}`,
+    `   ${service.packageValidityDays ? `Valid for ${service.packageValidityDays} ${Number(service.packageValidityDays) === 1 ? "day" : "days"}` : "Validity not provided"}`,
+  ]);
+  const handoff = purchase ? "\n\nTo ask the team about purchasing a package, reply **request callback**." : "\n\nReply with a number if you would like package details.";
+  return `Available package options:\n\n${lines.join("\n")} ${handoff}`.replace(/\) (?=\n)/g, ")\n");
+};
+
+const packageRequestTokens = (message) => normalizeOptionText(message)
+  .replace(/\b(?:package|packages|session|sessions|buy|purchase|get|take|want|show|list|offer|available|options?|what|which|do|you|have|me|this|it|a|an|the|i|to|can|how|please|ill)\b/g, " ")
+  .replace(/\b\d+\b/g, " ")
+  .split(" ")
+  .filter((token) => token.length > 1);
+
+const packageServiceMatchesRequest = (service, message) => {
+  const tokens = packageRequestTokens(message);
+  if (!tokens.length) return true;
+  const words = normalizeOptionText(`${service.name || ""} ${service.slug || ""} ${service.subject || ""}`).split(" ");
+  return tokens.every((token) => words.some((word) => word === token || word.startsWith(token) || token.startsWith(word)));
+};
+
+const requestedPackageSessionCount = (message) => {
+  const match = packageSessionRequestPattern.exec(normalizeOptionText(message));
+  return match ? Number(match[1]) : null;
+};
+
+const requestedPackageIndex = (message) => {
+  const match = normalizeOptionText(message).match(/\b(?:package|option)\s+#?(\d+)\b/i);
+  return match ? Number(match[1]) : null;
+};
+
+const packageSelectionOption = (service) => ({
+  serviceId: service.id,
+  slug: service.slug,
+  name: service.name,
+});
+
+const packageSelectionReply = (service, { purchase = false } = {}) => {
+  const detail = packageDetailLines(service).join("\n");
+  return `${detail}\n\n${purchase ? "I can arrange for the team to contact you about purchasing this package. Reply **request callback** to continue." : "If you would like to ask the team about purchasing it, reply **request callback**."}`;
+};
+
+const buildPackageInformationReply = async ({ context, session, message, readAdapter, persistSelection = true }) => {
   const capabilities = context.configuration?.capabilities || {};
   const terminology = context.configuration?.terminology || {};
   const packageLabel = capabilityLabel(terminology, "servicePlural", "services");
-  if (capabilities.packages !== true) return `Packages are not enabled for this ${packageLabel.toLowerCase()} catalogue.`;
+  if (capabilities.packages !== true) {
+    if (persistSelection) session.packageSelection = null;
+    return `Packages are not enabled for this ${packageLabel.toLowerCase()} catalogue.`;
+  }
 
-  const services = await readAdapter.listBookableServices(context);
-  const packageServices = services.filter((service) => service.packageSessionCount || service.packageValidityDays);
-  if (!packageServices.length) return "Packages are enabled, but no package options are currently configured or available.";
-  const lines = packageServices.map((service) => {
-    const details = [
-      service.packageSessionCount ? `${service.packageSessionCount} session(s)` : null,
-      service.packageValidityDays ? `valid for ${service.packageValidityDays} day(s)` : null,
-    ].filter(Boolean).join(", ");
-    return `${service.name}${details ? ` (${details})` : ""}`;
-  });
-  return `Available package options:\n\n${lines.map((line, index) => `${index + 1}. ${line}`).join("\n")}`;
+  const packageServices = await packageServicesForContext(context, readAdapter);
+  if (!packageServices.length) {
+    if (persistSelection) session.packageSelection = null;
+    return "Packages are enabled, but no package options are currently configured or available.";
+  }
+
+  const desiredCount = requestedPackageSessionCount(message);
+  const matches = packageServices.filter((service) => packageServiceMatchesRequest(service, message)
+    && (desiredCount === null || Number(service.packageSessionCount) === desiredCount));
+  const hasSpecificRequest = Boolean(desiredCount !== null || packageRequestTokens(message).length);
+  const purchase = isPackagePurchaseIntent(message);
+  const index = requestedPackageIndex(message);
+  if (purchase && index !== null && packageServices[index - 1]) {
+    if (persistSelection) session.packageSelection = null;
+    return packageSelectionReply(packageServices[index - 1], { purchase: true });
+  }
+  if (hasSpecificRequest && matches.length === 1) {
+    if (persistSelection) session.packageSelection = null;
+    return packageSelectionReply(matches[0], { purchase });
+  }
+  if (hasSpecificRequest && !matches.length) {
+    if (persistSelection) session.packageSelection = { options: packageServices.map(packageSelectionOption) };
+    return `I could not find a matching configured package.${packageListReply(packageServices, { purchase })}`;
+  }
+  const options = matches.length > 1 ? matches : packageServices;
+  if (persistSelection) session.packageSelection = { options: options.map(packageSelectionOption) };
+  return packageListReply(options, { purchase });
+};
+
+const handlePackageSelection = async ({ context, session, message, readAdapter }) => {
+  const options = session.packageSelection?.options || [];
+  const normalized = normalizeOptionText(message);
+  let selected = null;
+  if (/^\d+$/.test(normalized)) selected = options[Number(normalized) - 1] || null;
+  if (!selected) {
+    const indexed = normalized.match(/\b(?:package|option)\s+#?(\d+)\b/i);
+    if (indexed) selected = options[Number(indexed[1]) - 1] || null;
+  }
+  if (!selected) selected = options.find((option) => packageOptionMatchesText(option, normalized)) || null;
+  if (!selected) return optionSelectionReply("package", options, message, { status: "none" });
+
+  if (context.configuration?.capabilities?.packages !== true) {
+    session.packageSelection = null;
+    return "Packages are not enabled for this services catalogue.";
+  }
+
+  const currentServices = await packageServicesForContext(context, readAdapter);
+  const current = currentServices.find((service) => (
+    selected.serviceId !== null && selected.serviceId !== undefined && String(service.id) === String(selected.serviceId)
+  ) || (
+    selected.slug && service.slug && String(service.slug) === String(selected.slug)
+  ));
+  if (!current) {
+    session.packageSelection = currentServices.length
+      ? { options: currentServices.map(packageSelectionOption) }
+      : null;
+    return currentServices.length
+      ? "That package is no longer available.\n\n" + packageListReply(currentServices)
+      : "That package is no longer available. No package options are currently configured or available.";
+  }
+
+  session.packageSelection = null;
+  return packageSelectionReply(current, { purchase: isPackagePurchaseIntent(message) });
 };
 
 const buildClassInformationReply = async ({ context, readAdapter }) => {
@@ -434,15 +594,18 @@ export async function handleAiReservationConversation({
   now = () => new Date(),
 } = {}) {
   const current = session.reservationFlow;
-  const startRequested = isReservationDomainIntent(message) || isRestartMessage(message);
+  const startRequested = isReservationDomainIntent(message) || isRestartMessage(message) || isPackageSelectionIntent(message, session);
   const startFlow = async () => {
+    if (isPackageSelectionIntent(message, session)) {
+      return { handled: true, reply: await handlePackageSelection({ context, session, message, readAdapter }), reservation: buildReservationResponse({ reply: "", flowStatus: "idle", journeyType: null }).reservation };
+    }
     const naturalServiceStart = isNaturalServiceBookingIntent(message) && !isGenericBookingIntent(message);
     const journey = await measureAiReservationStage({ context, stage: "journey_resolution", operation: "resolve_reservation_journey" }, async () => resolveChatReservationJourney({ configuration: context.configuration }));
     if (isClassInformationIntent(message)) {
       return { handled: true, reply: await buildClassInformationReply({ context, readAdapter }), reservation: buildReservationResponse({ reply: "", flowStatus: "idle", journeyType: journey.journeyType }).reservation };
     }
     if (isPackageInformationIntent(message)) {
-      return { handled: true, reply: await buildPackageInformationReply({ context, readAdapter }), reservation: buildReservationResponse({ reply: "", flowStatus: "idle", journeyType: journey.journeyType }).reservation };
+      return { handled: true, reply: await buildPackageInformationReply({ context, session, message, readAdapter }), reservation: buildReservationResponse({ reply: "", flowStatus: "idle", journeyType: journey.journeyType }).reservation };
     }
     if (journey.journeyType === "scheduled_session") {
       return startScheduledSessionFlow({ context, session, message, readAdapter });
@@ -558,6 +721,12 @@ export async function handleAiReservationConversation({
   if (isCancelMessage(message)) {
     session.reservationFlow = resetReservationFlowSelections(flow);
     return { handled: true, reply: `Okay, I cancelled the ${flow.journeyType === "restaurant" ? "restaurant reservation" : "appointment booking"}.`, reservation: reservationPayload(session, session.reservationFlow, "") };
+  }
+
+  if (isPackageInformationIntent(message) || isPackageSelectionIntent(message, session)) {
+    return { handled: true, reply: isPackageSelectionIntent(message, session)
+      ? await handlePackageSelection({ context, session, message, readAdapter })
+      : await buildPackageInformationReply({ context, session, message, readAdapter, persistSelection: false }), reservation: reservationPayload(session, flow, "") };
   }
 
   if (flow.status === "awaiting_confirmation") {

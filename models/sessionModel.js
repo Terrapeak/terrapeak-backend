@@ -200,6 +200,10 @@ const sessionSchema = new mongoose.Schema(
       type: reservationFlowSchema,
       default: () => ({ status: "idle", version: 1 }),
     },
+    packageSelection: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
   },
   {
     timestamps: true,

@@ -40,7 +40,7 @@ import { buildReservationResponse } from "../services/aiReservationFlowService.j
 import { getReusableReservationConversationContext, resolveChatReservationContext } from "../services/chatReservationContextService.js";
 import { reservationsReadAdapter } from "../services/reservationReadAdapter.js";
 import { reservationWriteAdapter } from "../services/reservationWriteAdapter.js";
-import { handleAiReservationConversation, isGenericBookingIntent, isNaturalServiceBookingIntent, isReservationDomainIntent } from "../services/aiReservationConversationService.js";
+import { handleAiReservationConversation, isGenericBookingIntent, isNaturalServiceBookingIntent, isPackageSelectionIntent, isReservationDomainIntent } from "../services/aiReservationConversationService.js";
 
 const normalizeReservationCapabilityQuestion = (message = "") => String(message)
   .toLowerCase()
@@ -3003,6 +3003,7 @@ export function shouldHandleTypedAppointment({ reservationEnabled, message, sess
   const lowerMsg = String(message || "").toLowerCase().trim();
   const flowStatus = session?.reservationFlow?.status;
   if (session?.reservationCallbackStep) return false;
+  if (isPackageSelectionIntent(lowerMsg, session)) return Boolean(reservationEnabled);
   if (!flowStatus && !isReservationDomainIntent(lowerMsg) && /^(?:what|how|why|do you|does your|tell me|explain)\b/i.test(lowerMsg)) return false;
   const activeTypedFlow = flowStatus && !["idle", "completed", "cancelled", "failed", "unknown"].includes(flowStatus);
   const terminalRestart = ["completed", "cancelled", "failed"].includes(flowStatus) && (isGenericBookingIntent(lowerMsg) || isNaturalServiceBookingIntent(lowerMsg));
@@ -3054,6 +3055,7 @@ export function resetBookingSession(session) {
   session.cancelReservationOptionDetails = [];
   session.cancelReservationRequiresStaffApproval = false;
   session.cancelReservationPolicyWarning = null;
+  session.packageSelection = null;
 
   session.reservationCallbackStep = null;
   session.reservationCallbackName = null;
