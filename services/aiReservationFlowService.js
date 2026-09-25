@@ -95,7 +95,11 @@ export const buildReservationConfirmationSummary = ({ context, flow, service, pr
     },
     customFields: (Array.isArray(form) ? form : [])
       .filter((field) => !getCustomerCoreFieldKey(field))
-      .map((field) => ({ label: field.label, fieldKey: field.systemKey || field.system_key || null, value: flow.customData?.[field.id] }))
+      .map((field) => ({
+        label: field.label,
+        fieldKey: field.systemKey || field.system_key || field.templateFieldKey || field.template_field_key || null,
+        value: flow.customData?.[field.id],
+      }))
       .filter((field) => field.value !== undefined && field.value !== null && field.value !== ""),
     bookingBehavior: context.configuration.bookingBehavior,
     terminology: context.configuration.terminology,
@@ -124,6 +128,10 @@ export const buildReservationConfirmationSummary = ({ context, flow, service, pr
     currency: service?.currency || null,
   };
 };
+
+const toPlainReservationFlow = (flow = {}) => (
+  typeof flow?.toObject === "function" ? flow.toObject() : { ...flow }
+);
 
 const summaryValue = (value, fallback = "Not provided") => value === undefined || value === null || value === "" ? fallback : String(value);
 
@@ -271,9 +279,10 @@ export async function prepareReservationConfirmation({ context, session, flow, s
 }
 
 export async function prepareScheduledSessionConfirmation({ context, session, flow, service, customer, form }) {
+  const plainFlow = toPlainReservationFlow(flow);
   const summary = buildReservationConfirmationSummary({
     context,
-    flow: { ...flow, journeyType: "scheduled_session", quantity: 1 },
+    flow: { ...plainFlow, journeyType: "scheduled_session", quantity: 1 },
     service,
     provider: null,
     slot: { startsAt: flow.startsAt, endsAt: flow.endsAt, localTime: flow.localTime, timezone: flow.timezone },
@@ -292,10 +301,10 @@ export async function prepareScheduledSessionConfirmation({ context, session, fl
     customerName: customer?.name,
     customerEmail: customer?.email,
     customerPhone: customer?.phone,
-    customData: serializeCustomerFormAnswers(form, flow.customData || {}),
+    customData: serializeCustomerFormAnswers(form, plainFlow.customData || {}),
   });
   session.reservationFlow = {
-    ...flow,
+    ...plainFlow,
     quantity: 1,
     status: "awaiting_confirmation",
     bookingAttemptId: null,

@@ -34,6 +34,8 @@ export function normalizeCustomerFormField(field = {}) {
     active: field.is_active !== false && field.active !== false,
     order: Number(field.display_order || field.order || 0),
     systemKey: field.system_key || field.systemKey || null,
+    templateKey: field.template_key || field.templateKey || null,
+    templateFieldKey: field.template_field_key || field.templateFieldKey || null,
     placeholder: String(field.placeholder || ""),
   };
 }

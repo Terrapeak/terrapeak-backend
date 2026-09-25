@@ -4,6 +4,7 @@ import { handleAiReservationConversation, isClassInformationIntent, isReservatio
 import { formatReservationConfirmationSummary } from "../services/aiReservationFlowService.js";
 import { createReservationReadAdapter } from "../services/reservationReadAdapter.js";
 import { fingerprintScheduledSessionBookingRequest } from "../utils/reservationRequestFingerprint.js";
+import Session from "../models/sessionModel.js";
 
 process.env.SUPABASE_URL ||= "https://example.supabase.co";
 process.env.SUPABASE_SERVICE_ROLE_KEY ||= "test-service-role-key";
@@ -47,14 +48,14 @@ const form = [
   { id: "first-visit", label: "First visit?", type: "dropdown", options: ["Yes", "No"], required: false, systemKey: "first_visit" },
 ];
 
-const makeReadAdapter = (calls = [], serviceRows = services, sessionRows = sessions) => ({
+const makeReadAdapter = (calls = [], serviceRows = services, sessionRows = sessions, formRows = form) => ({
   listBookableServices: async () => { calls.push("services"); return serviceRows; },
   listScheduledSessions: async (_context, args) => {
     calls.push(["sessions", args]);
-    const serviceId = args?.serviceSlug === "cohort-class" ? "cohort-class-1" : "class-1";
+    const serviceId = serviceRows.find((item) => item.slug === args?.serviceSlug)?.id;
     return sessionRows.filter((item) => item.serviceId === serviceId);
   },
-  getCustomerForm: async () => { calls.push("customer-form"); return form; },
+  getCustomerForm: async () => { calls.push("customer-form"); return formRows; },
 });
 
 const makeSession = () => ({ reservationFlow: null });
@@ -209,6 +210,72 @@ test("two-turn scheduled selection uses the real adapter date window after sessi
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("Mongoose-shaped scheduled flow preserves authoritative summary metadata through confirmation", async () => {
+  const productionServices = [
+    { id: 56, slug: "test-math-class", name: "test Math Class", schedulingMode: "scheduled", enrollmentMode: "cohort", bookingType: "class" },
+  ];
+  const productionSessions = [
+    { id: 300, serviceId: 56, startsAt: "2026-09-30T05:00:00Z", endsAt: "2026-09-30T06:00:00Z", timezone: "Asia/Manila", staffName: "Test math Jane Lin", remainingCapacity: 5 },
+  ];
+  const productionForm = [
+    { id: "full-name", label: "Full name", type: "text", required: true, systemKey: "name" },
+    { id: "phone", label: "Phone", type: "phone", required: true, systemKey: "phone" },
+    { id: "email", label: "Email", type: "email", required: true, systemKey: "email" },
+    { id: "student-name", label: "Student name", type: "text", required: true, templateKey: "learning_centre", templateFieldKey: "student_name" },
+    { id: "age", label: "Age / year level", type: "text", required: false, templateKey: "learning_centre", templateFieldKey: "age_year_level" },
+    { id: "subject", label: "Subject or programme", type: "text", required: true, templateKey: "learning_centre", templateFieldKey: "subject_or_programme" },
+    { id: "first-visit", label: "First visit?", type: "dropdown", options: ["Yes", "No"], required: false, templateKey: "learning_centre", templateFieldKey: "first_visit" },
+  ];
+  const plain = makeSession();
+  const adapter = makeReadAdapter([], productionServices, productionSessions, productionForm);
+  await handleAiReservationConversation({ context, session: plain, message: "I want to book a class", readAdapter: adapter });
+  await handleAiReservationConversation({ context, session: plain, message: "1", readAdapter: adapter });
+
+  const persisted = new Session({
+    sessionId: "mongoose-shaped-learning-centre",
+    chatbotId: "507f1f77bcf86cd799439011",
+    reservationFlow: plain.reservationFlow,
+  });
+  await handleAiReservationConversation({ context, session: persisted, message: "1", readAdapter: adapter });
+  const flowSubdocument = persisted.reservationFlow;
+  assert.equal(flowSubdocument.localDate, "2026-09-30");
+  assert.equal(flowSubdocument.providerName, "Test math Jane Lin");
+  assert.equal(Object.prototype.hasOwnProperty.call({ ...flowSubdocument }, "localDate"), false);
+
+  await handleAiReservationConversation({ context, session: persisted, message: "tim test", readAdapter: adapter });
+  await handleAiReservationConversation({ context, session: persisted, message: "tim@test.nl", readAdapter: adapter });
+  await handleAiReservationConversation({ context, session: persisted, message: "01234567", readAdapter: adapter });
+  await handleAiReservationConversation({ context, session: persisted, message: "skye", readAdapter: adapter });
+  await handleAiReservationConversation({ context, session: persisted, message: "5", readAdapter: adapter });
+  await handleAiReservationConversation({ context, session: persisted, message: "mandarin", readAdapter: adapter });
+  const result = await handleAiReservationConversation({ context, session: persisted, message: "Yes", readAdapter: adapter });
+
+  assert.match(result.reply, /Class: test Math Class/);
+  assert.match(result.reply, /Date: 2026-09-30/);
+  assert.match(result.reply, /Time: 13:00 \(Asia\/Manila\)/);
+  assert.match(result.reply, /Teacher: Test math Jane Lin/);
+  assert.match(result.reply, /Student: skye/);
+  assert.match(result.reply, /Contact: tim test/);
+  assert.match(result.reply, /Email: tim@test\.nl/);
+  assert.match(result.reply, /Phone: 01234567/);
+  assert.match(result.reply, /Age \/ year level: 5/);
+  assert.match(result.reply, /Subject or programme: mandarin/);
+  assert.match(result.reply, /First visit\?: Yes/);
+  assert.doesNotMatch(result.reply, /Additional details:[\s\S]*Student name:/);
+  assert.doesNotMatch(result.reply, /Not provided/);
+  assert.doesNotMatch(result.reply, /scheduledSessionId|session-early/);
+  assert.equal(persisted.reservationFlow.scheduledSessionId, "300");
+  assert.equal(persisted.reservationFlow.confirmation.summary.scheduledSessionId, "300");
+  assert.equal(persisted.reservationFlow.customer.name, "tim test");
+  assert.equal(persisted.reservationFlow.customer.email, "tim@test.nl");
+  assert.equal(persisted.reservationFlow.customer.phone, "01234567");
+  assert.equal(persisted.reservationFlow.customData["student-name"], "skye");
+  assert.equal(persisted.reservationFlow.customData.age, "5");
+  assert.equal(persisted.reservationFlow.customData.subject, "mandarin");
+  assert.equal(persisted.reservationFlow.customData["first-visit"], "Yes");
+  assert.equal(persisted.reservationFlow.status, "awaiting_confirmation");
 });
 
 test("next class selects the first chronological authoritative session", async () => {
