@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   handleAiReservationConversation,
   isPackageInformationIntent,
+  isPackageConfigured,
   isPackagePurchaseIntent,
   isPackageSelectionIntent,
   isReservationDomainIntent,
@@ -54,7 +55,7 @@ const packageServices = [
   { id: 3, businessId: 42, name: "Inactive Package", packageSessionCount: 8, isActive: false, isPublished: true },
   { id: 4, businessId: 42, name: "Unpublished Package", packageSessionCount: 8, isActive: true, isPublished: false },
   { id: 5, businessId: 99, name: "Other Tenant Package", packageSessionCount: 8, isActive: true, isPublished: true },
-  { id: 6, businessId: 42, name: "Ordinary Service", price: 50, isActive: true, isPublished: true },
+  { id: 6, businessId: 42, name: "Ordinary Service", price: 50, packageSessionCount: 1, packageValidityDays: null, isActive: true, isPublished: true },
 ];
 
 const readAdapter = {
@@ -127,6 +128,26 @@ test("enabled packages with no configured options remain informational", async (
   });
   assert.match(result.reply, /no package options/i);
   assert.equal(result.reservation.flowStatus, "idle");
+});
+
+test("business-10 single-session services are not package-configured", async () => {
+  const business10Services = [
+    { id: 30, businessId: 42, name: "Acceptance Test Service", price: 10000, currency: "MYR", packageSessionCount: 1, packageValidityDays: null, isActive: true, isPublished: true },
+    { id: 55, businessId: 42, name: "Appointment", packageSessionCount: 1, packageValidityDays: null, isActive: true, isPublished: true },
+    { id: 56, businessId: 42, name: "test Math Class", price: 10000, currency: "PHP", packageSessionCount: 1, packageValidityDays: null, isActive: true, isPublished: true },
+  ];
+  assert.equal(isPackageConfigured(business10Services[0]), false);
+  const result = await ask("Show me packages", {
+    adapter: { async listBookableServices() { return business10Services; } },
+  });
+  assert.match(result.reply, /no package options/i);
+  assert.doesNotMatch(result.reply, /Acceptance Test Service|Appointment|test Math Class/);
+  assert.equal(result.reservation.flowStatus, "idle");
+});
+
+test("genuine multi-session Physio and Learning Centre packages remain eligible", () => {
+  assert.equal(isPackageConfigured({ packageSessionCount: 4, packageValidityDays: 30 }), true);
+  assert.equal(isPackageConfigured({ packageSessionCount: 4, packageValidityDays: 30, bookingType: "class" }), true);
 });
 
 test("missing optional package values are stated without invention", async () => {
@@ -277,6 +298,42 @@ test("Learning Centre package selection remains informational and math class boo
   assert.equal(bookingSession.reservationFlow.journeyType, "scheduled_session");
   assert.equal(bookingSession.reservationFlow.status, "service_selection");
   assert.doesNotMatch(booking.reply, /package options/i);
+});
+
+test("pending package context gives numeric selection precedence without reset", async () => {
+  const session = {};
+  await ask("Show me packages", { session });
+  assert.equal(isPackageSelectionIntent("1", session), true);
+  assert.equal(shouldHandleTypedAppointment({ reservationEnabled: true, message: "1", session }), true);
+  const selected = await ask("1", { session });
+  assert.match(selected.reply, /Physiotherapy Treatment/);
+  assert.equal(session.reservationFlow, undefined);
+});
+
+test("explicit booking intent supersedes pending package context", async () => {
+  const learningSession = {};
+  await ask("Show me packages", { context: learningContext, session: learningSession, adapter: {
+    async listBookableServices() { return [{ id: 10, businessId: 42, slug: "math-class", name: "Math Class", bookingType: "class", schedulingMode: "scheduled", packageSessionCount: 10, packageValidityDays: 90, isActive: true, isPublished: true }]; },
+    async listScheduledSessions() { return [{ id: "session-10", startsAt: "2026-10-01T09:00:00.000Z", timezone: "Asia/Singapore" }]; },
+  } });
+  assert.equal(isPackageSelectionIntent("book a math class", learningSession), false);
+  const learningResult = await ask("book a math class", { context: learningContext, session: learningSession, adapter: {
+    async listBookableServices() { return [{ id: 10, businessId: 42, slug: "math-class", name: "Math Class", bookingType: "class", schedulingMode: "scheduled", packageSessionCount: 10, packageValidityDays: 90, isActive: true, isPublished: true }]; },
+    async listScheduledSessions() { return [{ id: "session-10", startsAt: "2026-10-01T09:00:00.000Z", timezone: "Asia/Singapore" }]; },
+  } });
+  assert.equal(learningSession.reservationFlow.journeyType, "scheduled_session");
+  assert.equal(learningResult.reservation.flowStatus, "service_selection");
+
+  const appointmentSession = {};
+  const appointmentAdapter = {
+    async listBookableServices() { return [{ id: 1, businessId: 42, slug: "physio-appointment", name: "Physio Appointment", bookingType: "appointment", isActive: true, isPublished: true }]; },
+    async listBookableProviders() { return [{ id: 2, slug: "provider-1", displayName: "Provider One", timezone: "Asia/Singapore" }]; },
+  };
+  await ask("Show me packages", { session: appointmentSession, adapter: appointmentAdapter });
+  assert.equal(isPackageSelectionIntent("book a physio appointment", appointmentSession), false);
+  const appointmentResult = await ask("book a physio appointment", { session: appointmentSession, adapter: appointmentAdapter });
+  assert.equal(appointmentSession.reservationFlow.journeyType, "appointment");
+  assert.equal(appointmentResult.reservation.flowStatus, "provider_selection");
 });
 
 test("package wording does not replace active scheduled-session or Restaurant flows", async () => {

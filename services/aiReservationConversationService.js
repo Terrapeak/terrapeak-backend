@@ -89,6 +89,7 @@ export const isPackageSelectionIntent = (message = "", session = {}) => {
   const options = session?.packageSelection?.options;
   if (!Array.isArray(options) || !options.length) return false;
   const normalized = normalizeOptionText(message);
+  if (/\b(?:book|schedule|reserve)\b/i.test(normalized) && !/\bpackages?\b/i.test(normalized)) return false;
   return /^\d+$/.test(normalized)
     || /\b(?:package|option)\s+#?\d+\b/i.test(normalized)
     || (options.length === 1 && isPackagePurchaseIntent(normalized))
@@ -250,14 +251,19 @@ const restaurantSlotReply = (slots, localDate) => slots.length
 const capabilityLabel = (terminology, singularKey, fallback) =>
   terminology?.[singularKey] || fallback;
 
+export const isPackageConfigured = (service = {}) => {
+  const sessionCount = Number(service.packageSessionCount);
+  const validityDays = Number(service.packageValidityDays);
+  return (Number.isFinite(sessionCount) && sessionCount > 1)
+    || (Number.isFinite(validityDays) && validityDays > 0);
+};
+
 const packageServiceIsEligible = (service, context) => {
-  const sessionCount = Number(service?.packageSessionCount);
-  const validityDays = Number(service?.packageValidityDays);
   return service
+    && isPackageConfigured(service)
     && service.isActive !== false
     && service.isPublished !== false
-    && (!service.businessId || String(service.businessId) === String(context.reservationBusinessId))
-    && ((Number.isFinite(sessionCount) && sessionCount > 0) || (Number.isFinite(validityDays) && validityDays > 0));
+    && (!service.businessId || String(service.businessId) === String(context.reservationBusinessId));
 };
 
 const packageServicesForContext = async (context, readAdapter) => {

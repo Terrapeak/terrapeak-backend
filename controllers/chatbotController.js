@@ -585,6 +585,7 @@ if (!session.rescheduleReservationData) {
     message: lowerMsg,
     session,
   });
+  const pendingPackageSelection = isPackageSelectionIntent(lowerMsg, session);
   const shouldHandleRestaurantReservationRequest = Boolean(
     reservationEnabled &&
     isReservationDomainIntent(lowerMsg) &&
@@ -606,7 +607,7 @@ if (!session.rescheduleReservationData) {
     try {
       const typedFlowStatus = session.reservationFlow?.status;
       const startsFreshTypedFlow = !typedFlowStatus || ["idle", "completed", "cancelled", "failed", "unknown"].includes(typedFlowStatus);
-      if (startsFreshTypedFlow) {
+      if (startsFreshTypedFlow && !pendingPackageSelection) {
         resetBookingSession(session);
       }
       const activeFlowStatus = session.reservationFlow?.status;
