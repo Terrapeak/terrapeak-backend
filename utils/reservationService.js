@@ -312,7 +312,7 @@ export async function getReservationConciergeContext({
       supabase
         .from("services")
         .select(
-          "id, name, slug, description, booking_type, duration_minutes, capacity, price, currency, price_session_count, package_validity_days, subject, enrollment_mode, scheduling_mode, is_active, is_published, is_internal",
+          "id, name, slug, description, booking_type, duration_minutes, capacity, price, currency, price_session_count, package_validity_days, offer_as_package, subject, enrollment_mode, scheduling_mode, is_active, is_published, is_internal",
         )
         .eq("business_id", numericBusinessId)
         .eq("is_active", true)

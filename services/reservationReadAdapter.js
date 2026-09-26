@@ -8,6 +8,7 @@ const serviceFields = [
   "duration_minutes", "slot_interval_minutes", "buffer_before_minutes",
   "buffer_after_minutes", "capacity", "price", "currency", "scheduling_mode",
   "price_session_count", "package_validity_days", "enrollment_mode",
+  "offer_as_package",
   "cohort_start_date", "cohort_end_date", "schedule_open_ended",
   "enrollment_closed", "subject", "is_internal",
 ].join(",");
@@ -82,6 +83,7 @@ const normalizeService = (service) => ({
   capacity: service.capacity === null || service.capacity === undefined ? null : Number(service.capacity),
   packageSessionCount: service.price_session_count || null,
   packageValidityDays: service.package_validity_days || null,
+  offerAsPackage: typeof service.offer_as_package === "boolean" ? service.offer_as_package : undefined,
   enrollmentMode: service.enrollment_mode || null,
 });
 

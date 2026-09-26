@@ -252,6 +252,7 @@ const capabilityLabel = (terminology, singularKey, fallback) =>
   terminology?.[singularKey] || fallback;
 
 export const isPackageConfigured = (service = {}) => {
+  if (typeof service.offerAsPackage === "boolean") return service.offerAsPackage;
   const sessionCount = Number(service.packageSessionCount);
   const validityDays = Number(service.packageValidityDays);
   return (Number.isFinite(sessionCount) && sessionCount > 1)

@@ -98,6 +98,13 @@ test("known package phrases are deterministic without broad session matching", (
   assert.equal(isReservationDomainIntent("I want 10 physio sessions"), true);
 });
 
+test("explicit package offering overrides legacy metadata while preserving fallback compatibility", () => {
+  assert.equal(isPackageConfigured({ offerAsPackage: true, packageSessionCount: 1 }), true);
+  assert.equal(isPackageConfigured({ offerAsPackage: false, packageSessionCount: 4, packageValidityDays: 30 }), false);
+  assert.equal(isPackageConfigured({ packageSessionCount: 4, packageValidityDays: 30 }), true);
+  assert.equal(isPackageConfigured({ packageSessionCount: 1, packageValidityDays: null }), false);
+});
+
 test("package list is authoritative, numbered, and renders pricing metadata", async () => {
   const session = {};
   const result = await ask("Show me packages", { session });
@@ -148,6 +155,15 @@ test("business-10 single-session services are not package-configured", async () 
 test("genuine multi-session Physio and Learning Centre packages remain eligible", () => {
   assert.equal(isPackageConfigured({ packageSessionCount: 4, packageValidityDays: 30 }), true);
   assert.equal(isPackageConfigured({ packageSessionCount: 4, packageValidityDays: 30, bookingType: "class" }), true);
+});
+
+test("explicit package false overrides legacy metadata and capability remains mandatory", async () => {
+  assert.equal(isPackageConfigured({ offerAsPackage: false, packageSessionCount: 4, packageValidityDays: 30 }), false);
+  const result = await ask("Show me packages", {
+    context: contextFor({ services: true, teamResources: true, scheduledSessions: false, packages: false }),
+    adapter: { async listBookableServices() { return [{ id: 34, businessId: 42, name: "English Class A", offerAsPackage: true, packageSessionCount: 10, isActive: true, isPublished: true }]; } },
+  });
+  assert.match(result.reply, /not enabled/i);
 });
 
 test("missing optional package values are stated without invention", async () => {
